@@ -8,11 +8,11 @@
 use std::borrow::Cow;
 
 /// The default UI family, as cosmic-text's `fontdb` derives it from the embedded TTF.
-pub const UI_FAMILY: &str = "Inter";
+pub const UI_FAMILY: &str = "Noto Sans";
 /// The default monospace family, as cosmic-text's `fontdb` derives it from the embedded TTF.
 pub const MONO_FAMILY: &str = "Cascadia Code";
 
-pub const BUNDLED_UI_FAMILIES: [&str; 3] = ["Inter", "Geist", "Noto Sans"];
+pub const BUNDLED_UI_FAMILIES: [&str; 3] = ["Noto Sans", "Inter", "Geist"];
 pub const BUNDLED_MONO_FAMILIES: [&str; 3] = ["Cascadia Code", "JetBrains Mono", "Fira Code"];
 
 pub const INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");

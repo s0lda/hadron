@@ -793,7 +793,7 @@ impl Chamber {
             SelectState::new(create_model_delegate("Amethyst (Default)", &[], None), None, window, cx).searchable(false)
         });
         let ui_font_select_state = cx.new(|cx| {
-            SelectState::new(create_model_delegate("Inter (Default)", &[], None), None, window, cx).searchable(true)
+            SelectState::new(create_model_delegate("Noto Sans (Default)", &[], None), None, window, cx).searchable(true)
         });
         let ui_font_size_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("14px (Default)", &[], None), None, window, cx).searchable(false)
@@ -1016,7 +1016,7 @@ impl Chamber {
             cx.subscribe_in(&ui_font_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
                 let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
-                if val.is_empty() || val == "Inter (Default)" || val == "Inter" {
+                if val.is_empty() || val == "Noto Sans (Default)" || val == "Noto Sans" {
                     this.prefs.ui_font_family = None;
                 } else {
                     this.prefs.ui_font_family = Some(val.to_string());
@@ -1956,9 +1956,9 @@ fn font_family_with_a_real_bold(cx: &App, preferred: Option<&str>) -> SharedStri
     }
     candidates.extend_from_slice(&[
         crate::fonts::UI_FAMILY,
+        "Noto Sans",
         "Inter",
         "Geist",
-        "Noto Sans",
         ".SystemUIFont", // the real system face on macOS/Windows; "IBM Plex Sans" on Linux
         "Segoe UI",
         "Ubuntu",

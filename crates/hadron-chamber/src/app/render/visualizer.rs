@@ -217,6 +217,29 @@ static BELT_UNIT_RING: LazyLock<[Point3D; BELT_STEPS + 1]> = LazyLock::new(|| {
     })
 });
 
+/// Resolve the phase-specific excitation halo color for a quark's live activity.
+pub fn phase_halo_color(doing: Option<hadron_lattice::live::Doing>) -> Hsla {
+    match doing {
+        Some(hadron_lattice::live::Doing::Thinking) => theme::halo_reasoning(), // Warm Violet #A87FFB
+        Some(hadron_lattice::live::Doing::Working) => theme::success().into(), // Emerald-Mint #62C073
+        Some(hadron_lattice::live::Doing::Planning) => theme::halo_reasoning(),
+        Some(hadron_lattice::live::Doing::Speaking) => theme::warning().into(), // Warm Amber #E5C07B
+        Some(hadron_lattice::live::Doing::Gating) => theme::info().into(), // Muted Orchid #C778DD
+        None => theme::success().into(),
+    }
+}
+
+/// Compute (yaw, pitch) camera rotation angles to bring a node at spherical coordinates
+/// (theta, phi) directly to the front-facing center of the view (x = 0, y = 0, z > 0).
+pub fn focus_angles_for_spherical(theta: f32, phi: f32) -> (f32, f32) {
+    let mut yaw = (phi - PI * 0.5) % (2.0 * PI);
+    if yaw < 0.0 {
+        yaw += 2.0 * PI;
+    }
+    let pitch = theta.clamp(-1.45, 1.45);
+    (yaw, pitch)
+}
+
 /// A projected node ready for depth-sorted rendering and click hit-testing.
 #[derive(Debug, Clone)]
 pub struct ProjectedQuarkNode {
@@ -227,6 +250,14 @@ pub struct ProjectedQuarkNode {
     pub is_orchestrator: bool,
     pub is_enabled: bool,
     pub is_excited: bool,
+    pub live_phase: Option<hadron_lattice::live::Doing>,
+    pub live_detail: Option<String>,
+    pub task_title: Option<String>,
+    pub elapsed_secs: Option<u64>,
+    pub tokens: u64,
+    pub is_seated: bool,
+    pub theta: f32,
+    pub phi: f32,
     pub point_3d: Point3D,
     pub screen_x: f32,
     pub screen_y: f32,
@@ -314,29 +345,107 @@ impl super::Chamber {
         let zoom = self.visualizer_zoom.clamp(0.5, 3.0);
         let base_radius = 160.0 * zoom;
 
-        // Build 3D sphere nodes using Fibonacci harmonic distribution
+        // Ingest rich live activity capsules and active tasks
+        let rich_capsules = crate::app::widgets::active_quarks_rich_with_tasks(
+            roster,
+            &self.view.tasks,
+            |id| self.last_live_activities.get(id).and_then(|a| a.clone()),
+            now,
+        );
+        let mut rich_by_id = std::collections::HashMap::new();
+        for cap in rich_capsules {
+            rich_by_id.insert(cap.quark_id.clone(), cap);
+        }
+
+        let active_task_for_row = |row_id: &str| -> Option<String> {
+            self.view.tasks.iter().find(|t| (t.to == row_id || t.from == row_id) && t.state == TaskState::Working).map(|t| t.title.clone())
+        };
+
+        // Dual-shell spherical distribution:
+        // Inner shell (1.0 * base_radius): seated, active swarm quarks
+        // Outer shell (1.28 * base_radius): catalogue / unadopted quarks
+        let mut seated_quarks: Vec<&RosterRow> = Vec::new();
+        let mut catalogue_quarks: Vec<&RosterRow> = Vec::new();
+        for row in roster.iter() {
+            if row.enabled && row.adopted {
+                seated_quarks.push(row);
+            } else {
+                catalogue_quarks.push(row);
+            }
+        }
+
+        let seated_has_orch = seated_quarks.iter().any(|r| matches!(r.flavor, Some(hadron_lattice::Flavor::Orchestrator)));
+        let non_orch_seated_count = seated_quarks.len().saturating_sub(if seated_has_orch { 1 } else { 0 }).max(1);
+        let cat_count = catalogue_quarks.len().max(1);
+
         let mut nodes: Vec<ProjectedQuarkNode> = Vec::with_capacity(total_quarks);
-        for (ix, row) in roster.iter().enumerate() {
+        let mut seated_worker_idx = 0;
+
+        for row in seated_quarks.iter() {
             let is_orchestrator = matches!(row.flavor, Some(hadron_lattice::Flavor::Orchestrator));
             let color = self.color_for(&row.id);
             let resolved = self.resolve_identity(&row.id);
             let is_excited = excited_quark_ids.contains(&row.id);
+            let cap_opt = rich_by_id.get(&row.id);
+            let live_phase = cap_opt.map(|c| c.doing);
+            let live_detail = cap_opt.map(|c| c.detail.clone());
+            let elapsed_secs = cap_opt.and_then(|c| c.elapsed_secs);
+            let task_title = active_task_for_row(&row.id);
 
-            // Compute spherical coordinates:
-            // Orchestrator sits at apex crown (theta = ~1.12 rad)
-            // Workers distributed harmoniously across the sphere surface
             let (theta, phi) = if is_orchestrator {
                 (1.12f32, 0.0f32)
             } else {
-                let non_orch_count = total_quarks.saturating_sub(1).max(1);
-                let idx = if is_orchestrator { 0 } else { ix };
-                let lat_frac = ((idx as f32 + 0.5) / non_orch_count as f32) * 2.0 - 1.0;
-                let theta = (lat_frac * 0.75).asin();
-                let phi = idx as f32 * 2.39996323; // Golden angle ~137.5 deg
-                (theta, phi)
+                let lat_frac = ((seated_worker_idx as f32 + 0.5) / non_orch_seated_count as f32) * 2.0 - 1.0;
+                let th = (lat_frac * 0.75).asin();
+                let ph = seated_worker_idx as f32 * 2.39996323;
+                seated_worker_idx += 1;
+                (th, ph)
             };
 
-            let p3d = Point3D::from_spherical(base_radius, theta, phi);
+            let p3d = Point3D::from_spherical(base_radius * 1.0, theta, phi);
+            let rotated = rot.transform(p3d);
+
+            nodes.push(ProjectedQuarkNode {
+                id: row.id.clone(),
+                name: resolved.name,
+                model: if row.model.is_empty() { "default".into() } else { row.model.clone() },
+                color,
+                is_orchestrator,
+                is_enabled: true,
+                is_excited,
+                live_phase,
+                live_detail,
+                task_title,
+                elapsed_secs,
+                tokens: row.tokens as u64,
+                is_seated: true,
+                theta,
+                phi,
+                point_3d: rotated,
+                screen_x: 0.0,
+                screen_y: 0.0,
+                z_depth: rotated.z,
+                scale: 1.0,
+                radius: if is_orchestrator { 9.5 } else { 7.0 },
+            });
+        }
+
+        for (c_idx, row) in catalogue_quarks.iter().enumerate() {
+            let is_orchestrator = matches!(row.flavor, Some(hadron_lattice::Flavor::Orchestrator));
+            let color = self.color_for(&row.id);
+            let resolved = self.resolve_identity(&row.id);
+            let is_excited = excited_quark_ids.contains(&row.id);
+            let cap_opt = rich_by_id.get(&row.id);
+            let live_phase = cap_opt.map(|c| c.doing);
+            let live_detail = cap_opt.map(|c| c.detail.clone());
+            let elapsed_secs = cap_opt.and_then(|c| c.elapsed_secs);
+            let task_title = active_task_for_row(&row.id);
+
+            let lat_frac = ((c_idx as f32 + 0.5) / cat_count as f32) * 2.0 - 1.0;
+            let theta = (lat_frac * 0.85).asin();
+            let phi = c_idx as f32 * 2.39996323 + 1.25;
+
+            let p3d = Point3D::from_spherical(base_radius * 1.28, theta, phi);
             let rotated = rot.transform(p3d);
 
             nodes.push(ProjectedQuarkNode {
@@ -347,12 +456,20 @@ impl super::Chamber {
                 is_orchestrator,
                 is_enabled: row.enabled && row.adopted,
                 is_excited,
+                live_phase,
+                live_detail,
+                task_title,
+                elapsed_secs,
+                tokens: row.tokens as u64,
+                is_seated: false,
+                theta,
+                phi,
                 point_3d: rotated,
                 screen_x: 0.0,
                 screen_y: 0.0,
                 z_depth: rotated.z,
                 scale: 1.0,
-                radius: if is_orchestrator { 9.5 } else { 7.0 },
+                radius: 5.5,
             });
         }
 
@@ -528,6 +645,123 @@ impl super::Chamber {
             .child(hud_summary)
             .child(hud_controls);
 
+        // Interactive Live Swarm Activity & Seated Quarks Dock
+        let seated_nodes: Vec<ProjectedQuarkNode> = nodes.iter().filter(|n| n.is_seated).cloned().collect();
+        let current_selected = selected_quark.clone();
+        let activity_dock = if seated_nodes.is_empty() {
+            None
+        } else {
+            Some(
+                h_flex()
+                    .id("vis-activity-dock")
+                    .w_full()
+                    .px_4()
+                    .py_2()
+                    .gap_2()
+                    .overflow_x_scroll()
+                    .border_b_1()
+                    .border_color(theme::glass_highlight())
+                    .bg(theme::bg_surface().opacity(0.40))
+                    .children(seated_nodes.iter().map(|node| {
+                        let qid = node.id.clone();
+                        let th = node.theta;
+                        let ph = node.phi;
+                        let is_sel = current_selected.as_deref() == Some(&node.id);
+                        let p_color: Hsla = phase_halo_color(node.live_phase);
+                        let p_rgba: gpui::Rgba = p_color.into();
+
+                        let chip_bg = if is_sel {
+                            theme::tab_bar_bg()
+                        } else if node.is_excited {
+                            p_rgba.opacity(0.12)
+                        } else {
+                            theme::tab_bar_bg().opacity(0.60)
+                        };
+
+                        let chip_border = if is_sel {
+                            theme::accent()
+                        } else if node.is_excited {
+                            p_rgba.opacity(0.40)
+                        } else {
+                            theme::glass_highlight().into()
+                        };
+
+                        h_flex()
+                            .id(SharedString::from(format!("vis-dock-chip-{}", node.id)))
+                            .items_center()
+                            .gap_2()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .bg(chip_bg)
+                            .border_1()
+                            .border_color(chip_border)
+                            .child(
+                                div()
+                                    .size_2p5()
+                                    .rounded_full()
+                                    .bg(node.color),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(if is_sel { theme::text() } else { theme::text_secondary() })
+                                    .child(node.name.clone()),
+                            )
+                            .when(node.is_excited, |chip| {
+                                let phase_label = match node.live_phase {
+                                    Some(hadron_lattice::live::Doing::Thinking) => "thinking",
+                                    Some(hadron_lattice::live::Doing::Working) => "exec",
+                                    Some(hadron_lattice::live::Doing::Planning) => "planning",
+                                    Some(hadron_lattice::live::Doing::Speaking) => "speaking",
+                                    Some(hadron_lattice::live::Doing::Gating) => "gating",
+                                    None => "active",
+                                };
+                                chip.child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(p_color.opacity(0.18))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(p_color)
+                                        .child(phase_label),
+                                )
+                            })
+                            .when_some(node.live_detail.clone(), |chip, detail| {
+                                chip.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .truncate()
+                                        .max_w(px(140.0))
+                                        .child(detail),
+                                )
+                            })
+                            .when_some(node.elapsed_secs, |chip, secs| {
+                                chip.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(if secs >= 60 { format!("{}m", secs / 60) } else { format!("{secs}s") }),
+                                )
+                            })
+                            .hover(|s| s.border_color(theme::accent()).bg(theme::tab_bar_bg()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.visualizer_selected_quark = Some(qid.clone());
+                                let (snap_yaw, snap_pitch) = focus_angles_for_spherical(th, ph);
+                                this.visualizer_yaw = snap_yaw;
+                                this.visualizer_pitch = snap_pitch;
+                                this.visualizer_auto_spin = false;
+                                cx.notify();
+                            }))
+                    }))
+            )
+        };
+
         // Selected Quark Focus Card (bottom overlay)
         let selected_node_info = selected_quark.as_ref().and_then(|qid| {
             nodes.iter().find(|n| &n.id == qid).cloned()
@@ -536,12 +770,43 @@ impl super::Chamber {
         let selected_hud = selected_node_info.map(|node| {
             let qid_for_info = node.id.clone();
             let state_str = if node.is_excited {
-                "⚡ Excited (Active Turn / Task)"
+                match node.live_phase {
+                    Some(hadron_lattice::live::Doing::Thinking) => "⚡ Thinking (Reasoning)",
+                    Some(hadron_lattice::live::Doing::Working) => "⚡ Working (Tool Execution)",
+                    Some(hadron_lattice::live::Doing::Planning) => "⚡ Planning (Task Breakdown)",
+                    Some(hadron_lattice::live::Doing::Speaking) => "⚡ Speaking (Field Reply)",
+                    Some(hadron_lattice::live::Doing::Gating) => "⚡ Gating (Merge Gate / Checks)",
+                    None => "⚡ Excited (Active Turn / Task)",
+                }
             } else if node.is_enabled {
                 "● Idle · Ready"
             } else {
-                "○ Disabled"
+                "○ Catalogue · Inactive"
             };
+
+            let ctx_opt = self.latest_context(&node.id);
+            let telemetry_str = if let Some(ctx) = ctx_opt {
+                format!(
+                    "Context: {} / {} ({:.0}%) · {} tokens",
+                    format_num(ctx.used_tokens as u64),
+                    format_num(ctx.context_window_size as u64),
+                    ctx.used_percentage,
+                    format_num(node.tokens),
+                )
+            } else if node.tokens > 0 {
+                format!("Spend: {} tokens", format_num(node.tokens))
+            } else {
+                "Spend: 0 tokens".to_string()
+            };
+
+            let topology_tier = if node.is_seated {
+                "Primary Swarm (Inner 1.0x)"
+            } else {
+                "Swarm Catalogue (Outer 1.28x)"
+            };
+
+            let phase_color = phase_halo_color(node.live_phase);
+            let phase_rgba: gpui::Rgba = phase_color.into();
 
             h_flex()
                 .w_full()
@@ -558,9 +823,11 @@ impl super::Chamber {
                         .items_center()
                         .child(
                             div()
-                                .size_3p5()
+                                .size_4()
                                 .rounded_full()
-                                .bg(node.color),
+                                .bg(node.color)
+                                .border_2()
+                                .border_color(if node.is_excited { phase_rgba } else { theme::border() }),
                         )
                         .child(
                             v_flex()
@@ -587,14 +854,51 @@ impl super::Chamber {
                                                     .text_color(theme::warning())
                                                     .child("Orchestrator"),
                                             )
-                                        }),
+                                        })
+                                        .child(
+                                            div()
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .rounded_sm()
+                                                .bg(if node.is_excited { phase_rgba.opacity(0.18) } else { theme::tab_bar_bg() })
+                                                .border_1()
+                                                .border_color(if node.is_excited { phase_rgba.opacity(0.4) } else { theme::glass_highlight().into() })
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .text_color(if node.is_excited { phase_rgba } else { theme::text_muted() })
+                                                .child(state_str),
+                                        ),
                                 )
                                 .child(
-                                    div()
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
                                         .text_xs()
                                         .text_color(theme::text_muted())
-                                        .child(format!("{} · {} · {}", node.id, node.model, state_str)),
-                                ),
+                                        .child(format!("{} · {} · {}", node.id, node.model, topology_tier))
+                                        .child("·")
+                                        .child(telemetry_str),
+                                )
+                                .when_some(node.live_detail, |this, detail| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .items_center()
+                                            .text_xs()
+                                            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(phase_color).child("Action:"))
+                                            .child(div().text_color(theme::text()).child(detail)),
+                                    )
+                                })
+                                .when_some(node.task_title, |this, task| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .items_center()
+                                            .text_xs()
+                                            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme::accent()).child("Task:"))
+                                            .child(div().text_color(theme::text_secondary()).child(task)),
+                                    )
+                                }),
                         ),
                 )
                 .child(
@@ -646,9 +950,9 @@ impl super::Chamber {
                     };
 
                     let star_color = match star.color_type {
-                        0 => gpui::rgb(0x38bdf8).opacity(0.35 * depth_a * shimmer),
-                        1 => gpui::rgb(0x818cf8).opacity(0.28 * depth_a * shimmer),
-                        _ => gpui::rgb(0xf8fafc).opacity(0.45 * depth_a * shimmer),
+                        0 => gpui::rgb(0xa87ffb).opacity(0.35 * depth_a * shimmer),
+                        1 => gpui::rgb(0xc778dd).opacity(0.28 * depth_a * shimmer),
+                        _ => gpui::rgb(0xededed).opacity(0.45 * depth_a * shimmer),
                     };
 
                     window.paint_quad(fill(star_bounds, star_color).corner_radii(star_r));
@@ -667,7 +971,7 @@ impl super::Chamber {
                     size: size(r_nebula * 2.0, r_nebula * 2.0),
                 };
                 window.paint_quad(
-                    fill(nebula_bounds, gpui::rgb(0x1e1b4b).opacity(0.16 * core_pulse)).corner_radii(r_nebula),
+                    fill(nebula_bounds, gpui::rgb(0x262626).opacity(0.22 * core_pulse)).corner_radii(r_nebula),
                 );
 
                 // Layer B: Cosmic Energy Corona
@@ -677,7 +981,7 @@ impl super::Chamber {
                     size: size(r_corona * 2.0, r_corona * 2.0),
                 };
                 window.paint_quad(
-                    fill(corona_bounds, gpui::rgb(0x0284c7).opacity(0.20 * core_pulse)).corner_radii(r_corona),
+                    fill(corona_bounds, gpui::rgb(0xa87ffb).opacity(0.18 * core_pulse)).corner_radii(r_corona),
                 );
 
                 // Layer C: Inner Quantum Radiant Core
@@ -687,7 +991,7 @@ impl super::Chamber {
                     size: size(r_inner * 2.0, r_inner * 2.0),
                 };
                 window.paint_quad(
-                    fill(inner_bounds, gpui::rgb(0x38bdf8).opacity(0.32 * core_pulse)).corner_radii(r_inner),
+                    fill(inner_bounds, gpui::rgb(0xc778dd).opacity(0.32 * core_pulse)).corner_radii(r_inner),
                 );
 
                 // Layer D: White Singularity Point
@@ -697,7 +1001,7 @@ impl super::Chamber {
                     size: size(r_center * 2.0, r_center * 2.0),
                 };
                 window.paint_quad(
-                    fill(center_bounds, gpui::rgb(0xf0f9ff).opacity(0.65 * core_pulse)).corner_radii(r_center),
+                    fill(center_bounds, gpui::rgb(0xededed).opacity(0.65 * core_pulse)).corner_radii(r_center),
                 );
 
                 // -------------------------------------------------------------
@@ -734,12 +1038,12 @@ impl super::Chamber {
 
                 if has_back {
                     if let Ok(path) = back_builder.build() {
-                        window.paint_path(path, gpui::rgb(0x4338ca).opacity(0.06));
+                        window.paint_path(path, gpui::rgb(0xa87ffb).opacity(0.06));
                     }
                 }
                 if has_front {
                     if let Ok(path) = front_builder.build() {
-                        window.paint_path(path, gpui::rgb(0x38bdf8).opacity(0.14));
+                        window.paint_path(path, gpui::rgb(0xc778dd).opacity(0.14));
                     }
                 }
 
@@ -763,17 +1067,17 @@ impl super::Chamber {
                             size: size(halo_r * 2.0, halo_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(halo_bounds, gpui::rgb(0x00f0ff).opacity(0.22 * depth_factor * shimmer))
+                            fill(halo_bounds, gpui::rgb(0xa87ffb).opacity(0.22 * depth_factor * shimmer))
                                 .corner_radii(halo_r),
                         );
                         window.paint_quad(
-                            fill(dot_bounds, gpui::rgb(0xbae6fd).opacity(0.80 * depth_factor))
+                            fill(dot_bounds, gpui::rgb(0xededed).opacity(0.80 * depth_factor))
                                 .corner_radii(dot_r),
                         );
                     } else {
                         // Back-facing subtle node
                         window.paint_quad(
-                            fill(dot_bounds, gpui::rgb(0x6366f1).opacity(0.28 * depth_factor))
+                            fill(dot_bounds, gpui::rgb(0x8e8e8e).opacity(0.28 * depth_factor))
                                 .corner_radii(dot_r),
                         );
                     }
@@ -797,7 +1101,7 @@ impl super::Chamber {
                     }
                 }
                 if let Ok(path) = lat_builder.build() {
-                    window.paint_path(path, gpui::rgb(0x0284c7).opacity(0.11));
+                    window.paint_path(path, gpui::rgb(0xa87ffb).opacity(0.11));
                 }
 
                 let mut mer_builder = PathBuilder::stroke(px(0.85));
@@ -815,7 +1119,7 @@ impl super::Chamber {
                     }
                 }
                 if let Ok(path) = mer_builder.build() {
-                    window.paint_path(path, gpui::rgb(0x0284c7).opacity(0.09));
+                    window.paint_path(path, gpui::rgb(0xa87ffb).opacity(0.09));
                 }
 
                 // -------------------------------------------------------------
@@ -834,7 +1138,7 @@ impl super::Chamber {
                     }
                 }
                 if let Ok(path) = belt_builder.build() {
-                    window.paint_path(path, gpui::rgb(0x00f0ff).opacity(0.18));
+                    window.paint_path(path, gpui::rgb(0xc778dd).opacity(0.18));
                 }
 
                 // Traveling quantum photons along the inclined celestial ring
@@ -857,7 +1161,7 @@ impl super::Chamber {
                         size: size(halo_r * 2.0, halo_r * 2.0),
                     };
                     window.paint_quad(
-                        fill(halo_bounds, gpui::rgb(0x00f0ff).opacity(0.25 * depth_factor)).corner_radii(halo_r),
+                        fill(halo_bounds, gpui::rgb(0xa87ffb).opacity(0.25 * depth_factor)).corner_radii(halo_r),
                     );
 
                     let photon_bounds = Bounds {
@@ -865,7 +1169,7 @@ impl super::Chamber {
                         size: size(photon_r * 2.0, photon_r * 2.0),
                     };
                     window.paint_quad(
-                        fill(photon_bounds, gpui::rgb(0xe0f2fe).opacity(0.90 * depth_factor)).corner_radii(photon_r),
+                        fill(photon_bounds, gpui::rgb(0xededed).opacity(0.90 * depth_factor)).corner_radii(photon_r),
                     );
                 }
 
@@ -910,7 +1214,7 @@ impl super::Chamber {
                         );
 
                         if let Ok(path) = builder.build() {
-                            let link_color = gpui::rgb(0x06b6d4).opacity(0.55);
+                            let link_color = gpui::rgb(0xa87ffb).opacity(0.55);
                             window.paint_path(path, link_color);
                         }
 
@@ -939,7 +1243,8 @@ impl super::Chamber {
                         size: size(radius * 2.0, radius * 2.0),
                     };
 
-                    let depth_alpha = ((node.z_depth + sphere_radius) / (2.0 * sphere_radius)).clamp(0.25, 1.0);
+                    let max_dist = sphere_radius * if node.is_seated { 1.0 } else { 1.28 };
+                    let depth_alpha = ((node.z_depth + max_dist) / (2.0 * max_dist)).clamp(0.20, 1.0);
                     let is_selected = selected_quark.as_ref().map_or(false, |q| q == &node.id);
 
                     // Selected Reticle Target Brackets
@@ -950,12 +1255,14 @@ impl super::Chamber {
                             size: size(reticle_r * 2.0, reticle_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(reticle_bounds, theme::info().opacity(0.18 * depth_alpha)).corner_radii(px(3.0)),
+                            fill(reticle_bounds, theme::info().opacity(0.22 * depth_alpha)).corner_radii(px(3.0)),
                         );
                     }
 
-                    // Active Excitation Wave Halos (when actually thinking/working or running in-flight task)
+                    // Active Excitation Wave Halos & Phase Special Effects
                     if node.is_excited {
+                        let halo_color = phase_halo_color(node.live_phase);
+
                         let pulse1 = ((time_secs * 5.0).sin() * 0.25 + 0.85) as f32;
                         let halo1_r = radius * (1.9 * pulse1);
                         let halo1_bounds = Bounds {
@@ -963,7 +1270,7 @@ impl super::Chamber {
                             size: size(halo1_r * 2.0, halo1_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(halo1_bounds, theme::success().opacity(0.28 * depth_alpha)).corner_radii(halo1_r),
+                            fill(halo1_bounds, halo_color.opacity(0.30 * depth_alpha)).corner_radii(halo1_r),
                         );
 
                         let pulse2 = (((time_secs * 5.0) - 1.2).sin() * 0.25 + 0.85) as f32;
@@ -973,8 +1280,58 @@ impl super::Chamber {
                             size: size(halo2_r * 2.0, halo2_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(halo2_bounds, theme::success().opacity(0.14 * depth_alpha)).corner_radii(halo2_r),
+                            fill(halo2_bounds, halo_color.opacity(0.15 * depth_alpha)).corner_radii(halo2_r),
                         );
+
+                        // Phase-specific effects
+                        match node.live_phase {
+                            Some(hadron_lattice::live::Doing::Working) => {
+                                // Orbiting tool satellite particle
+                                let sat_angle = (time_secs * 4.5) % (2.0 * PI);
+                                let sat_dist = radius + px(11.0 * node.scale);
+                                let sat_dist_f = f32::from(sat_dist);
+                                let sat_x = center.x + px(sat_dist_f * sat_angle.cos());
+                                let sat_y = center.y + px(sat_dist_f * sat_angle.sin());
+                                let sat_r = px(2.2 * node.scale);
+                                let sat_bounds = Bounds {
+                                    origin: point(sat_x - sat_r, sat_y - sat_r),
+                                    size: size(sat_r * 2.0, sat_r * 2.0),
+                                };
+                                window.paint_quad(
+                                    fill(sat_bounds, theme::info().opacity(0.95 * depth_alpha)).corner_radii(sat_r),
+                                );
+                                let sat_aura_r = sat_r * 1.8;
+                                let sat_aura_bounds = Bounds {
+                                    origin: point(sat_x - sat_aura_r, sat_y - sat_aura_r),
+                                    size: size(sat_aura_r * 2.0, sat_aura_r * 2.0),
+                                };
+                                window.paint_quad(
+                                    fill(sat_aura_bounds, theme::info().opacity(0.35 * depth_alpha)).corner_radii(sat_aura_r),
+                                );
+                            }
+                            Some(hadron_lattice::live::Doing::Gating) => {
+                                // Cyan energy beam to central singularity core
+                                let mut beam = PathBuilder::stroke(px(2.0 * node.scale));
+                                beam.move_to(center);
+                                beam.line_to(point(cx_pt, cy_pt));
+                                if let Ok(path) = beam.build() {
+                                    window.paint_path(path, theme::info().opacity(0.65 * depth_alpha));
+                                }
+                            }
+                            Some(hadron_lattice::live::Doing::Speaking) => {
+                                // Amber broadcast wave expansion
+                                let speak_pulse = ((time_secs * 3.5).sin() * 0.35 + 0.85) as f32;
+                                let speak_r = radius * (3.5 * speak_pulse);
+                                let speak_bounds = Bounds {
+                                    origin: point(center.x - speak_r, center.y - speak_r),
+                                    size: size(speak_r * 2.0, speak_r * 2.0),
+                                };
+                                window.paint_quad(
+                                    fill(speak_bounds, theme::warning().opacity(0.12 * depth_alpha)).corner_radii(speak_r),
+                                );
+                            }
+                            _ => {}
+                        }
                     }
 
                     // Orchestrator Golden Crown Halo
@@ -999,27 +1356,35 @@ impl super::Chamber {
                         fill(border_bounds, theme::canvas_base()).corner_radii(border_r),
                     );
 
-                    // Core Quark Node Disk
-                    let node_color = if node.is_enabled {
+                    // Core Quark Node Disk (dimmer for catalogue shell)
+                    let node_color = if node.is_seated {
                         node.color.opacity(depth_alpha)
                     } else {
-                        gpui::rgb(0x64748b).opacity(depth_alpha * 0.4).into()
+                        node.color.opacity(depth_alpha * 0.45)
                     };
                     window.paint_quad(fill(bounds, node_color).corner_radii(radius));
 
                     // Specular Center Pinpoint
-                    let spec_r = radius * 0.35;
-                    let spec_bounds = Bounds {
-                        origin: point(center.x - spec_r * 0.7, center.y - spec_r * 0.7),
-                        size: size(spec_r * 1.4, spec_r * 1.4),
-                    };
-                    window.paint_quad(
-                        fill(spec_bounds, gpui::rgb(0xffffff).opacity(0.65 * depth_alpha)).corner_radii(spec_r),
-                    );
+                    if node.is_seated {
+                        let spec_r = radius * 0.35;
+                        let spec_bounds = Bounds {
+                            origin: point(center.x - spec_r * 0.7, center.y - spec_r * 0.7),
+                            size: size(spec_r * 1.4, spec_r * 1.4),
+                        };
+                        window.paint_quad(
+                            fill(spec_bounds, gpui::rgb(0xffffff).opacity(0.65 * depth_alpha)).corner_radii(spec_r),
+                        );
+                    }
                 }
             },
         )
         .size_full();
+
+        // Node angles map for canvas click-to-snap rotation
+        let node_angles_map: std::collections::HashMap<String, (f32, f32)> = nodes
+            .iter()
+            .map(|n| (n.id.clone(), (n.theta, n.phi)))
+            .collect();
 
         // Canvas container with mouse drag rotation, scroll zoom, and click-to-select
         let canvas_container = div()
@@ -1051,7 +1416,13 @@ impl super::Chamber {
                     }
 
                     if let Some(qid) = clicked_quark {
-                        this.visualizer_selected_quark = Some(qid);
+                        this.visualizer_selected_quark = Some(qid.clone());
+                        if let Some(&(th, ph)) = node_angles_map.get(&qid) {
+                            let (snap_yaw, snap_pitch) = focus_angles_for_spherical(th, ph);
+                            this.visualizer_yaw = snap_yaw;
+                            this.visualizer_pitch = snap_pitch;
+                            this.visualizer_auto_spin = false;
+                        }
                     }
                     cx.notify();
                 }),
@@ -1094,6 +1465,7 @@ impl super::Chamber {
             .size_full()
             .bg(theme::canvas_base())
             .child(header)
+            .children(activity_dock)
             .child(canvas_container)
             .children(selected_hud)
     }
@@ -1192,5 +1564,82 @@ mod tests {
             let dist_sq = LATTICE_UNIT_NODES[i].dist_sq(&LATTICE_UNIT_NODES[j]);
             assert!(dist_sq < 0.44 * 0.44 + 1e-5);
         }
+    }
+
+    #[test]
+    fn focus_angles_rotates_to_front_hemisphere() {
+        let test_cases = [
+            (0.0f32, 0.0f32),
+            (0.5, 1.2),
+            (-0.4, 2.8),
+            (1.12, 0.0), // Orchestrator apex
+            (-0.75, 4.5),
+            (0.3, 5.8),
+            (-1.2, 3.14),
+        ];
+
+        for (theta, phi) in test_cases {
+            let (yaw, pitch) = focus_angles_for_spherical(theta, phi);
+            let p = Point3D::from_spherical(100.0, theta, phi);
+            let rot_p = Rotation3D::new(yaw, pitch).transform(p);
+
+            assert!(
+                rot_p.z > 0.0,
+                "Point rotated by focus_angles_for_spherical must be in front hemisphere (z > 0), got z={}",
+                rot_p.z
+            );
+            assert!(
+                rot_p.x.abs() < 1e-2,
+                "Point rotated by focus_angles_for_spherical must be centered on X, got x={}",
+                rot_p.x
+            );
+            assert!(
+                rot_p.y.abs() < 1e-2,
+                "Point rotated by focus_angles_for_spherical must be centered on Y, got y={}",
+                rot_p.y
+            );
+        }
+    }
+
+    #[test]
+    fn phase_halo_color_selection() {
+        assert_eq!(
+            phase_halo_color(Some(hadron_lattice::live::Doing::Thinking)),
+            theme::halo_reasoning()
+        );
+        assert_eq!(
+            phase_halo_color(Some(hadron_lattice::live::Doing::Working)),
+            theme::success().into()
+        );
+        assert_eq!(
+            phase_halo_color(Some(hadron_lattice::live::Doing::Planning)),
+            theme::halo_reasoning()
+        );
+        assert_eq!(
+            phase_halo_color(Some(hadron_lattice::live::Doing::Speaking)),
+            theme::warning().into()
+        );
+        assert_eq!(
+            phase_halo_color(Some(hadron_lattice::live::Doing::Gating)),
+            theme::info().into()
+        );
+        assert_eq!(phase_halo_color(None), theme::success().into());
+    }
+
+    #[test]
+    fn dual_shell_topology_radius_scaling() {
+        let base_radius = 160.0;
+        let inner_r = base_radius * 1.0;
+        let outer_r = base_radius * 1.28;
+
+        let p_inner = Point3D::from_spherical(inner_r, 0.5, 1.0);
+        let p_outer = Point3D::from_spherical(outer_r, 0.5, 1.0);
+
+        let dist_inner = (p_inner.x * p_inner.x + p_inner.y * p_inner.y + p_inner.z * p_inner.z).sqrt();
+        let dist_outer = (p_outer.x * p_outer.x + p_outer.y * p_outer.y + p_outer.z * p_outer.z).sqrt();
+
+        assert!((dist_inner - 160.0).abs() < 1e-3);
+        assert!((dist_outer - 204.8).abs() < 1e-3);
+        assert!(dist_outer > dist_inner);
     }
 }

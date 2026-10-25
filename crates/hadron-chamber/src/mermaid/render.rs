@@ -16,14 +16,14 @@ use std::hash::{Hash, Hasher};
 
 #[cfg(feature = "gui")]
 const DIAGRAM_PALETTE: [u32; 8] = [
-    0x38bdf8, // Synapse Cyan
+    0xc778dd, // Muted Orchid
     0x62c073, // Emerald-Mint
-    0xe5c07b, // Muted Amber
-    0x9d7cd8, // Kinetic Amethyst
+    0xe5c07b, // Warm Amber
+    0xa87ffb, // Warm Violet
     0xe06c75, // Coral Red
     0x2dd4bf, // Teal
-    0x8a93a6, // Slate Secondary
-    0x818cf8, // Indigo
+    0x8e8e8e, // Neutral Pewter Gray
+    0xf472b6, // Warm Rose
 ];
 
 /// Interactive Mermaid Diagram Card Component

@@ -26,7 +26,7 @@ use gpui::{rgb, rgba, Hsla, Rgba};
 use hadron_lattice::QuarkState;
 
 static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0); // 0: Obsidian, 1: Oled, 2: Midnight, 3: Tokyo, 4: Nord, 5: Catppuccin, 6: Gruvbox
-static ACTIVE_ACCENT: AtomicU32 = AtomicU32::new(0x9d7cd8); // 0xRRGGBB (kinetic amethyst default)
+static ACTIVE_ACCENT: AtomicU32 = AtomicU32::new(0xa87ffb); // 0xRRGGBB (warm violet default)
 static ACTIVE_CUSTOM_THEME: std::sync::RwLock<Option<ResolvedTheme>> = std::sync::RwLock::new(None);
 
 /// Fully resolved, GPU-ready theme colors parsed from a `ThemeDefinition`.
@@ -82,28 +82,28 @@ pub struct ResolvedTheme {
 impl ResolvedTheme {
     pub fn from_definition(def: &crate::config::ThemeDefinition) -> Self {
         use crate::config::parse_hex_color;
-        let c_base = parse_hex_color(&def.surfaces.canvas_base).unwrap_or_else(|| rgb(0x050505));
-        let b_base = parse_hex_color(&def.surfaces.bg_base).unwrap_or_else(|| rgb(0x0b0b0b));
-        let b_surf = parse_hex_color(&def.surfaces.bg_surface).unwrap_or_else(|| rgb(0x101010));
-        let b_raised = parse_hex_color(&def.surfaces.bg_surface_raised).unwrap_or_else(|| rgb(0x1c1c1c));
-        let b_elevated = parse_hex_color(&def.surfaces.bg_elevated).unwrap_or_else(|| rgb(0x242424));
-        let in_bg = parse_hex_color(&def.surfaces.input_bg).unwrap_or_else(|| rgb(0x181818));
-        let brd = parse_hex_color(&def.surfaces.border).unwrap_or_else(|| rgb(0x444444));
-        let pop = parse_hex_color(&def.surfaces.popover).unwrap_or_else(|| rgb(0x101010));
+        let c_base = parse_hex_color(&def.surfaces.canvas_base).unwrap_or_else(|| rgb(0x0f0f0f));
+        let b_base = parse_hex_color(&def.surfaces.bg_base).unwrap_or_else(|| rgb(0x171717));
+        let b_surf = parse_hex_color(&def.surfaces.bg_surface).unwrap_or_else(|| rgb(0x171717));
+        let b_raised = parse_hex_color(&def.surfaces.bg_surface_raised).unwrap_or_else(|| rgb(0x262626));
+        let b_elevated = parse_hex_color(&def.surfaces.bg_elevated).unwrap_or_else(|| rgb(0x1f1f1f));
+        let in_bg = parse_hex_color(&def.surfaces.input_bg).unwrap_or_else(|| rgb(0x1f1f1f));
+        let brd = parse_hex_color(&def.surfaces.border).unwrap_or_else(|| rgb(0x2e2e2e));
+        let pop = parse_hex_color(&def.surfaces.popover).unwrap_or_else(|| rgb(0x171717));
 
-        let t_bg = parse_hex_color(&def.terminal.bg).unwrap_or_else(|| rgb(0x080808));
-        let t_fg = parse_hex_color(&def.terminal.fg).unwrap_or_else(|| rgb(0xe6edf3));
+        let t_bg = parse_hex_color(&def.terminal.bg).unwrap_or_else(|| rgb(0x0f0f0f));
+        let t_fg = parse_hex_color(&def.terminal.fg).unwrap_or_else(|| rgb(0xededed));
         let t_prompt = parse_hex_color(&def.terminal.prompt).unwrap_or_else(|| rgb(0x62c073));
 
-        let p_accent = parse_hex_color(&def.accents.primary).unwrap_or_else(|| rgb(0x9d7cd8));
-        let g_blue = parse_hex_color(&def.accents.glow_blue).unwrap_or_else(|| rgba(0x38bdf81c));
-        let g_pink = parse_hex_color(&def.accents.glow_pink).unwrap_or_else(|| rgba(0x9d7cd815));
+        let p_accent = parse_hex_color(&def.accents.primary).unwrap_or_else(|| rgb(0xa87ffb));
+        let g_blue = parse_hex_color(&def.accents.glow_blue).unwrap_or_else(|| rgba(0xc778dd1c));
+        let g_pink = parse_hex_color(&def.accents.glow_pink).unwrap_or_else(|| rgba(0xa87ffb15));
         let g_green = parse_hex_color(&def.accents.glow_green).unwrap_or_else(|| rgba(0x62c0731a));
         let g_amber = parse_hex_color(&def.accents.glow_amber).unwrap_or_else(|| rgba(0xe5c07b1a));
 
-        let txt_pri = parse_hex_color(&def.text.primary).unwrap_or_else(|| rgb(0xe6edf3));
-        let txt_sec = parse_hex_color(&def.text.secondary).unwrap_or_else(|| rgb(0x8a93a6));
-        let txt_mut = parse_hex_color(&def.text.muted).unwrap_or_else(|| rgb(0x8a93a6));
+        let txt_pri = parse_hex_color(&def.text.primary).unwrap_or_else(|| rgb(0xededed));
+        let txt_sec = parse_hex_color(&def.text.secondary).unwrap_or_else(|| rgb(0x8e8e8e));
+        let txt_mut = parse_hex_color(&def.text.muted).unwrap_or_else(|| rgb(0x8e8e8e));
 
         let syn_kw = parse_hex_color(&def.syntax.keyword).unwrap_or_else(|| rgb(0xf97583));
         let syn_fn = parse_hex_color(&def.syntax.function).unwrap_or_else(|| rgb(0xb392f0));
@@ -123,7 +123,7 @@ impl ResolvedTheme {
         let stat_succ = parse_hex_color(&def.status.success).unwrap_or_else(|| rgb(0x62c073));
         let stat_warn = parse_hex_color(&def.status.warning).unwrap_or_else(|| rgb(0xe5c07b));
         let stat_err = parse_hex_color(&def.status.error).unwrap_or_else(|| rgb(0xe06c75));
-        let stat_info = parse_hex_color(&def.status.info).unwrap_or_else(|| rgb(0x38bdf8));
+        let stat_info = parse_hex_color(&def.status.info).unwrap_or_else(|| rgb(0xc778dd));
 
         Self {
             id: def.id.clone(),
@@ -393,14 +393,14 @@ pub fn glow_blue() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.glow_blue
     } else {
-        rgba(0x38bdf81c) // working / excited — top-left
+        rgba(0xc778dd1c) // working / excited — top-left (muted orchid)
     }
 }
 pub fn glow_pink() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.glow_pink
     } else {
-        rgba(0x9d7cd815) // thinking / reasoning — top-right
+        rgba(0xa87ffb15) // thinking / reasoning — top-right (warm violet)
     }
 }
 pub fn glow_green() -> Rgba {
@@ -412,7 +412,7 @@ pub fn glow_green() -> Rgba {
 }
 
 // --- surfaces (recessed → raised) --- borderless glass surface hierarchy over cosmic obsidian base.
-/// Recessed inner surface (deepest wells), the neutral panel tone (`#0b0b0b`).
+/// Recessed inner surface (deepest wells), the neutral panel tone (`#171717`).
 pub fn bg_base() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.bg_base
@@ -426,7 +426,7 @@ pub fn bg_base() -> Rgba {
 pub fn window_glint() -> Rgba {
     field_base()
 }
-/// A step-lighter neutral tone for lifted chrome and selected controls (`#242424`).
+/// A step-lighter neutral tone for lifted chrome and selected controls (`#1f1f1f`).
 pub fn bg_elevated() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.bg_elevated
@@ -435,7 +435,7 @@ pub fn bg_elevated() -> Rgba {
     }
 }
 
-/// Layer 1 (Panels & Rails): Neutral dark panel layer (`#0b0b0bf2`).
+/// Layer 1 (Panels & Rails): Neutral dark panel layer (`#171717f2`).
 pub fn glass_surface() -> Hsla {
     let base = bg_base();
     rgba(
@@ -447,12 +447,12 @@ pub fn glass_surface() -> Hsla {
     .into()
 }
 
-/// Tab bar background token matching main obsidian field (`#050505`).
+/// Tab bar background token matching main obsidian field (`#0f0f0f`).
 pub fn tab_bar_bg() -> Rgba {
     canvas_base().into()
 }
 
-/// Layer 2 (Floating Cards & Modals): Elevated neutral dark cards (`#0b0b0bf8`).
+/// Layer 2 (Floating Cards & Modals): Elevated neutral dark cards (`#171717f8`).
 pub fn glass_card() -> Hsla {
     let base = bg_base();
     rgba(
@@ -475,14 +475,14 @@ pub fn hairline_border() -> Hsla {
 }
 
 // --- vector status halo indicators ---
-/// Active status halo (Synapse Cyan `#38bdf8`) for tool execution / active state.
+/// Active status halo (Muted Orchid `#c778dd`) for tool execution / active state.
 pub fn halo_active() -> Hsla {
-    rgb(0x38bdf8).into()
+    rgb(0xc778dd).into()
 }
 
-/// Reasoning status halo (Kinetic Amethyst `#9d7cd8`) for reasoning / thinking state.
+/// Reasoning status halo (Warm Violet `#a87ffb`) for reasoning / thinking state.
 pub fn halo_reasoning() -> Hsla {
-    rgb(0x9d7cd8).into()
+    rgb(0xa87ffb).into()
 }
 
 /// Idle status halo (Emerald-Mint `#62c073`) for ground / waiting / available state.
@@ -520,12 +520,12 @@ pub fn term_bg() -> Rgba {
         palette_for_preset(active_preset()).term_bg
     }
 }
-/// Default terminal output foreground — crisp primary text (`#e6edf3`).
+/// Default terminal output foreground — crisp primary text (`#ededed`).
 pub fn term_fg() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.term_fg
     } else {
-        rgb(0xe6edf3)
+        rgb(0xededed)
     }
 }
 /// The shell prompt (`user@host: cwd$`) — emerald-mint green (`#62c073`).
@@ -577,21 +577,21 @@ pub fn text() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.text_primary
     } else {
-        rgb(0xe6edf3)
+        rgb(0xededed)
     }
 }
 pub fn text_secondary() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.text_secondary
     } else {
-        rgb(0x8a93a6)
+        rgb(0x8e8e8e)
     }
 }
 pub fn text_muted() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.text_muted
     } else {
-        rgb(0x8a93a6)
+        rgb(0x8e8e8e)
     }
 }
 
@@ -601,7 +601,7 @@ pub fn syntax_boolean() -> Rgba { active_custom_theme().map(|t| t.syntax_boolean
 pub fn syntax_comment() -> Rgba { active_custom_theme().map(|t| t.syntax_comment).unwrap_or_else(|| rgb(0x7e888c)) }
 pub fn syntax_constant() -> Rgba { active_custom_theme().map(|t| t.syntax_constant).unwrap_or_else(|| rgb(0x79b8ff)) }
 pub fn syntax_constructor() -> Rgba { active_custom_theme().map(|t| t.syntax_function).unwrap_or_else(|| rgb(0xb392f0)) }
-pub fn syntax_embedded() -> Rgba { active_custom_theme().map(|t| t.text_primary).unwrap_or_else(|| rgb(0xe6edf3)) }
+pub fn syntax_embedded() -> Rgba { active_custom_theme().map(|t| t.text_primary).unwrap_or_else(|| rgb(0xededed)) }
 pub fn syntax_emphasis() -> Rgba { active_custom_theme().map(|t| t.syntax_variable).unwrap_or_else(|| rgb(0xe1e4e8)) }
 pub fn syntax_enum() -> Rgba { active_custom_theme().map(|t| t.syntax_type).unwrap_or_else(|| rgb(0x79b8ff)) }
 pub fn syntax_function() -> Rgba { active_custom_theme().map(|t| t.syntax_function).unwrap_or_else(|| rgb(0xb392f0)) }
@@ -684,18 +684,18 @@ pub struct PresetPalette {
 pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
     match preset {
         crate::config::ThemePreset::Obsidian => PresetPalette {
-            canvas_base: rgb(0x050505),
-            bg_base: rgb(0x0b0b0b),
-            bg_surface: rgb(0x101010),
-            bg_surface_raised: rgb(0x1c1c1c),
-            bg_elevated: rgb(0x242424),
-            input_bg: rgb(0x181818),
-            term_bg: rgb(0x080808),
-            border: rgb(0x444444),
+            canvas_base: rgb(0x0f0f0f),
+            bg_base: rgb(0x171717),
+            bg_surface: rgb(0x171717),
+            bg_surface_raised: rgb(0x262626),
+            bg_elevated: rgb(0x1f1f1f),
+            input_bg: rgb(0x1f1f1f),
+            term_bg: rgb(0x0f0f0f),
+            border: rgb(0x2e2e2e),
             success: rgb(0x62c073),
             warning: rgb(0xe5c07b),
             error: rgb(0xe06c75),
-            info: rgb(0x38bdf8),
+            info: rgb(0xc778dd),
         },
         crate::config::ThemePreset::Oled => PresetPalette {
             canvas_base: rgb(0x000000),
@@ -709,7 +709,7 @@ pub fn palette_for_preset(preset: crate::config::ThemePreset) -> PresetPalette {
             success: rgb(0x62c073),
             warning: rgb(0xe5c07b),
             error: rgb(0xe06c75),
-            info: rgb(0x38bdf8),
+            info: rgb(0xc778dd),
         },
         crate::config::ThemePreset::Midnight => PresetPalette {
             canvas_base: rgb(0x090d16),
@@ -852,41 +852,41 @@ pub fn accent_soft() -> Rgba {
     active_accent().opacity(0.40)
 }
 pub fn accent_secondary() -> Rgba {
-    rgb(0x9d7cd8) // kinetic amethyst — thinking
+    rgb(0xa87ffb) // warm violet — thinking
 }
 pub fn danger() -> Rgba {
     rgb(0xef4444) // standard red — window close-button hover
 }
-/// Markdown link colour in chat — light blue (sky), distinct from the amethyst accent.
+/// Markdown link colour in chat — warm orchid-violet, distinct from primary text.
 pub fn link() -> Rgba {
-    rgb(0x7dd3fc) // sky-300
+    rgb(0xc778dd) // muted orchid-purple
 }
 pub fn link_hover() -> Rgba {
-    rgb(0xbae6fd) // sky-200 — brighter on hover
+    rgb(0xd896eb) // brighter orchid on hover
 }
 pub fn link_active() -> Rgba {
-    rgb(0x38bdf8) // sky-400 — darker while pressed
+    rgb(0xa87ffb) // warm violet while pressed
 }
 
 /// Roster chip color for a quark's lifecycle state (the status ramp).
 pub fn quark_state(state: QuarkState) -> Rgba {
     match state {
-        QuarkState::Ground => rgb(0x8a93a6),   // muted slate-blue
-        QuarkState::Excited => rgb(0x38bdf8),  // synapse cyan — active
-        QuarkState::Thinking => rgb(0x9d7cd8), // kinetic amethyst — reasoning
-        QuarkState::Waiting => rgb(0xe5c07b),  // muted amber — waiting
+        QuarkState::Ground => rgb(0x8e8e8e),   // neutral pewter gray
+        QuarkState::Excited => rgb(0xc778dd),  // muted orchid — active
+        QuarkState::Thinking => rgb(0xa87ffb), // warm violet — reasoning
+        QuarkState::Waiting => rgb(0xe5c07b),  // warm amber — waiting
         QuarkState::Blocked | QuarkState::Error => rgb(0xe06c75), // coral red — conflict/error
     }
 }
 
 /// Presence-dot color for the roster user-list — Jake's traffic-light semantics
-/// (green available · blue working · amber waiting · red unavailable), distinct
+/// (green available · violet/orchid working · amber waiting · red unavailable), distinct
 /// from the [`quark_state`] accent ramp used elsewhere.
 pub fn presence(state: QuarkState) -> Rgba {
     match state {
         QuarkState::Ground => rgb(0x62c073), // emerald-mint — available
-        QuarkState::Excited | QuarkState::Thinking => rgb(0x38bdf8), // synapse cyan — working
-        QuarkState::Waiting => rgb(0xe5c07b), // muted amber — waiting on a decision
+        QuarkState::Excited | QuarkState::Thinking => rgb(0xa87ffb), // warm violet — working
+        QuarkState::Waiting => rgb(0xe5c07b), // warm amber — waiting on a decision
         QuarkState::Blocked | QuarkState::Error => rgb(0xe06c75), // coral red — unavailable
     }
 }
@@ -908,16 +908,16 @@ pub fn presence_label(state: QuarkState) -> &'static str {
 /// The auto-assignment palette: distinct, legible hues a quark cycles through by name
 /// when it has no custom colour. Exposed so a colour picker can offer them as presets.
 pub const AUTO_PALETTE: [u32; 12] = [
-    0x38bdf8, // synapse cyan
+    0xc778dd, // muted orchid
     0x62c073, // emerald-mint
-    0x9d7cd8, // kinetic amethyst
-    0xe5c07b, // muted amber
+    0xa87ffb, // warm violet
+    0xe5c07b, // warm amber
     0xe06c75, // coral red
-    0x8a93a6, // slate secondary
+    0x8e8e8e, // neutral pewter gray
     0x2dd4bf, // soft ice teal
     0x10b981, // muted sage green
     0xf97316, // soft terracotta orange
-    0x818cf8, // soft dusk indigo
+    0xf472b6, // warm rose
     0xc084fc, // soft orchid
     0x9333ea, // muted royal purple
 ];
@@ -928,8 +928,8 @@ pub const AUTO_PALETTE: [u32; 12] = [
 /// `ChamberView`/`Chamber::color_for`).
 pub fn actor_hue(actor: &str) -> Rgba {
     match actor {
-        "human" => rgb(0xe6edf3), // bright primary — the human
-        "gluon" => rgb(0x38bdf8), // synapse cyan — the system
+        "human" => rgb(0xededed), // crisp neutral white — the human
+        "gluon" => rgb(0xc778dd), // muted orchid — the system
         other => {
             let idx = (other.bytes().fold(0u32, |a, b| a.wrapping_add(b as u32)) as usize)
                 % AUTO_PALETTE.len();
@@ -950,7 +950,7 @@ mod tests {
         let _guard = THEME_TEST_MUTEX.lock().unwrap();
         set_active_preset(crate::config::ThemePreset::Obsidian);
         let base = canvas_base();
-        let expected: Hsla = rgb(0x050505).into();
+        let expected: Hsla = rgb(0x0f0f0f).into();
         assert_eq!(base, expected);
         assert_eq!(base.a, 1.0);
     }
@@ -960,7 +960,7 @@ mod tests {
         let _guard = THEME_TEST_MUTEX.lock().unwrap();
         set_active_preset(crate::config::ThemePreset::Obsidian);
         let surface = glass_surface();
-        let expected: Hsla = rgba(0x0b0b0bf2).into();
+        let expected: Hsla = rgba(0x171717f2).into();
         assert_eq!(surface, expected);
     }
 
@@ -969,7 +969,7 @@ mod tests {
         let _guard = THEME_TEST_MUTEX.lock().unwrap();
         set_active_preset(crate::config::ThemePreset::Obsidian);
         let bg = tab_bar_bg();
-        let expected = rgb(0x050505);
+        let expected = rgb(0x0f0f0f);
         assert_eq!(bg, expected);
     }
 
@@ -978,22 +978,22 @@ mod tests {
         let _guard = THEME_TEST_MUTEX.lock().unwrap();
         set_active_preset(crate::config::ThemePreset::Obsidian);
         let card = glass_card();
-        let expected: Hsla = rgba(0x0b0b0bf8).into();
+        let expected: Hsla = rgba(0x171717f8).into();
         assert_eq!(card, expected);
     }
 
     #[test]
     fn test_neutral_palette_tokens() {
-        assert_eq!(modal_surface(), rgb(0x101010));
-        assert_eq!(bg_surface(), rgb(0x101010));
-        assert_eq!(popover(), rgb(0x101010));
-        assert_eq!(input_bg(), rgb(0x181818));
-        assert_eq!(bg_surface_raised(), rgb(0x1c1c1c));
-        assert_eq!(border(), rgb(0x444444));
-        assert_eq!(text(), rgb(0xe6edf3));
-        assert_eq!(term_fg(), rgb(0xe6edf3));
-        assert_eq!(text_secondary(), rgb(0x8a93a6));
-        assert_eq!(text_muted(), rgb(0x8a93a6));
+        assert_eq!(modal_surface(), rgb(0x171717));
+        assert_eq!(bg_surface(), rgb(0x171717));
+        assert_eq!(popover(), rgb(0x171717));
+        assert_eq!(input_bg(), rgb(0x1f1f1f));
+        assert_eq!(bg_surface_raised(), rgb(0x262626));
+        assert_eq!(border(), rgb(0x2e2e2e));
+        assert_eq!(text(), rgb(0xededed));
+        assert_eq!(term_fg(), rgb(0xededed));
+        assert_eq!(text_secondary(), rgb(0x8e8e8e));
+        assert_eq!(text_muted(), rgb(0x8e8e8e));
     }
 
     #[test]
@@ -1025,8 +1025,8 @@ mod tests {
 
     #[test]
     fn test_halo_color_tokens() {
-        assert_eq!(halo_active(), Hsla::from(rgb(0x38bdf8)));
-        assert_eq!(halo_reasoning(), Hsla::from(rgb(0x9d7cd8)));
+        assert_eq!(halo_active(), Hsla::from(rgb(0xc778dd)));
+        assert_eq!(halo_reasoning(), Hsla::from(rgb(0xa87ffb)));
         assert_eq!(halo_idle(), Hsla::from(rgb(0x62c073)));
         assert_eq!(halo_error(), Hsla::from(rgb(0xe06c75)));
     }
@@ -1123,7 +1123,7 @@ mod tests {
         assert_eq!(success(), rgb(0x62c073));
         assert_eq!(warning(), rgb(0xe5c07b));
         assert_eq!(error(), rgb(0xe06c75));
-        assert_eq!(info(), rgb(0x38bdf8));
+        assert_eq!(info(), rgb(0xc778dd));
         assert_eq!(git_added(), success());
         assert_eq!(git_modified(), warning());
         assert_eq!(git_deleted(), error());
@@ -1170,7 +1170,7 @@ mod tests {
         set_active_preset(crate::config::ThemePreset::Obsidian);
         set_active_accent(crate::config::AccentChoice::Amethyst);
         assert_eq!(active_preset(), crate::config::ThemePreset::Obsidian);
-        assert_eq!(accent(), rgb(0x9d7cd8));
+        assert_eq!(accent(), rgb(0xa87ffb));
 
         set_active_preset(crate::config::ThemePreset::Oled);
         assert_eq!(active_preset(), crate::config::ThemePreset::Oled);
@@ -1238,7 +1238,7 @@ mod tests {
         // Reverting to preset clears custom theme override
         set_active_preset(crate::config::ThemePreset::Obsidian);
         assert_eq!(active_custom_theme(), None);
-        assert_eq!(canvas_base(), rgb(0x050505).into());
+        assert_eq!(canvas_base(), rgb(0x0f0f0f).into());
         assert_eq!(syntax_keyword(), rgb(0xf97583));
     }
 

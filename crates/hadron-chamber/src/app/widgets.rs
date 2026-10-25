@@ -1668,7 +1668,7 @@ pub(super) fn github_syntax_theme() -> std::sync::Arc<gpui_component::highlighte
                         "comment.doc": { "color": "#7e888cff" },
                         "constant": { "color": "#79b8ffff" },
                         "constructor": { "color": "#b392f0ff" },
-                        "embedded": { "color": "#e6edf3ff" },
+                        "embedded": { "color": "#edededff" },
                         "emphasis": { "color": "#e1e4e8ff", "font_style": "italic" },
                         "emphasis.strong": { "color": "#e1e4e8ff", "font_weight": 700 },
                         "enum": { "color": "#79b8ffff" },

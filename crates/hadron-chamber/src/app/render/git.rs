@@ -13,12 +13,12 @@ pub(super) enum DiffPanel {
 
 /// Lane colours, cycled by rail column, so the commit graph reads as coloured lanes
 /// rather than monochrome ASCII. Distinct on the near-black field.
-const LANE_COLORS: [u32; 6] = [0x62c073, 0x38bdf8, 0xe5c07b, 0x9d7cd8, 0x2dd4bf, 0xe06c75];
+const LANE_COLORS: [u32; 6] = [0x62c073, 0xc778dd, 0xe5c07b, 0xa87ffb, 0x2dd4bf, 0xe06c75];
 /// A commit that has landed in `main` (green) vs one still in flight (rose); a
 /// detached / unknown HEAD is neutral (it has no branch to be merged).
 const MERGED_COLOR: u32 = 0x62c073;
 const UNMERGED_COLOR: u32 = 0xe06c75;
-const NEUTRAL_COLOR: u32 = 0x8a93a6;
+const NEUTRAL_COLOR: u32 = 0x8e8e8e;
 const ADD_COLOR: u32 = 0x62c073;
 const DEL_COLOR: u32 = 0xe06c75;
 /// One graph rail column width in px when painting vector lanes.
@@ -71,7 +71,7 @@ impl super::Chamber {
                                 .py_2()
                                 .rounded_md()
                                 .bg(theme::accent())
-                                .text_color(gpui::rgb(0x050505))
+                                .text_color(theme::field_base())
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_xs()
                                 .text_center()
@@ -1392,9 +1392,9 @@ impl super::Chamber {
 
             let (state_color, state_text) = match del.state {
                 DelegationState::Pending => (0xe5c07b, "Pending"),
-                DelegationState::Working => (0x38bdf8, "Working"),
+                DelegationState::Working => (0xc778dd, "Working"),
                 DelegationState::Completed => (0x62c073, "Completed"),
-                DelegationState::Blocked => (0x8a93a6, "Blocked"),
+                DelegationState::Blocked => (0x8e8e8e, "Blocked"),
                 DelegationState::Error => (0xe06c75, "Error"),
             };
 

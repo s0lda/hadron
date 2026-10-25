@@ -544,8 +544,8 @@ impl AccentChoice {
 
     pub fn rgb(self) -> gpui::Rgba {
         match self {
-            AccentChoice::Amethyst => gpui::rgb(0x9d7cd8),
-            AccentChoice::Sapphire => gpui::rgb(0x38bdf8),
+            AccentChoice::Amethyst => gpui::rgb(0xa87ffb),
+            AccentChoice::Sapphire => gpui::rgb(0xc778dd),
             AccentChoice::Emerald => gpui::rgb(0x62c073),
             AccentChoice::Amber => gpui::rgb(0xe5c07b),
             AccentChoice::Rose => gpui::rgb(0xf472b6),
@@ -555,8 +555,8 @@ impl AccentChoice {
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "amethyst" | "purple" | "default" => Some(AccentChoice::Amethyst),
-            "sapphire" | "blue" => Some(AccentChoice::Sapphire),
+            "amethyst" | "purple" | "veloceon" | "default" => Some(AccentChoice::Amethyst),
+            "sapphire" | "blue" | "orchid" => Some(AccentChoice::Sapphire),
             "emerald" | "green" => Some(AccentChoice::Emerald),
             "amber" | "yellow" => Some(AccentChoice::Amber),
             "rose" | "pink" => Some(AccentChoice::Rose),
@@ -607,8 +607,8 @@ pub struct AccentPalette {
     pub glow_amber: String,
 }
 
-fn default_glow_blue_hex() -> String { "#38bdf8".to_string() }
-fn default_glow_pink_hex() -> String { "#9d7cd8".to_string() }
+fn default_glow_blue_hex() -> String { "#c778dd".to_string() }
+fn default_glow_pink_hex() -> String { "#a87ffb".to_string() }
 fn default_glow_green_hex() -> String { "#62c073".to_string() }
 fn default_glow_amber_hex() -> String { "#e5c07b".to_string() }
 
@@ -659,7 +659,7 @@ pub struct StatusPalette {
 fn default_status_success() -> String { "#62c073".to_string() }
 fn default_status_warning() -> String { "#e5c07b".to_string() }
 fn default_status_error() -> String { "#e06c75".to_string() }
-fn default_status_info() -> String { "#38bdf8".to_string() }
+fn default_status_info() -> String { "#c778dd".to_string() }
 
 impl Default for StatusPalette {
     fn default() -> Self {
@@ -685,31 +685,31 @@ impl ThemeDefinition {
             name: "Obsidian Neutral".into(),
             is_dark: true,
             surfaces: SurfacePalette {
-                canvas_base: "#050505".into(),
-                bg_base: "#0b0b0b".into(),
-                bg_surface: "#101010".into(),
-                bg_surface_raised: "#1c1c1c".into(),
-                bg_elevated: "#242424".into(),
-                input_bg: "#181818".into(),
-                border: "#444444".into(),
-                popover: "#101010".into(),
+                canvas_base: "#0f0f0f".into(),
+                bg_base: "#171717".into(),
+                bg_surface: "#171717".into(),
+                bg_surface_raised: "#262626".into(),
+                bg_elevated: "#1f1f1f".into(),
+                input_bg: "#1f1f1f".into(),
+                border: "#2e2e2e".into(),
+                popover: "#171717".into(),
             },
             accents: AccentPalette {
-                primary: "#9d7cd8".into(),
-                glow_blue: "#38bdf8".into(),
-                glow_pink: "#9d7cd8".into(),
+                primary: "#a87ffb".into(),
+                glow_blue: "#c778dd".into(),
+                glow_pink: "#a87ffb".into(),
                 glow_green: "#62c073".into(),
                 glow_amber: "#e5c07b".into(),
             },
             text: TextPalette {
-                primary: "#e6edf3".into(),
-                secondary: "#8a93a6".into(),
-                muted: "#8a93a6".into(),
+                primary: "#ededed".into(),
+                secondary: "#8e8e8e".into(),
+                muted: "#8e8e8e".into(),
             },
             syntax: SyntaxPalette::default_dark(),
             terminal: TerminalPalette {
-                bg: "#080808".into(),
-                fg: "#e6edf3".into(),
+                bg: "#0f0f0f".into(),
+                fg: "#ededed".into(),
                 prompt: "#62c073".into(),
             },
             status: StatusPalette::default(),
@@ -732,21 +732,21 @@ impl ThemeDefinition {
                 popover: "#0a0a0a".into(),
             },
             accents: AccentPalette {
-                primary: "#9d7cd8".into(),
-                glow_blue: "#38bdf8".into(),
-                glow_pink: "#9d7cd8".into(),
+                primary: "#a87ffb".into(),
+                glow_blue: "#c778dd".into(),
+                glow_pink: "#a87ffb".into(),
                 glow_green: "#62c073".into(),
                 glow_amber: "#e5c07b".into(),
             },
             text: TextPalette {
-                primary: "#e6edf3".into(),
-                secondary: "#8a93a6".into(),
-                muted: "#8a93a6".into(),
+                primary: "#ededed".into(),
+                secondary: "#8e8e8e".into(),
+                muted: "#8e8e8e".into(),
             },
             syntax: SyntaxPalette::default_dark(),
             terminal: TerminalPalette {
                 bg: "#000000".into(),
-                fg: "#e6edf3".into(),
+                fg: "#ededed".into(),
                 prompt: "#62c073".into(),
             },
             status: StatusPalette::default(),
@@ -1213,22 +1213,39 @@ pub fn load_from(path: &Path) -> ChamberPrefs {
                 if custom.status.error.eq_ignore_ascii_case("#f87171") {
                     custom.status.error = "#e06c75".into();
                 }
-                if custom.status.info.eq_ignore_ascii_case("#60a5fa") {
-                    custom.status.info = "#38bdf8".into();
+                if custom.status.info.eq_ignore_ascii_case("#60a5fa")
+                    || custom.status.info.eq_ignore_ascii_case("#38bdf8")
+                {
+                    custom.status.info = "#c778dd".into();
                 }
                 if custom.accents.glow_green.eq_ignore_ascii_case("#34d399") {
                     custom.accents.glow_green = "#62c073".into();
                 }
-                if custom.accents.glow_blue.eq_ignore_ascii_case("#60a5fa") {
-                    custom.accents.glow_blue = "#38bdf8".into();
+                if custom.accents.glow_blue.eq_ignore_ascii_case("#60a5fa")
+                    || custom.accents.glow_blue.eq_ignore_ascii_case("#38bdf8")
+                {
+                    custom.accents.glow_blue = "#c778dd".into();
                 }
                 if custom.accents.glow_pink.eq_ignore_ascii_case("#c084fc")
                     || custom.accents.glow_pink.eq_ignore_ascii_case("#a78bfa")
+                    || custom.accents.glow_pink.eq_ignore_ascii_case("#9d7cd8")
                 {
-                    custom.accents.glow_pink = "#9d7cd8".into();
+                    custom.accents.glow_pink = "#a87ffb".into();
+                }
+                if custom.accents.primary.eq_ignore_ascii_case("#9d7cd8") {
+                    custom.accents.primary = "#a87ffb".into();
                 }
                 if custom.accents.glow_amber.eq_ignore_ascii_case("#fbbf24") {
                     custom.accents.glow_amber = "#e5c07b".into();
+                }
+                if custom.text.primary.eq_ignore_ascii_case("#e6edf3") {
+                    custom.text.primary = "#ededed".into();
+                }
+                if custom.text.secondary.eq_ignore_ascii_case("#8a93a6") {
+                    custom.text.secondary = "#8e8e8e".into();
+                }
+                if custom.text.muted.eq_ignore_ascii_case("#8a93a6") {
+                    custom.text.muted = "#8e8e8e".into();
                 }
             }
             prefs

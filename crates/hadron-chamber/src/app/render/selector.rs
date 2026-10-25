@@ -29,7 +29,7 @@ impl super::Chamber {
 
         // Quark brand constellation dots
         let quark_dots = h_flex().gap_1p5().items_center().children(
-            [0x38bdf8u32, 0x9d7cd8, 0x62c073, 0xe5c07b]
+            [0xc778ddu32, 0xa87ffb, 0x62c073, 0xe5c07b]
                 .into_iter()
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );

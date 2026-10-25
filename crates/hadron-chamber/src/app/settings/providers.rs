@@ -442,9 +442,9 @@ impl super::Chamber {
             let current_color = config::parse_hex_color(&current_hex).unwrap_or_else(|| rgb(0x888888));
 
             let quick_colors: [&'static str; 20] = [
-                "#000000", "#050505", "#0b0b0b", "#101010", "#1c1c1c", "#242424", "#444444",
-                "#707070", "#a8a8a8", "#e8e8e8", "#ffffff", "#f97583", "#fbbf24", "#34d399",
-                "#4ade80", "#60a5fa", "#79b8ff", "#b392f0", "#c084fc", "#f472b6",
+                "#000000", "#0f0f0f", "#171717", "#1f1f1f", "#262626", "#2e2e2e", "#8e8e8e",
+                "#a8a8a8", "#ededed", "#ffffff", "#62c073", "#a87ffb", "#c778dd", "#e5c07b",
+                "#e06c75", "#f97583", "#79b8ff", "#b392f0", "#c084fc", "#f472b6",
             ];
 
             let quick_swatches = h_flex()
@@ -866,7 +866,7 @@ impl super::Chamber {
                                         .bg(theme::accent())
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(rgb(0x050505))
+                                        .text_color(theme::field_base())
                                         .child("Active Accent Button"),
                                 )
                                 .child(
@@ -1846,9 +1846,9 @@ impl super::Chamber {
         if self.ui_font_select_key != Some(current_pref.clone()) {
             self.ui_font_select_key = Some(current_pref.clone());
             let mut choices = vec![
-                "Inter (Default)".to_string(),
+                "Noto Sans (Default)".to_string(),
+                "Inter".to_string(),
                 "Geist".to_string(),
-                "Noto Sans".to_string(),
             ];
             let text_system = cx.text_system();
             let mut sys_names = text_system.all_font_names();
@@ -1868,13 +1868,13 @@ impl super::Chamber {
             }
             let current_label = match &current_pref {
                 Some(name) => {
-                    if name == "Inter" {
-                        "Inter (Default)".to_string()
+                    if name == "Noto Sans" {
+                        "Noto Sans (Default)".to_string()
                     } else {
                         name.clone()
                     }
                 }
-                None => "Inter (Default)".to_string(),
+                None => "Noto Sans (Default)".to_string(),
             };
             let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
             self.ui_font_select_state.update(cx, |s, cx| {

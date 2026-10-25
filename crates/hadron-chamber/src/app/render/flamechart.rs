@@ -23,7 +23,7 @@ pub fn compute_token_flame_segments(stats: &SessionStats) -> Vec<FlameSegment> {
             label: "Input",
             count: stats.total_input,
             ratio: (stats.total_input as f64 / total as f64) as f32,
-            color_rgb: 0x38bdf8, // Synapse Cyan
+            color_rgb: 0xc778dd, // Muted Orchid
         });
     }
     if stats.total_output > 0 {
@@ -31,7 +31,7 @@ pub fn compute_token_flame_segments(stats: &SessionStats) -> Vec<FlameSegment> {
             label: "Output",
             count: stats.total_output,
             ratio: (stats.total_output as f64 / total as f64) as f32,
-            color_rgb: 0x9d7cd8, // Kinetic Amethyst
+            color_rgb: 0xa87ffb, // Warm Violet
         });
     }
     if stats.total_cache_read > 0 {
