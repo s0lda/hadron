@@ -62,6 +62,12 @@ impl DagBarrierScheduler {
             let deps: Vec<&str> = node.dependencies.iter().map(|s| s.as_str()).collect();
             let _ = scheduler.add_task_with_files(id, &node.title, &deps, &[]);
         }
+        for (id, node) in &hybrid.tasks {
+            if node.completed {
+                let sha = node.commit_hash.as_deref().unwrap_or("completed");
+                let _ = scheduler.pass_gate_barrier(id, sha);
+            }
+        }
         scheduler
     }
 

@@ -7,19 +7,22 @@ impl Chamber {
     #[allow(dead_code)]
     pub(super) fn plan_dag_visualizer(&self, content: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let graph = TaskGraph::parse_from_markdown(content);
+        if graph.tasks.is_empty() {
+            return div().into_any_element();
+        }
         let waves = match graph.compute_waves() {
             Ok(w) => w,
-            Err(_) => return div().child("Circular dependency in task graph").into_any_element(),
+            Err(_) => vec![graph.tasks.clone()],
         };
 
-        if waves.is_empty() || graph.tasks.is_empty() {
+        if waves.is_empty() {
             return div().into_any_element();
         }
 
         let is_expanded = self.plan_dag_expanded;
         let ready_ids: std::collections::HashSet<String> = graph.ready_tasks().into_iter().map(|t| t.id).collect();
-        let barrier_scheduler = hadron_gluon::engine::dag_scheduler::DagBarrierScheduler::from_plan_markdown(content).ok();
-        let unblocked_count = barrier_scheduler.as_ref().map(|s| s.ready_frontier().len()).unwrap_or(0);
+        let _barrier_scheduler = hadron_gluon::engine::dag_scheduler::DagBarrierScheduler::from_plan_markdown(content).ok();
+        let unblocked_count = ready_ids.len();
 
         let header_bar = h_flex()
             .id("dag-toggle-header")
