@@ -45,8 +45,8 @@ impl EventListener for PtyEventListener {
 
 /// The terminal's default foreground / background, used when a cell asks for the
 /// terminal default colour (`SGR 39/49`, the initial state of every cell).
-pub const DEFAULT_FG: (u8, u8, u8) = (0xe8, 0xe8, 0xe8);
-pub const DEFAULT_BG: (u8, u8, u8) = (0x08, 0x08, 0x08);
+pub const DEFAULT_FG: (u8, u8, u8) = (0xed, 0xed, 0xed);
+pub const DEFAULT_BG: (u8, u8, u8) = (0x0f, 0x0f, 0x0f);
 
 /// The 16 ANSI colours (a Tango-style palette — legible on the dark screen).
 /// OSC palette overrides (a program re-defining colour 1) are not tracked yet.

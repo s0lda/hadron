@@ -38,11 +38,12 @@ impl Chamber {
         };
 
         let is_active = tab_ix == self.active_terminal_index;
-        let (border, bg): (gpui::Hsla, gpui::Hsla) = if is_active {
+        let (border, header_bg): (gpui::Hsla, gpui::Hsla) = if is_active {
             (theme::accent().into(), theme::bg_elevated().into())
         } else {
             (theme::glass_highlight(), theme::bg_surface().into())
         };
+        let bg: gpui::Hsla = theme::term_bg().into();
 
         let pty_content = if let Some(term) = &tab.term {
             let snap = term.snapshot();
@@ -69,13 +70,29 @@ impl Chamber {
                     if !run.text.is_empty() {
                         line_empty = false;
                         has_text = true;
-                        let mut run_div = div()
-                            .text_color(gpui::rgb(pack_rgb(run.fg)))
-                            .bg(gpui::rgb(pack_rgb(run.bg)));
+                        let fg_color = theme::resolve_term_color(run.fg);
+                        let mut run_div = div().text_color(fg_color);
+                        if let Some(bg_color) = theme::resolve_term_cell_bg(run.bg) {
+                            run_div = run_div.bg(bg_color);
+                        }
                         if run.has_cursor {
-                            run_div = run_div
-                                .border_l(px(2.0))
-                                .border_color(gpui::rgb(pack_rgb(run.fg)));
+                            match self.prefs.terminal_cursor_style {
+                                crate::config::TerminalCursorStyle::Beam => {
+                                    run_div = run_div
+                                        .border_l(px(2.0))
+                                        .border_color(fg_color);
+                                }
+                                crate::config::TerminalCursorStyle::Block => {
+                                    run_div = run_div
+                                        .text_color(theme::resolve_term_color(run.bg))
+                                        .bg(fg_color);
+                                }
+                                crate::config::TerminalCursorStyle::Underline => {
+                                    run_div = run_div
+                                        .border_b(px(2.0))
+                                        .border_color(fg_color);
+                                }
+                            }
                         }
                         line_row = line_row.child(run_div.child(run.text.clone()));
                     }
@@ -153,7 +170,7 @@ impl Chamber {
                     .items_center()
                     .px_2()
                     .py_1()
-                    .bg(theme::term_bg())
+                    .bg(header_bg)
                     .border_b_1()
                     .border_color(theme::glass_highlight())
                     .child(

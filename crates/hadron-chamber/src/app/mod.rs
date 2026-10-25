@@ -75,7 +75,7 @@ use mentions::{
 
 mod identity;
 use identity::{
-    hsla_to_hex, identity_avatar, identity_avatar_with_state, pack_rgb, parse_hex, ResolvedIdentity, IDENTITY_SWATCHES,
+    hsla_to_hex, identity_avatar, identity_avatar_with_state, parse_hex, ResolvedIdentity, IDENTITY_SWATCHES,
 };
 
 mod tabs;

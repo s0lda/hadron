@@ -512,7 +512,7 @@ pub fn modal_surface() -> Rgba {
 }
 
 // --- terminal (a Zed-like screen) ---
-/// The terminal screen surface — `#080808` main bg.
+/// The terminal screen surface — `#0f0f0f` main bg (or active theme override).
 pub fn term_bg() -> Rgba {
     if let Some(custom) = active_custom_theme() {
         custom.term_bg
@@ -526,6 +526,29 @@ pub fn term_fg() -> Rgba {
         custom.term_fg
     } else {
         rgb(0xededed)
+    }
+}
+/// Resolve a VTE cell `(r, g, b)` tuple to a concrete theme-aware `Rgba`.
+/// Maps `pty::DEFAULT_FG` to `term_fg()` and `pty::DEFAULT_BG` to `term_bg()` so
+/// default, inverted, selected, and block-cursor cells track the active theme.
+pub fn resolve_term_color((r, g, b): (u8, u8, u8)) -> Rgba {
+    if (r, g, b) == crate::pty::DEFAULT_FG {
+        term_fg()
+    } else if (r, g, b) == crate::pty::DEFAULT_BG {
+        term_bg()
+    } else {
+        rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32))
+    }
+}
+/// Resolve a VTE cell background tuple to an optional fill color.
+/// Returns `None` (transparent) when the cell uses `pty::DEFAULT_BG` so the
+/// underlying terminal container surface (`term_bg()`) shows through seamlessly
+/// without painting a mismatched inner rectangle.
+pub fn resolve_term_cell_bg(bg_rgb: (u8, u8, u8)) -> Option<Rgba> {
+    if bg_rgb == crate::pty::DEFAULT_BG {
+        None
+    } else {
+        Some(resolve_term_color(bg_rgb))
     }
 }
 /// The shell prompt (`user@host: cwd$`) — emerald-mint green (`#62c073`).
@@ -1295,6 +1318,30 @@ mod tests {
         // Second pass does nothing since names are now unique
         let second_pass = disambiguate_theme_names(&mut themes);
         assert!(!second_pass);
+    }
+
+    #[test]
+    fn test_terminal_cell_color_resolution_and_transparent_default_bg() {
+        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+
+        // Default bg cell resolves to None (transparent) so the container surface shows through
+        assert_eq!(resolve_term_cell_bg(crate::pty::DEFAULT_BG), None);
+        // Default fg/bg map to active theme tokens (e.g. for inverted/selected/block-cursor cells)
+        assert_eq!(resolve_term_color(crate::pty::DEFAULT_FG), term_fg());
+        assert_eq!(resolve_term_color(crate::pty::DEFAULT_BG), term_bg());
+        assert_eq!(resolve_term_cell_bg(crate::pty::DEFAULT_FG), Some(term_fg()));
+
+        // Explicit ANSI / truecolor cells preserve their exact RGB
+        assert_eq!(resolve_term_cell_bg((0xcc, 0x00, 0x00)), Some(rgb(0xcc0000)));
+        assert_eq!(resolve_term_color((0x4e, 0x9a, 0x06)), rgb(0x4e9a06));
+
+        // Switching preset updates resolved default colors dynamically
+        set_active_preset(crate::config::ThemePreset::Nord);
+        assert_eq!(resolve_term_color(crate::pty::DEFAULT_BG), rgb(0x2e3440));
+        assert_eq!(resolve_term_cell_bg(crate::pty::DEFAULT_BG), None);
+
+        set_active_preset(crate::config::ThemePreset::Obsidian);
     }
 }
 

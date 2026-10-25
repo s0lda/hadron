@@ -5,11 +5,6 @@
 
 use super::*;
 
-/// Pack an `(r, g, b)` triple into the `0xRRGGBB` gpui [`gpui::rgb`] expects.
-pub(super) fn pack_rgb((r, g, b): (u8, u8, u8)) -> u32 {
-    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
-}
-
 /// A fully-resolved display identity — what actually renders after applying the
 /// user's [`Identity`] overrides over code defaults (id-derived name, hue color,
 /// initials avatar).

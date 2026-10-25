@@ -224,25 +224,27 @@ impl super::Chamber {
                             for run in &line.runs {
                                 if !run.text.is_empty() {
                                     line_empty = false;
-                                    let mut run_div = div()
-                                        .text_color(gpui::rgb(pack_rgb(run.fg)))
-                                        .bg(gpui::rgb(pack_rgb(run.bg)));
+                                    let fg_color = theme::resolve_term_color(run.fg);
+                                    let mut run_div = div().text_color(fg_color);
+                                    if let Some(bg_color) = theme::resolve_term_cell_bg(run.bg) {
+                                        run_div = run_div.bg(bg_color);
+                                    }
                                     if run.has_cursor {
                                         match self.prefs.terminal_cursor_style {
                                             crate::config::TerminalCursorStyle::Beam => {
                                                 run_div = run_div
                                                     .border_l(px(2.0))
-                                                    .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                                    .border_color(fg_color);
                                             }
                                             crate::config::TerminalCursorStyle::Block => {
                                                 run_div = run_div
-                                                    .text_color(gpui::rgb(pack_rgb(run.bg)))
-                                                    .bg(gpui::rgb(pack_rgb(run.fg)));
+                                                    .text_color(theme::resolve_term_color(run.bg))
+                                                    .bg(fg_color);
                                             }
                                             crate::config::TerminalCursorStyle::Underline => {
                                                 run_div = run_div
                                                     .border_b(px(2.0))
-                                                    .border_color(gpui::rgb(pack_rgb(run.fg)));
+                                                    .border_color(fg_color);
                                             }
                                         }
                                     }
