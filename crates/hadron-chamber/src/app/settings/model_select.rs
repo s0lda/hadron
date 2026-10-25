@@ -78,8 +78,11 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
         ]
     } else if v.contains("claude") || v.contains("anthropic") {
         vec![
-            "claude-opus-4-6".to_string(),
-            "claude-sonnet-4-6".to_string(),
+            "claude-opus-5-2".to_string(),
+            "claude-opus-5".to_string(),
+            "claude-sonnet-5-2".to_string(),
+            "claude-sonnet-5".to_string(),
+            "claude-opus-4-8".to_string(),
             "claude-sonnet-4-5".to_string(),
             "claude-haiku-4-5".to_string(),
             "opus".to_string(),
@@ -88,6 +91,8 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
         ]
     } else if v.contains("codex") || v.contains("openai") {
         vec![
+            "gpt-5.6-terra".to_string(),
+            "gpt-5.6".to_string(),
             "gpt-5".to_string(),
             "o3".to_string(),
             "o4-mini".to_string(),
@@ -103,6 +108,8 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
         ]
     } else if v.contains("copilot") || v.contains("github") {
         vec![
+            "claude-sonnet-5".to_string(),
+            "gpt-5.6".to_string(),
             "claude-sonnet-4.5".to_string(),
             "gpt-5".to_string(),
             "gpt-4o".to_string(),
@@ -132,10 +139,11 @@ mod tests {
     #[test]
     fn vendor_fallback_models_covers_core_vendors() {
         assert!(vendor_fallback_models("agy").contains(&"gemini-4-argon-medium".to_string()));
-        assert!(vendor_fallback_models("claude").contains(&"claude-sonnet-4-6".to_string()));
-        assert!(vendor_fallback_models("codex").contains(&"gpt-5".to_string()));
+        assert!(vendor_fallback_models("claude").contains(&"claude-opus-5-2".to_string()));
+        assert!(vendor_fallback_models("claude").contains(&"claude-sonnet-5-2".to_string()));
+        assert!(vendor_fallback_models("codex").contains(&"gpt-5.6-terra".to_string()));
         assert!(vendor_fallback_models("grok").contains(&"grok-4".to_string()));
-        assert!(vendor_fallback_models("copilot").contains(&"gpt-5".to_string()));
+        assert!(vendor_fallback_models("copilot").contains(&"gpt-5.6".to_string()));
         assert!(vendor_fallback_models("unknown-vendor").is_empty());
     }
 

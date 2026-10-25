@@ -3593,13 +3593,13 @@ mod tests {
                 hadron_lattice::Seat::cli(
                     q1.clone(),
                     "claude",
-                    "claude-opus-4-6",
+                    "claude-opus-5-2",
                     hadron_lattice::Flavor::Worker,
                 ),
                 hadron_lattice::Seat::cli(
                     q2.clone(),
                     "agy",
-                    "gemini-3.1-pro",
+                    "gemini-3.8-pro",
                     hadron_lattice::Flavor::Orchestrator,
                 ),
             ],
