@@ -397,10 +397,20 @@ pub(super) fn format_markdown_callouts(text: &str) -> String {
 /// the full path in a tooltip.
 ///
 /// Code blocks (fenced ``` and inline `...`) are passed through unmodified.
+#[cfg(test)]
 pub(super) fn resolve_mention_names(
     body: &str,
     roster: &[crate::model::RosterRow],
     repo_root: Option<&std::path::Path>,
+) -> String {
+    resolve_mention_names_with_human(body, roster, repo_root, None)
+}
+
+pub(super) fn resolve_mention_names_with_human(
+    body: &str,
+    roster: &[crate::model::RosterRow],
+    repo_root: Option<&std::path::Path>,
+    human_name: Option<&str>,
 ) -> String {
     let preprocessed_callouts = format_markdown_callouts(body);
     let preprocessed = crate::mermaid::plugin::format_html_wrappers(&preprocessed_callouts);
@@ -437,6 +447,29 @@ pub(super) fn resolve_mention_names(
 
         if is_mention_start {
             let rest = &body[idx + 1..];
+            if let Some(h_name) = human_name.map(|n| n.trim_start_matches('@').trim()).filter(|n| !n.is_empty()) {
+                if rest.starts_with("human") {
+                    let len = "human".len();
+                    let is_boundary = rest[len..]
+                        .chars()
+                        .next()
+                        .map_or(true, |nc| !nc.is_alphanumeric() && nc != '-' && nc != '_');
+                    if is_boundary {
+                        out.push('@');
+                        out.push_str(h_name);
+                        let target_idx = idx + 1 + len;
+                        while let Some(&(curr_idx, _)) = chars.peek() {
+                            if curr_idx < target_idx {
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        prev_char = h_name.chars().next_back();
+                        continue;
+                    }
+                }
+            }
             let mut matched_quark: Option<(&str, usize)> = None;
 
             for q in roster {
@@ -866,6 +899,11 @@ Some table notes.
         assert_eq!(
             resolve_mention_names("Hello @Sonnet!", &roster, None),
             "Hello @Sonnet!"
+        );
+        // Mentioning @human resolves to the human's display name when provided.
+        assert_eq!(
+            resolve_mention_names_with_human("Hi @human, @acp-claude-2 is ready.", &roster, None, Some("Jake")),
+            "Hi @Jake, @Sonnet is ready."
         );
     }
 

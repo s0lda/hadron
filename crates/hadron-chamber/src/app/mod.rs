@@ -70,7 +70,7 @@ mod mentions;
 pub(crate) use mentions::StepStatus;
 use mentions::{
     parse_plan_overview, parse_plan_progress_with_status, parse_plan_tasks,
-    parse_plan_tasks_with_status, resolve_mention_names,
+    parse_plan_tasks_with_status, resolve_mention_names_with_human,
 };
 
 mod identity;
@@ -1766,7 +1766,17 @@ impl Chamber {
             self.prefs.quarks.get(actor)
         };
         let default_name = if actor == "human" {
-            "You".to_string()
+            self.prefs
+                .git_author_name
+                .clone()
+                .filter(|n| !n.trim().is_empty())
+                .or_else(|| {
+                    std::env::var("USER")
+                        .or_else(|_| std::env::var("USERNAME"))
+                        .ok()
+                        .filter(|u| !u.trim().is_empty())
+                })
+                .unwrap_or_else(|| "You".to_string())
         } else {
             let mut c = actor.chars();
             match c.next() {

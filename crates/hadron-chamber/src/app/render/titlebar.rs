@@ -243,7 +243,7 @@ impl super::Chamber {
                 "Update Failed".to_string(),
                 format!("Could not update: {}", msg),
                 theme::bg_surface_raised(),
-                theme::danger(),
+                theme::error(),
                 IconName::Info,
             ),
             UpdateState::Idle => return None,

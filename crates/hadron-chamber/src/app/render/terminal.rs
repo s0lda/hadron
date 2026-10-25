@@ -944,9 +944,9 @@ impl super::Chamber {
                                     .bg(theme::bg_base())
                                     .border_1()
                                     .border_color(if landed_count == total && total > 0 {
-                                        theme::success().into()
+                                        theme::success().opacity(0.45).into()
                                     } else if branch_count > 0 {
-                                        theme::info().into()
+                                        theme::info().opacity(0.45).into()
                                     } else {
                                         theme::glass_highlight()
                                     })
@@ -1091,7 +1091,14 @@ impl super::Chamber {
                             header_card = header_card.child(select_button);
                         }
 
-                        header_card = header_card.child(progress_meter(frac, theme::success()));
+                        let progress_fill = if landed_count == total && total > 0 {
+                            theme::success().opacity(0.85)
+                        } else if branch_count > 0 {
+                            theme::info().opacity(0.85)
+                        } else {
+                            theme::accent().opacity(0.85)
+                        };
+                        header_card = header_card.child(progress_meter(frac, progress_fill));
                         list = list.child(header_card);
 
                         // Optional Plan Overview prose card
@@ -1215,7 +1222,7 @@ impl super::Chamber {
                                     .rounded_full()
                                     .bg(theme::bg_base())
                                     .border_1()
-                                    .border_color(theme::success())
+                                    .border_color(theme::success().opacity(0.45))
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(theme::success())
@@ -1228,7 +1235,7 @@ impl super::Chamber {
                                     .rounded_full()
                                     .bg(theme::bg_base())
                                     .border_1()
-                                    .border_color(theme::info())
+                                    .border_color(theme::info().opacity(0.45))
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(theme::info())

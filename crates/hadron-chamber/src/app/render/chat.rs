@@ -727,8 +727,16 @@ impl super::Chamber {
                             }
 
                             let expanded = this.log_expanded.contains(&ix);
-                            let color = this.color_for(&m.from);
-                            let to_color = m.to.as_deref().map(|t| this.color_for(t));
+                            let from_id = this.resolve_identity(&m.from);
+                            let to_id = m.to.as_deref().map(|t| this.resolve_identity(t));
+                            let human_name = this.resolve_identity("human").name;
+                            let repo_root = crate::vcs::repo_root_of(&this.path);
+                            let resolved_body = resolve_mention_names_with_human(
+                                &m.body,
+                                &this.view.roster,
+                                Some(repo_root),
+                                Some(&human_name),
+                            );
                             let entity = view.clone();
                             let msg_body = m.body.clone();
                             return row
@@ -827,7 +835,7 @@ impl super::Chamber {
                                                 ))
                                             }
                                         })
-                                        .child(log_row(ix, m, expanded, color, to_color, local_offset, &cx.theme().mono_font_family)),
+                                        .child(log_row(ix, m, expanded, &from_id, to_id.as_ref(), &resolved_body, local_offset, &cx.theme().mono_font_family)),
                                 )
                                 .into_any_element();
                         }
@@ -867,7 +875,8 @@ impl super::Chamber {
             Some((cached_body, cached_content)) if cached_body == body => cached_content.clone(),
             _ => {
                 let repo_root = crate::vcs::repo_root_of(&self.path);
-                let content = resolve_mention_names(body, roster, Some(repo_root));
+                let human_name = self.resolve_identity("human").name;
+                let content = resolve_mention_names_with_human(body, roster, Some(repo_root), Some(&human_name));
                 cache.insert(ix, (body.to_string(), content.clone()));
                 content
             }
@@ -917,15 +926,15 @@ impl super::Chamber {
         roster: &[crate::model::RosterRow],
         pad: gpui::Pixels,
     ) -> gpui::AnyElement {
-        let Some((hue, fill_sat, border_sat)) = severity_accent(severity) else {
+        let Some(accent) = severity_accent(severity) else {
             return self.markdown_body(view, ix, body, roster).into_any_element();
         };
         div()
             .p(pad)
             .rounded_md()
-            .bg(gpui::hsla(hue, fill_sat, 0.50, 0.10))
+            .bg(accent.opacity(0.10))
             .border_l(gpui::px(3.0))
-            .border_color(gpui::hsla(hue, border_sat, 0.50, 1.0))
+            .border_color(accent.opacity(0.75))
             .child(self.markdown_body(view, ix, body, roster))
             .into_any_element()
     }
@@ -1117,6 +1126,7 @@ impl super::Chamber {
                                             .child(crate::model::format_timestamp(m.ts.with_timezone(&tz), self.prefs.timestamp_format)),
                                     )
                                     .when_some(m.to.clone(), |this, to| {
+                                        let to_name = self.resolve_identity(to.trim_start_matches('@')).name;
                                         this.child(
                                             div()
                                                 .text_xs()
@@ -1125,7 +1135,7 @@ impl super::Chamber {
                                                 .rounded_sm()
                                                 .bg(theme::bg_surface())
                                                 .text_color(theme::text_muted())
-                                                .child(format!("→ {}", to.trim_start_matches('@'))),
+                                                .child(format!("→ {}", to_name.trim_start_matches('@'))),
                                         )
                                     })
                                     .when_some(m.usage.as_ref(), |this, u| {
@@ -1407,19 +1417,13 @@ impl super::Chamber {
     }
 }
 
-/// The accent for a gluon message's severity card: `(hue, fill_saturation,
-/// border_saturation)`, or `None` for an unlabelled message (no card).
-///
-/// Pure and free-standing so the one thing that actually went wrong here is
-/// testable: **`gpui::hsla` clamps hue to `0..=1`** (`gpui-0.2.2/src/color.rs:338`),
-/// it does NOT take degrees. The original cards passed `40.0` for "amber", which
-/// clamped to `1.0` — 360°, the same red as Error — so Warning and Error rendered
-/// identically and nobody could tell. Every hue here is `degrees / 360.0`.
-fn severity_accent(severity: Option<hadron_lattice::Severity>) -> Option<(f32, f32, f32)> {
+/// The semantic theme accent for a gluon message's severity card, or `None` for
+/// an unlabelled message (no card).
+fn severity_accent(severity: Option<hadron_lattice::Severity>) -> Option<gpui::Rgba> {
     match severity? {
-        hadron_lattice::Severity::Error => Some((0.0, 0.70, 0.85)), // red 0°
-        hadron_lattice::Severity::Warning => Some((40.0 / 360.0, 0.90, 0.95)), // amber 40°
-        hadron_lattice::Severity::Info => Some((210.0 / 360.0, 0.55, 0.70)), // blue 210°
+        hadron_lattice::Severity::Error => Some(crate::theme::error()),
+        hadron_lattice::Severity::Warning => Some(crate::theme::warning()),
+        hadron_lattice::Severity::Info => Some(crate::theme::info()),
     }
 }
 
@@ -1435,15 +1439,12 @@ mod severity_tests {
         assert_eq!(severity_accent(None), None);
     }
 
-    /// The regression that motivated extracting this: hue must be normalised, so
-    /// every accent has to survive `hsla`'s `clamp(0., 1.)` unchanged. A value ≥ 1
-    /// silently becomes red.
+    /// Every severity maps directly to its semantic theme token (`info`, `warning`, `error`).
     #[test]
-    fn every_hue_is_normalised_not_degrees() {
-        for sev in [Severity::Info, Severity::Warning, Severity::Error] {
-            let (h, ..) = severity_accent(Some(sev)).unwrap();
-            assert_eq!(h, h.clamp(0.0, 1.0), "{sev:?} hue {h} is not in 0..=1 — gpui would clamp it to red");
-        }
+    fn every_severity_matches_theme_token() {
+        assert_eq!(severity_accent(Some(Severity::Info)), Some(crate::theme::info()));
+        assert_eq!(severity_accent(Some(Severity::Warning)), Some(crate::theme::warning()));
+        assert_eq!(severity_accent(Some(Severity::Error)), Some(crate::theme::error()));
     }
 
     /// …and the three must be visually distinct. Before the fix, Warning and Error
@@ -1452,7 +1453,7 @@ mod severity_tests {
     fn the_three_severities_are_different_colours() {
         let hues: Vec<f32> = [Severity::Info, Severity::Warning, Severity::Error]
             .into_iter()
-            .map(|s| severity_accent(Some(s)).unwrap().0)
+            .map(|s| gpui::Hsla::from(severity_accent(Some(s)).unwrap()).h)
             .collect();
         for (i, a) in hues.iter().enumerate() {
             for b in &hues[i + 1..] {

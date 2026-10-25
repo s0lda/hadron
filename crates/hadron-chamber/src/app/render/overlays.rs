@@ -1190,7 +1190,7 @@ impl super::Chamber {
                 .rounded_lg()
                 .bg(theme::bg_surface_raised())
                 .border_1()
-                .border_color(rgb(0xef4444))
+                .border_color(theme::error())
                 .child(
                     h_flex()
                         .justify_between()
@@ -1233,10 +1233,10 @@ impl super::Chamber {
                 .children(toasts.into_iter().map(|t| {
                     let toast_id = t.id;
                     let (icon, border_color, icon_color) = match t.kind {
-                        toasts::ToastKind::Success => (IconName::CircleCheck, rgb(0x34d399), rgb(0x34d399)),
-                        toasts::ToastKind::Info => (IconName::Info, rgb(0x60a5fa), rgb(0x60a5fa)),
-                        toasts::ToastKind::Warning => (IconName::Info, rgb(0xfbbf24), rgb(0xfbbf24)),
-                        toasts::ToastKind::Error => (IconName::WindowClose, rgb(0xf87171), rgb(0xf87171)),
+                        toasts::ToastKind::Success => (IconName::CircleCheck, theme::success(), theme::success()),
+                        toasts::ToastKind::Info => (IconName::Info, theme::info(), theme::info()),
+                        toasts::ToastKind::Warning => (IconName::Info, theme::warning(), theme::warning()),
+                        toasts::ToastKind::Error => (IconName::WindowClose, theme::error(), theme::error()),
                     };
 
                     h_flex()
@@ -1306,7 +1306,7 @@ impl super::Chamber {
         // Signature brand motif: the four quark energies as a small constellation of dots,
         // echoing the field's corner glows.
         let quark_dots = h_flex().gap_1p5().items_center().children(
-            [0x60a5fau32, 0xc084fc, 0x34d399, 0xfbbf24]
+            [0x38bdf8u32, 0x9d7cd8, 0x62c073, 0xe5c07b]
                 .into_iter()
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );
@@ -1667,12 +1667,12 @@ impl super::Chamber {
                         theme::presence_label(effective_state).to_string(),
                     )
                 } else if !roster_row.adopted {
-                    (gpui::rgb(0x71717a).into(), "available".to_string())
+                    (theme::presence_disabled().into(), "available".to_string())
                 } else {
-                    (gpui::rgb(0x71717a).into(), "disabled".to_string())
+                    (theme::presence_disabled().into(), "disabled".to_string())
                 }
             } else {
-                (gpui::rgb(0x71717a).into(), row.status.clone())
+                (theme::presence_disabled().into(), row.status.clone())
             };
 
             let avatar_or_icon = if row.id == "gluon" {
@@ -2164,8 +2164,8 @@ impl super::Chamber {
                                                                     .px_1p5()
                                                                     .py_0p5()
                                                                     .rounded_sm()
-                                                                    .bg(rgb(0x8b5cf6))
-                                                                    .text_color(rgb(0xffffff))
+                                                                    .bg(theme::accent_secondary().opacity(0.20))
+                                                                    .text_color(theme::accent_secondary())
                                                                     .child(format!("WSL: {distro}"))
                                                                     .into_any_element()
                                                             })),

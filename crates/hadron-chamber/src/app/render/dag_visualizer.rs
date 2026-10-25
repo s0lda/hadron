@@ -143,7 +143,7 @@ impl Chamber {
 
                 let (border_col, bg_col, status_icon, status_label, text_col) = if is_landed {
                     (
-                        theme::halo_idle(),
+                        theme::halo_idle().opacity(0.45),
                         theme::bg_elevated(),
                         "✓",
                         task.commit_hash.as_deref().unwrap_or("landed"),
@@ -151,15 +151,15 @@ impl Chamber {
                     )
                 } else if task.completed {
                     (
-                        gpui::rgb(0x60a5fa).into(),
+                        theme::info().opacity(0.45).into(),
                         theme::bg_elevated(),
                         "✓",
                         task.commit_hash.as_deref().unwrap_or("in-branch"),
-                        gpui::rgb(0x60a5fa).into(),
+                        theme::info().into(),
                     )
                 } else if is_ready {
                     (
-                        theme::halo_active(),
+                        theme::halo_active().opacity(0.45),
                         theme::bg_elevated(),
                         "▶",
                         "ready",

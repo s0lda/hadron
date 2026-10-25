@@ -855,7 +855,7 @@ pub fn accent_secondary() -> Rgba {
     rgb(0x9d7cd8) // kinetic amethyst — thinking
 }
 pub fn danger() -> Rgba {
-    error() // red — close-button hover
+    rgb(0xef4444) // standard red — window close-button hover
 }
 /// Markdown link colour in chat — light blue (sky), distinct from the amethyst accent.
 pub fn link() -> Rgba {

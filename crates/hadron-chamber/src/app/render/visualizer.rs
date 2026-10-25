@@ -386,17 +386,17 @@ impl super::Chamber {
                         .px_2p5()
                         .py_1()
                         .rounded_full()
-                        .bg(gpui::rgb(0x22c55e).opacity(0.18))
+                        .bg(theme::success().opacity(0.18))
                         .border_1()
-                        .border_color(gpui::rgb(0x22c55e).opacity(0.45))
+                        .border_color(theme::success().opacity(0.45))
                         .text_xs()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(gpui::rgb(0x22c55e))
+                        .text_color(theme::success())
                         .child(
                             div()
                                 .size_2()
                                 .rounded_full()
-                                .bg(gpui::rgb(0x22c55e)),
+                                .bg(theme::success()),
                         )
                         .child(format!("{excited_count} Excited"))
                 } else {
@@ -416,7 +416,7 @@ impl super::Chamber {
                             div()
                                 .size_2()
                                 .rounded_full()
-                                .bg(gpui::rgb(0x38bdf8).opacity(0.4)),
+                                .bg(theme::info().opacity(0.4)),
                         )
                         .child("All Quarks Idle")
                 },
@@ -582,9 +582,9 @@ impl super::Chamber {
                                                     .px_1p5()
                                                     .py_0p5()
                                                     .rounded_sm()
-                                                    .bg(gpui::rgb(0xf59e0b).opacity(0.2))
+                                                    .bg(theme::warning().opacity(0.2))
                                                     .text_xs()
-                                                    .text_color(gpui::rgb(0xf59e0b))
+                                                    .text_color(theme::warning())
                                                     .child("Orchestrator"),
                                             )
                                         }),
@@ -924,7 +924,7 @@ impl super::Chamber {
                             origin: point(px(pkt_x) - pkt_r, px(pkt_y) - pkt_r),
                             size: size(pkt_r * 2.0, pkt_r * 2.0),
                         };
-                        window.paint_quad(fill(pkt_bounds, gpui::rgb(0x22c55e)).corner_radii(pkt_r));
+                        window.paint_quad(fill(pkt_bounds, theme::success()).corner_radii(pkt_r));
                     }
                 }
 
@@ -950,7 +950,7 @@ impl super::Chamber {
                             size: size(reticle_r * 2.0, reticle_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(reticle_bounds, gpui::rgb(0x00f0ff).opacity(0.18 * depth_alpha)).corner_radii(px(3.0)),
+                            fill(reticle_bounds, theme::info().opacity(0.18 * depth_alpha)).corner_radii(px(3.0)),
                         );
                     }
 
@@ -963,7 +963,7 @@ impl super::Chamber {
                             size: size(halo1_r * 2.0, halo1_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(halo1_bounds, gpui::rgb(0x22c55e).opacity(0.28 * depth_alpha)).corner_radii(halo1_r),
+                            fill(halo1_bounds, theme::success().opacity(0.28 * depth_alpha)).corner_radii(halo1_r),
                         );
 
                         let pulse2 = (((time_secs * 5.0) - 1.2).sin() * 0.25 + 0.85) as f32;
@@ -973,7 +973,7 @@ impl super::Chamber {
                             size: size(halo2_r * 2.0, halo2_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(halo2_bounds, gpui::rgb(0x22c55e).opacity(0.14 * depth_alpha)).corner_radii(halo2_r),
+                            fill(halo2_bounds, theme::success().opacity(0.14 * depth_alpha)).corner_radii(halo2_r),
                         );
                     }
 
@@ -985,7 +985,7 @@ impl super::Chamber {
                             size: size(crown_r * 2.0, crown_r * 2.0),
                         };
                         window.paint_quad(
-                            fill(crown_bounds, gpui::rgb(0xf59e0b).opacity(0.40 * depth_alpha)).corner_radii(crown_r),
+                            fill(crown_bounds, theme::warning().opacity(0.40 * depth_alpha)).corner_radii(crown_r),
                         );
                     }
 

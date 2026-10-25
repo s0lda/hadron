@@ -129,7 +129,7 @@ impl Chamber {
                 .children(summary.items.into_iter().enumerate().map(|(ix, item)| {
                         let kind_color: gpui::Hsla = match item.kind {
                             BreadcrumbKind::Plan => theme::accent().into(),
-                            BreadcrumbKind::File => gpui::rgb(0x38bdf8).into(),
+                            BreadcrumbKind::File => theme::info().into(),
                             BreadcrumbKind::Feature => theme::halo_active(),
                             BreadcrumbKind::Invariant => theme::halo_reasoning(),
                             BreadcrumbKind::Lesson => theme::text_secondary().into(),

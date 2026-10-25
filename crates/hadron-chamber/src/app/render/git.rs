@@ -13,14 +13,14 @@ pub(super) enum DiffPanel {
 
 /// Lane colours, cycled by rail column, so the commit graph reads as coloured lanes
 /// rather than monochrome ASCII. Distinct on the near-black field.
-const LANE_COLORS: [u32; 6] = [0x34d399, 0x60a5fa, 0xf59e0b, 0xc084fc, 0x2dd4bf, 0xf87171];
+const LANE_COLORS: [u32; 6] = [0x62c073, 0x38bdf8, 0xe5c07b, 0x9d7cd8, 0x2dd4bf, 0xe06c75];
 /// A commit that has landed in `main` (green) vs one still in flight (rose); a
 /// detached / unknown HEAD is neutral (it has no branch to be merged).
-const MERGED_COLOR: u32 = 0x34d399;
-const UNMERGED_COLOR: u32 = 0xf87171;
-const NEUTRAL_COLOR: u32 = 0x94a3b8;
-const ADD_COLOR: u32 = 0x85e89d;
-const DEL_COLOR: u32 = 0xf97583;
+const MERGED_COLOR: u32 = 0x62c073;
+const UNMERGED_COLOR: u32 = 0xe06c75;
+const NEUTRAL_COLOR: u32 = 0x8a93a6;
+const ADD_COLOR: u32 = 0x62c073;
+const DEL_COLOR: u32 = 0xe06c75;
 /// One graph rail column width in px when painting vector lanes.
 const LANE_W: f32 = 16.0;
 /// Cap for a `--decorate` ref chip so it cannot squeeze the subject out.
@@ -1081,10 +1081,10 @@ impl super::Chamber {
     /// A styled ref badge element with decoration kind styling (HEAD, Local, Remote, Tag).
     fn ref_badge(dec: &crate::vcs::RefDecoration, full_name: bool) -> gpui::Div {
         let (bg, text_color) = match dec.kind {
-            crate::vcs::RefKind::Head => (gpui::rgba(0x34d39922), gpui::rgb(0x34d399)),
-            crate::vcs::RefKind::LocalBranch => (gpui::rgba(0xa78bfa22), gpui::rgb(0xa78bfa)),
-            crate::vcs::RefKind::RemoteBranch => (gpui::rgba(0x60a5fa22), gpui::rgb(0x60a5fa)),
-            crate::vcs::RefKind::Tag => (gpui::rgba(0xfbbf2422), gpui::rgb(0xfbbf24)),
+            crate::vcs::RefKind::Head => (theme::success().opacity(0.14), theme::success()),
+            crate::vcs::RefKind::LocalBranch => (theme::accent().opacity(0.14), theme::accent()),
+            crate::vcs::RefKind::RemoteBranch => (theme::info().opacity(0.14), theme::info()),
+            crate::vcs::RefKind::Tag => (theme::warning().opacity(0.14), theme::warning()),
         };
 
         let name = if full_name {
@@ -1159,7 +1159,7 @@ impl super::Chamber {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded_sm()
-                                .bg(gpui::rgba(0x85e89d18))
+                                .bg(theme::git_added().opacity(0.12))
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(gpui::rgb(ADD_COLOR))
@@ -1170,7 +1170,7 @@ impl super::Chamber {
                                 .px_1p5()
                                 .py_0p5()
                                 .rounded_sm()
-                                .bg(gpui::rgba(0xf9758318))
+                                .bg(theme::git_deleted().opacity(0.12))
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(gpui::rgb(DEL_COLOR))
@@ -1267,7 +1267,7 @@ impl super::Chamber {
                             crate::vcs::DiffLine::Added(a) => h_flex()
                                 .w_full()
                                 .items_start()
-                                .bg(gpui::rgba(0x85e89d14))
+                                .bg(theme::git_added().opacity(0.10))
                                 .child(
                                     div()
                                         .w(px(20.0))
@@ -1287,7 +1287,7 @@ impl super::Chamber {
                             crate::vcs::DiffLine::Removed(r) => h_flex()
                                 .w_full()
                                 .items_start()
-                                .bg(gpui::rgba(0xf9758314))
+                                .bg(theme::git_deleted().opacity(0.10))
                                 .child(
                                     div()
                                         .w(px(20.0))
@@ -1347,11 +1347,11 @@ impl super::Chamber {
             let to_str = format!("@{}", to_identity.name);
 
             let (state_color, state_text) = match del.state {
-                DelegationState::Pending => (0xf59e0b, "Pending"),
-                DelegationState::Working => (0x60a5fa, "Working"),
-                DelegationState::Completed => (0x34d399, "Completed"),
-                DelegationState::Blocked => (0x94a3b8, "Blocked"),
-                DelegationState::Error => (0xf87171, "Error"),
+                DelegationState::Pending => (0xe5c07b, "Pending"),
+                DelegationState::Working => (0x38bdf8, "Working"),
+                DelegationState::Completed => (0x62c073, "Completed"),
+                DelegationState::Blocked => (0x8a93a6, "Blocked"),
+                DelegationState::Error => (0xe06c75, "Error"),
             };
 
             let first_line = del.task.lines().next().unwrap_or("").trim();

@@ -1327,8 +1327,9 @@ pub(super) fn log_row<Tz: chrono::TimeZone>(
     ix: usize,
     m: &MessageRow,
     expanded: bool,
-    author_color: Hsla,
-    to_color: Option<Hsla>,
+    from: &ResolvedIdentity,
+    to: Option<&ResolvedIdentity>,
+    resolved_body: &str,
     tz: Tz,
     mono_font: &gpui::SharedString,
 ) -> impl IntoElement
@@ -1337,12 +1338,24 @@ where
 {
     let time = m.ts.with_timezone(&tz).format("%H:%M:%S").to_string();
     let body_text = if expanded {
-        m.body.clone()
+        resolved_body.to_string()
     } else {
-        crate::text::flatten_to_single_line(&m.body)
+        crate::text::flatten_to_single_line(resolved_body)
     };
-    let to_handle = m.to.as_ref().map(|t| format!("@{t}"));
-    let resolved_to_color: Hsla = to_color.unwrap_or_else(|| theme::text_muted().into());
+    let from_handle = if from.name.starts_with('@') {
+        from.name.clone()
+    } else {
+        format!("@{}", from.name)
+    };
+    let author_color = from.color;
+    let to_handle = to.map(|t| {
+        if t.name.starts_with('@') {
+            t.name.clone()
+        } else {
+            format!("@{}", t.name)
+        }
+    });
+    let resolved_to_color: Hsla = to.map(|t| t.color).unwrap_or_else(|| theme::text_muted().into());
 
     if expanded {
         let token_tag = m.usage.as_ref().and_then(|u| {
@@ -1399,7 +1412,7 @@ where
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(author_color)
                                     .child(
-                                        gpui_component::text::TextView::html(("log-from-exp", ix), format!("@{}", m.from))
+                                        gpui_component::text::TextView::html(("log-from-exp", ix), from_handle.clone())
                                             .selectable(true),
                                     ),
                             )
@@ -1499,7 +1512,7 @@ where
                             .text_color(author_color)
                             .truncate()
                             .child(
-                                gpui_component::text::TextView::html(("log-from", ix), format!("@{}", m.from))
+                                gpui_component::text::TextView::html(("log-from", ix), from_handle)
                                     .selectable(true),
                             ),
                     )
@@ -2083,8 +2096,18 @@ mod tests {
             severity: None,
         };
         let font = gpui::SharedString::from("monospace");
-        let _compact = log_row(0, &msg, false, gpui::hsla(0.0, 0.0, 0.0, 1.0), Some(gpui::hsla(0.5, 0.5, 0.5, 1.0)), chrono::Utc, &font);
-        let _expanded = log_row(0, &msg, true, gpui::hsla(0.0, 0.0, 0.0, 1.0), Some(gpui::hsla(0.5, 0.5, 0.5, 1.0)), chrono::Utc, &font);
+        let from_id = ResolvedIdentity {
+            name: "Claude".to_string(),
+            color: gpui::hsla(0.0, 0.0, 0.0, 1.0),
+            image: None,
+        };
+        let to_id = ResolvedIdentity {
+            name: "AGY".to_string(),
+            color: gpui::hsla(0.5, 0.5, 0.5, 1.0),
+            image: None,
+        };
+        let _compact = log_row(0, &msg, false, &from_id, Some(&to_id), &msg.body, chrono::Utc, &font);
+        let _expanded = log_row(0, &msg, true, &from_id, Some(&to_id), &msg.body, chrono::Utc, &font);
     }
 }
 

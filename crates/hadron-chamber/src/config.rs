@@ -769,11 +769,11 @@ impl ThemeDefinition {
                 popover: "#1e293b".into(),
             },
             accents: AccentPalette {
-                primary: "#60a5fa".into(),
-                glow_blue: "#60a5fa".into(),
-                glow_pink: "#a78bfa".into(),
-                glow_green: "#34d399".into(),
-                glow_amber: "#fbbf24".into(),
+                primary: "#38bdf8".into(),
+                glow_blue: "#38bdf8".into(),
+                glow_pink: "#9d7cd8".into(),
+                glow_green: "#62c073".into(),
+                glow_amber: "#e5c07b".into(),
             },
             text: TextPalette {
                 primary: "#f1f5f9".into(),
@@ -787,10 +787,10 @@ impl ThemeDefinition {
                 prompt: "#38bdf8".into(),
             },
             status: StatusPalette {
-                success: "#34d399".into(),
-                warning: "#fbbf24".into(),
-                error: "#f87171".into(),
-                info: "#60a5fa".into(),
+                success: "#62c073".into(),
+                warning: "#e5c07b".into(),
+                error: "#e06c75".into(),
+                info: "#38bdf8".into(),
             },
         }
     }
@@ -1201,6 +1201,36 @@ pub fn load_from(path: &Path) -> ChamberPrefs {
             prefs
                 .recent_projects
                 .retain(|p| !is_install_or_system_dir(Path::new(&p.path), None));
+            // Migrate legacy pre-telemetry custom theme status/accent defaults so a saved
+            // chamber.json does not stay stuck on bright Tailwind greens/blues/reds.
+            if let Some(custom) = &mut prefs.custom_theme {
+                if custom.status.success.eq_ignore_ascii_case("#34d399") {
+                    custom.status.success = "#62c073".into();
+                }
+                if custom.status.warning.eq_ignore_ascii_case("#fbbf24") {
+                    custom.status.warning = "#e5c07b".into();
+                }
+                if custom.status.error.eq_ignore_ascii_case("#f87171") {
+                    custom.status.error = "#e06c75".into();
+                }
+                if custom.status.info.eq_ignore_ascii_case("#60a5fa") {
+                    custom.status.info = "#38bdf8".into();
+                }
+                if custom.accents.glow_green.eq_ignore_ascii_case("#34d399") {
+                    custom.accents.glow_green = "#62c073".into();
+                }
+                if custom.accents.glow_blue.eq_ignore_ascii_case("#60a5fa") {
+                    custom.accents.glow_blue = "#38bdf8".into();
+                }
+                if custom.accents.glow_pink.eq_ignore_ascii_case("#c084fc")
+                    || custom.accents.glow_pink.eq_ignore_ascii_case("#a78bfa")
+                {
+                    custom.accents.glow_pink = "#9d7cd8".into();
+                }
+                if custom.accents.glow_amber.eq_ignore_ascii_case("#fbbf24") {
+                    custom.accents.glow_amber = "#e5c07b".into();
+                }
+            }
             prefs
         }
         Err(_) => ChamberPrefs::default(),

@@ -468,7 +468,7 @@ impl super::Chamber {
         let color = if enabled {
             theme::halo_dot(state)
         } else {
-            gpui::rgb(0x71717a).into()
+            theme::presence_disabled().into()
         };
         div()
             .w(px(8.0))

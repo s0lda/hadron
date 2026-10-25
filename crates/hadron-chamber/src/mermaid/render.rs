@@ -16,14 +16,14 @@ use std::hash::{Hash, Hasher};
 
 #[cfg(feature = "gui")]
 const DIAGRAM_PALETTE: [u32; 8] = [
-    0x60a5fa, // Blue
-    0x34d399, // Emerald
-    0xf59e0b, // Amber
-    0xc084fc, // Purple
-    0xf87171, // Rose
+    0x38bdf8, // Synapse Cyan
+    0x62c073, // Emerald-Mint
+    0xe5c07b, // Muted Amber
+    0x9d7cd8, // Kinetic Amethyst
+    0xe06c75, // Coral Red
     0x2dd4bf, // Teal
-    0x38bdf8, // Sky
-    0xa78bfa, // Violet
+    0x8a93a6, // Slate Secondary
+    0x818cf8, // Indigo
 ];
 
 /// Interactive Mermaid Diagram Card Component
@@ -108,14 +108,14 @@ impl RenderOnce for MermaidCard {
                                     .py_0p5()
                                     .rounded_md()
                                     .bg(if is_error {
-                                        gpui::rgba(0xef444420)
+                                        crate::theme::error().opacity(0.14)
                                     } else {
-                                        gpui::rgba(0x3b82f620)
+                                        crate::theme::info().opacity(0.14)
                                     })
                                     .text_color(if is_error {
-                                        gpui::rgb(0xef4444)
+                                        crate::theme::error()
                                     } else {
-                                        gpui::rgb(0x60a5fa)
+                                        crate::theme::info()
                                     })
                                     .text_xs()
                                     .font_weight(FontWeight::SEMIBOLD)
@@ -271,9 +271,9 @@ fn render_flowchart_canvas(layout: FlowchartLayout) -> impl IntoElement {
                                 };
 
                                 let color = match edge.style {
-                                    EdgeStyle::ThickArrow | EdgeStyle::ThickLine => gpui::rgb(0x60a5fa),
-                                    EdgeStyle::DottedArrow | EdgeStyle::DottedLine => gpui::rgb(0x94a3b8),
-                                    _ => gpui::rgb(0x64748b),
+                                    EdgeStyle::ThickArrow | EdgeStyle::ThickLine => crate::theme::info(),
+                                    EdgeStyle::DottedArrow | EdgeStyle::DottedLine => crate::theme::text_secondary(),
+                                    _ => crate::theme::text_muted(),
                                 };
 
                                 let mut builder = gpui::PathBuilder::stroke(stroke_w);
@@ -447,9 +447,9 @@ fn render_sequence_canvas(layout: SequenceLayout) -> impl IntoElement {
                                 let x2 = bounds.origin.x + px(msg.end.x);
                                 let y = bounds.origin.y + px(msg.start.y);
                                 let line_color = if msg.is_dotted {
-                                    gpui::rgb(0x94a3b8)
+                                    crate::theme::text_secondary()
                                 } else {
-                                    gpui::rgb(0x60a5fa)
+                                    crate::theme::info()
                                 };
 
                                 let min_x = x1.min(x2);
@@ -532,11 +532,11 @@ fn render_sequence_canvas(layout: SequenceLayout) -> impl IntoElement {
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(gpui::rgba(0xf59e0b20))
+                        .bg(crate::theme::warning().opacity(0.14))
                         .border_1()
-                        .border_color(gpui::rgba(0xf59e0b50))
+                        .border_color(crate::theme::warning().opacity(0.35))
                         .text_xs()
-                        .text_color(gpui::rgb(0xfbbf24))
+                        .text_color(crate::theme::warning())
                         .child(note.text)
                 })),
         )
@@ -685,8 +685,8 @@ impl RenderOnce for ImageCard {
                             .px_2()
                             .py_0p5()
                             .rounded_md()
-                            .bg(gpui::rgba(0x3b82f620))
-                            .text_color(gpui::rgb(0x60a5fa))
+                            .bg(crate::theme::info().opacity(0.14))
+                            .text_color(crate::theme::info())
                             .text_xs()
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()

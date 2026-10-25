@@ -29,7 +29,7 @@ impl super::Chamber {
 
         // Quark brand constellation dots
         let quark_dots = h_flex().gap_1p5().items_center().children(
-            [0x60a5fau32, 0xc084fc, 0x34d399, 0xfbbf24]
+            [0x38bdf8u32, 0x9d7cd8, 0x62c073, 0xe5c07b]
                 .into_iter()
                 .map(|c| div().size(px(9.0)).rounded_full().bg(rgb(c)).into_any_element()),
         );
@@ -175,8 +175,8 @@ impl super::Chamber {
                                                                             .px_1p5()
                                                                             .py_0p5()
                                                                             .rounded_sm()
-                                                                            .bg(rgb(0x8b5cf6))
-                                                                            .text_color(rgb(0xffffff))
+                                                                            .bg(theme::accent_secondary().opacity(0.20))
+                                                                            .text_color(theme::accent_secondary())
                                                                             .child(format!("WSL: {distro}"))
                                                                             .into_any_element()
                                                                     })),

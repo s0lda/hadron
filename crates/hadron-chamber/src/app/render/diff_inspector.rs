@@ -216,9 +216,9 @@ impl Chamber {
             for hunk in display_hunks {
                 let bg_color = match hunk.status {
                     ThreeWayStatus::Same => theme::term_bg(),
-                    ThreeWayStatus::OursModified => gpui::rgba(0x79b8ff18),
-                    ThreeWayStatus::TheirsModified => gpui::rgba(0x85e89d18),
-                    ThreeWayStatus::Conflict => gpui::rgba(0xf9758325),
+                    ThreeWayStatus::OursModified => theme::info().opacity(0.10),
+                    ThreeWayStatus::TheirsModified => theme::git_added().opacity(0.10),
+                    ThreeWayStatus::Conflict => theme::git_deleted().opacity(0.15),
                 };
 
                 let base_str = if hunk.base.is_empty() { " ".to_string() } else { hunk.base };

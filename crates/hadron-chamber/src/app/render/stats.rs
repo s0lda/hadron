@@ -848,7 +848,7 @@ impl super::Chamber {
                         .total_cost_usd
                         .map(|c| format!("${:.2}", c))
                         .unwrap_or_else(|| "—".to_string()),
-                    rgb(0x22c55e),
+                    theme::success(),
                     Some("!"),
                     Some("Partial provider reporting: Cost is only computed for providers with known token rates (e.g. Claude, Gemini Pro)."),
                 )),
@@ -1051,7 +1051,7 @@ impl super::Chamber {
                 let q_bar_color = if frac < 0.20 {
                     theme::halo_error()
                 } else if frac < 0.50 {
-                    rgb(0xfbbf24).into()
+                    theme::warning().into()
                 } else {
                     theme::halo_idle()
                 };

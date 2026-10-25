@@ -23,7 +23,7 @@ pub fn compute_token_flame_segments(stats: &SessionStats) -> Vec<FlameSegment> {
             label: "Input",
             count: stats.total_input,
             ratio: (stats.total_input as f64 / total as f64) as f32,
-            color_rgb: 0x60a5fa, // Blue
+            color_rgb: 0x38bdf8, // Synapse Cyan
         });
     }
     if stats.total_output > 0 {
@@ -31,7 +31,7 @@ pub fn compute_token_flame_segments(stats: &SessionStats) -> Vec<FlameSegment> {
             label: "Output",
             count: stats.total_output,
             ratio: (stats.total_output as f64 / total as f64) as f32,
-            color_rgb: 0xc084fc, // Purple
+            color_rgb: 0x9d7cd8, // Kinetic Amethyst
         });
     }
     if stats.total_cache_read > 0 {
@@ -39,7 +39,7 @@ pub fn compute_token_flame_segments(stats: &SessionStats) -> Vec<FlameSegment> {
             label: "Cache Read",
             count: stats.total_cache_read,
             ratio: (stats.total_cache_read as f64 / total as f64) as f32,
-            color_rgb: 0x34d399, // Emerald
+            color_rgb: 0x62c073, // Emerald-Mint
         });
     }
     if stats.total_cache_write > 0 {
@@ -47,7 +47,7 @@ pub fn compute_token_flame_segments(stats: &SessionStats) -> Vec<FlameSegment> {
             label: "Cache Write",
             count: stats.total_cache_write,
             ratio: (stats.total_cache_write as f64 / total as f64) as f32,
-            color_rgb: 0xfbbf24, // Amber
+            color_rgb: 0xe5c07b, // Muted Amber
         });
     }
 
