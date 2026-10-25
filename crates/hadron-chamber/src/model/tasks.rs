@@ -69,16 +69,14 @@ const TITLE_MAX_CHARS: usize = 80;
 ///   that string is what the quark was actually told to do.
 pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
     let mut tasks: Vec<SwarmTask> = Vec::new();
-    // The still-open task index per addressee, so a completion closes the most
-    // recently opened one without a linear rescan of `tasks` on every event.
-    let mut open: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut req_indices: Vec<usize> = Vec::new();
     // Task index by the ULID of the event that opened it, so a dispatch record can
     // find the request it belongs to. Keyed by the ULID's string: `ulid` is a
     // dependency of `hadron-lattice`, not of the chamber, and one map is not worth
     // taking on the crate for.
     let mut by_event: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
-    for e in events {
+    for (ev_ix, e) in events.iter().enumerate() {
         if hadron_gluon::router::is_turn_request(e) {
             if let Some(to) = &e.to {
                 // The dispatch record of a request we already have a row for.
@@ -88,6 +86,8 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
                     {
                         tasks[ix].title = extracted_title(task);
                         tasks[ix].body = task.clone();
+                        req_indices[ix] = ev_ix;
+                        by_event.insert(e.id.to_string(), ix);
                         continue;
                     }
                 }
@@ -97,8 +97,14 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
                     continue;
                 }
                 let to_str = to.as_str().to_string();
-                open.insert(to_str.clone(), tasks.len());
-                by_event.insert(e.id.to_string(), tasks.len());
+                let ix = tasks.len();
+                by_event.insert(e.id.to_string(), ix);
+                if matches!(e.kind, Kind::Assign { .. }) {
+                    if let Some(ans) = &e.answers {
+                        by_event.insert(ans.to_string(), ix);
+                    }
+                }
+                req_indices.push(ev_ix);
                 tasks.push(SwarmTask {
                     to: to_str,
                     from: actor_label(&e.from),
@@ -110,13 +116,17 @@ pub fn swarm_tasks(events: &[Event]) -> Vec<SwarmTask> {
                 });
             }
         }
-        if let Actor::Quark(q) = &e.from {
-            if hadron_gluon::router::is_turn_completion(e, q) {
-                if let Some(ix) = open.remove(q.as_str()) {
-                    tasks[ix].state = outcome_of(&e.kind);
-                    tasks[ix].done_at = Some(e.ts);
-                }
-            }
+    }
+
+    for (ix, task) in tasks.iter_mut().enumerate() {
+        let req_ix = req_indices[ix];
+        let req = &events[req_ix];
+        let target = hadron_lattice::QuarkId::new(&task.to);
+        if let Some(c) =
+            hadron_gluon::router::request_completion(&events[req_ix + 1..], req, &target)
+        {
+            task.state = outcome_of(&c.kind);
+            task.done_at = Some(c.ts);
         }
     }
 
@@ -465,6 +475,62 @@ mod tests {
             msg(Actor::Human, Some("sonnet"), "Second job."),
         ];
         assert_eq!(swarm_tasks(&evs).len(), 2);
+    }
+
+    #[test]
+    fn interleaved_turns_both_close_instead_of_orphaning_the_first() {
+        let human_msg = msg(Actor::Human, None, "First job from human.");
+        let assign_a = Event::new(
+            Actor::Gluon,
+            Some(QuarkId::new("cli-agy")),
+            Kind::Assign {
+                task: "First job from human.".to_string(),
+                invariants: vec![],
+            },
+        )
+        .with_answers(human_msg.id);
+
+        let peer_msg = msg(
+            Actor::Quark(QuarkId::new("acp-agy")),
+            Some("cli-agy"),
+            "Second job from peer.",
+        );
+        let assign_b = Event::new(
+            Actor::Gluon,
+            Some(QuarkId::new("cli-agy")),
+            Kind::Assign {
+                task: "Second job from peer.".to_string(),
+                invariants: vec![],
+            },
+        )
+        .with_answers(peer_msg.id);
+
+        let reply_b = msg(Actor::Quark(QuarkId::new("cli-agy")), None, "Done with B.")
+            .with_answers(peer_msg.id);
+        let ground_b = Event::new(
+            Actor::Quark(QuarkId::new("cli-agy")),
+            None,
+            Kind::Status { state: QuarkState::Ground },
+        )
+        .with_answers(peer_msg.id);
+
+        let reply_a = msg(Actor::Quark(QuarkId::new("cli-agy")), None, "Done with A.")
+            .with_answers(human_msg.id);
+        let ground_a = Event::new(
+            Actor::Quark(QuarkId::new("cli-agy")),
+            None,
+            Kind::Status { state: QuarkState::Ground },
+        )
+        .with_answers(human_msg.id);
+
+        let tasks = swarm_tasks(&[
+            human_msg, assign_a, peer_msg, assign_b, reply_b, ground_b, reply_a, ground_a,
+        ]);
+        assert_eq!(tasks.len(), 2);
+        assert!(
+            tasks.iter().all(|t| t.state == TaskState::Done && t.done_at.is_some()),
+            "both interleaved turns must close as Done, got: {tasks:?}"
+        );
     }
 
     /// The engine writes a `Kind::Assign` per dispatch (`engine/run.rs`), addressed to

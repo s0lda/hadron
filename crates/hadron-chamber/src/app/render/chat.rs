@@ -302,7 +302,7 @@ impl super::Chamber {
                                             .text_xs()
                                             .font_family(cx.theme().mono_font_family.clone())
                                             .text_color(theme::text_muted())
-                                            .child(format!("{secs}s")),
+                                            .child(format_duration(secs as i64)),
                                     ),
                             )
                         })

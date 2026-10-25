@@ -2247,15 +2247,7 @@ impl Chamber {
         let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
         let custom_shell = self.prefs.terminal_shell.as_deref();
         let scrollback = self.prefs.terminal_scrollback;
-        let shell = custom_shell
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(crate::pty::default_shell);
-        let stem = std::path::Path::new(&shell)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("term");
-        let title = format!("{stem} #{}", self.terminals.len() + 1);
+        let title = crate::pty::terminal_tab_title(&root, custom_shell, self.terminals.len() + 1);
         match crate::pty::PtyTerminal::new_with_options(&root, dims.0, dims.1, custom_shell, scrollback) {
             Ok(mut term) => {
                 term.title = title.clone();

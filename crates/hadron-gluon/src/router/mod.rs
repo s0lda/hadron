@@ -34,15 +34,41 @@ use crate::preons::Preon;
 /// - `Kind::Assign`: requires completion with `answers == req.answers` (the continued assignment),
 ///   or answering a newer addressed request in `events_after` that superseded `req`.
 /// - `Kind::PermissionGrant`: satisfied by any subsequent completion for `target` that resolves the pause.
-pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId) -> bool {
+/// Return the completing event in `events_after` that answers `req` for `target`, if any.
+///
+/// Prefers an explicit `answers` match for `req` (so concurrent or out-of-order turns each
+/// resolve to their own completion event) before falling back to unstamped legacy completions
+/// or newer-request supersession.
+pub fn request_completion<'a>(
+    events_after: &'a [Event],
+    req: &Event,
+    target: &QuarkId,
+) -> Option<&'a Event> {
+    let is_direct_match = |c: &Event| -> bool {
+        let Some(a) = c.answers else { return false };
+        match &req.kind {
+            Kind::Message { .. } => {
+                a == req.id || (req.from == Actor::Gluon && req.answers == Some(a))
+            }
+            Kind::Assign { .. } => a == req.answers.unwrap_or(req.id) || a == req.id,
+            _ => false,
+        }
+    };
+    if let Some(direct) = events_after
+        .iter()
+        .find(|c| is_turn_completion(c, target) && is_direct_match(c))
+    {
+        return Some(direct);
+    }
+
     let answered_newer_request = |a: ulid::Ulid| {
         events_after.iter().any(|r| {
-            r.id == a
+            (r.id == a || (matches!(r.kind, Kind::Assign { .. }) && r.answers == Some(a)))
                 && r.to.as_ref() == Some(target)
                 && matches!(r.kind, Kind::Assign { .. } | Kind::Message { .. })
         })
     };
-    events_after.iter().any(|c| {
+    events_after.iter().find(|c| {
         if !is_turn_completion(c, target) {
             return false;
         }
@@ -56,13 +82,19 @@ pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId
                 None => true,
             },
             Kind::Assign { .. } => match c.answers {
-                Some(a) => a == req.answers.unwrap_or(req.id) || answered_newer_request(a),
+                Some(a) => {
+                    a == req.answers.unwrap_or(req.id) || a == req.id || answered_newer_request(a)
+                }
                 None => true,
             },
             Kind::PermissionGrant { .. } => true,
             _ => true,
         }
     })
+}
+
+pub fn is_request_answered(events_after: &[Event], req: &Event, target: &QuarkId) -> bool {
+    request_completion(events_after, req, target).is_some()
 }
 
 /// Only the newest unanswered request is returned. Two quarks masked at once therefore

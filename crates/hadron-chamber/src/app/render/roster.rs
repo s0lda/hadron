@@ -419,22 +419,12 @@ impl super::Chamber {
             None
         };
 
-        fn format_dur(secs: i64) -> String {
-            if secs < 60 {
-                format!("{}s", secs)
-            } else if secs < 3600 {
-                format!("{}m {}s", secs / 60, secs % 60)
-            } else {
-                format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-            }
-        }
-
-        let excited_time_str = format_dur(excited_secs);
+        let excited_time_str = super::chat::format_duration(excited_secs);
 
         let time_part = if let Some(act) = &activity {
             let task_secs = (now - act.at).num_seconds().max(0);
             if excited_secs > task_secs && task_secs > 0 {
-                format!("{} ({})", excited_time_str, format_dur(task_secs))
+                format!("{} ({})", excited_time_str, super::chat::format_duration(task_secs))
             } else {
                 excited_time_str
             }

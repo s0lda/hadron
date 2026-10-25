@@ -233,6 +233,20 @@ pub(crate) fn resolve_pty_target(
     (shells, final_cwd, wsl_target)
 }
 
+/// Compute the environment-aware terminal tab title (e.g. `wsl #1`, `pwsh #1`, `bash #1`)
+/// for a workspace `cwd`, optional `custom_shell`, and 1-based tab `index`.
+pub fn terminal_tab_title(cwd: &Path, custom_shell: Option<&str>, index: usize) -> String {
+    let (shells, _, _) = resolve_pty_target(cwd, custom_shell);
+    let primary = shells.first().cloned().unwrap_or_else(default_shell);
+    let file_name = primary.rsplit(['/', '\\']).next().unwrap_or(&primary);
+    let stem = std::path::Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("term");
+    format!("{stem} #{index}")
+}
+
 impl PtyTerminal {
     #[allow(dead_code)]
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
@@ -433,11 +447,7 @@ impl PtyTerminal {
 
 
 
-        let stem = std::path::Path::new(&primary_shell)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("term");
-        let initial_title = format!("{stem} #1");
+        let initial_title = terminal_tab_title(cwd, custom_shell, 1);
 
         Ok(Self {
             title: initial_title,
@@ -1032,6 +1042,8 @@ mod tests {
         assert_eq!(shells[0], "wsl.exe");
         assert_eq!(cwd, std::env::temp_dir());
         assert_eq!(wsl_target, Some(("Ubuntu-22.04".to_string(), std::path::PathBuf::from("/home/user/code/hadron"))));
+        assert_eq!(terminal_tab_title(unc_path, None, 1), "wsl #1");
+        assert_eq!(terminal_tab_title(unc_path, None, 2), "wsl #2");
     }
 
     #[test]
@@ -1041,6 +1053,7 @@ mod tests {
         assert_eq!(shells[0], "custom_shell");
         assert_eq!(wsl_target, None);
         assert_eq!(cwd, dir.path());
+        assert_eq!(terminal_tab_title(dir.path(), Some("C:\\Program Files\\PowerShell\\7\\pwsh.exe"), 3), "pwsh #3");
     }
 
     #[test]

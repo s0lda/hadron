@@ -746,7 +746,7 @@ impl super::Chamber {
                                     div()
                                         .text_xs()
                                         .text_color(theme::text_muted())
-                                        .child(if secs >= 60 { format!("{}m", secs / 60) } else { format!("{secs}s") }),
+                                        .child(super::chat::format_duration(secs as i64)),
                                 )
                             })
                             .hover(|s| s.border_color(theme::accent()).bg(theme::tab_bar_bg()))
