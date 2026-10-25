@@ -11,8 +11,9 @@ impl super::Chamber {
         // Read from `self.last_live_activities` / `self.last_gate_activities` (polled off the render pass)
         // so hover/repaint frames never perform synchronous 9P file I/O.
         let now = chrono::Utc::now();
-        let mut active = widgets::active_quarks_rich(
+        let mut active = widgets::active_quarks_rich_with_tasks(
             &self.view.roster,
+            &self.view.tasks,
             |id| self.last_live_activities.get(id).and_then(|a| a.clone()),
             now,
         );
@@ -183,13 +184,30 @@ impl super::Chamber {
                         }
                     };
 
+                    let qid_click = cap.quark_id.clone();
+                    let is_clickable = qid_click != "gluon";
+                    let task_context = self
+                        .view
+                        .tasks
+                        .iter()
+                        .find(|t| t.to == cap.quark_id && t.state == crate::model::tasks::TaskState::Working)
+                        .map(|t| t.title.clone())
+                        .filter(|title| !title.is_empty() && title != &cap.detail);
+
                     h_flex()
+                        .id(SharedString::from(format!("live-capsule-{}", cap.quark_id)))
                         .w_full()
                         .items_center()
                         .gap_2()
                         .px_1p5()
                         .py_1()
                         .rounded_md()
+                        .when(is_clickable, |el| {
+                            el.cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.open_quark_info(qid_click.clone(), InfoTab::Home, cx);
+                                }))
+                        })
                         .hover(|s| s.bg(theme::glass_highlight()))
                         .child(
                             h_flex()
@@ -251,6 +269,23 @@ impl super::Chamber {
                                 .truncate()
                                 .child(cap.detail),
                         )
+                        .when_some(task_context, |el, t_title| {
+                            el.child(
+                                div()
+                                    .max_w(px(180.0))
+                                    .flex_none()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::bg_surface())
+                                    .border_1()
+                                    .border_color(theme::hairline_border())
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .truncate()
+                                    .child(t_title),
+                            )
+                        })
                         .when_some(cap.elapsed_secs, |el, secs| {
                             el.child(
                                 h_flex()
@@ -962,42 +997,129 @@ impl super::Chamber {
                 res
             }
         };
-        let summary_chip = summary.and_then(|(duration_secs, num_tools)| {
-            if duration_secs > 0 || num_tools > 0 {
-                let mut parts = Vec::new();
-                if duration_secs > 0 {
-                    parts.push(format!("thought for {}", format_duration(duration_secs)));
+        let (turn_commits, turn_files) = if m.from != "human" && m.from != "gluon" {
+            extract_turn_artifacts(&m.body)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let has_summary_or_artifacts = summary.is_some_and(|(d, t)| d > 0 || t > 0)
+            || !turn_commits.is_empty()
+            || !turn_files.is_empty();
+        let summary_chip = has_summary_or_artifacts.then(|| {
+            let mut row = h_flex().gap_1p5().items_center().flex_wrap().mb_1();
+            if let Some((duration_secs, num_tools)) = summary {
+                if duration_secs > 0 || num_tools > 0 {
+                    let mut parts = Vec::new();
+                    if duration_secs > 0 {
+                        parts.push(format!("thought for {}", format_duration(duration_secs)));
+                    }
+                    if num_tools > 0 {
+                        parts.push(format!(
+                            "ran {} tool{}",
+                            num_tools,
+                            if num_tools == 1 { "" } else { "s" }
+                        ));
+                    }
+                    row = row.child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(theme::glass_highlight())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::accent())
+                                    .child("⟳"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(parts.join(" · ")),
+                            ),
+                    );
                 }
-                if num_tools > 0 {
-                    parts.push(format!("ran {} tool{}", num_tools, if num_tools == 1 { "" } else { "s" }));
-                }
-                Some(
+            }
+            for sha in turn_commits {
+                let ent_git = chamber_entity.clone();
+                let mono = mono_font.clone();
+                row = row.child(
                     h_flex()
-                        .gap_1p5()
+                        .id(SharedString::from(format!("turn-commit-{ix}-{sha}")))
+                        .gap_1()
                         .items_center()
-                        .px_2()
+                        .px_1p5()
                         .py_0p5()
-                        .mb_1()
+                        .rounded_md()
+                        .bg(theme::success().opacity(0.12))
+                        .border_1()
+                        .border_color(theme::success().opacity(0.35))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::success().opacity(0.22)))
+                        .on_click(move |_, _window, cx| {
+                            ent_git.update(cx, |this, cx| {
+                                this.prefs.inspector_collapsed = false;
+                                this.right_rail_tab = RightRailTab::Git;
+                                this.git_subtab = GitSubtab::Graph;
+                                cx.notify();
+                            });
+                        })
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(mono)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(theme::success())
+                                .child(format!("⊕ {sha}")),
+                        ),
+                );
+            }
+            for file_name in turn_files {
+                let ent_diff = chamber_entity.clone();
+                let mono = mono_font.clone();
+                row = row.child(
+                    h_flex()
+                        .id(SharedString::from(format!("turn-file-{ix}-{file_name}")))
+                        .gap_1()
+                        .items_center()
+                        .px_1p5()
+                        .py_0p5()
                         .rounded_md()
                         .bg(theme::bg_surface())
                         .border_1()
                         .border_color(theme::glass_highlight())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::bg_surface_raised()))
+                        .on_click(move |_, _window, cx| {
+                            ent_diff.update(cx, |this, cx| {
+                                this.prefs.inspector_collapsed = false;
+                                this.right_rail_tab = RightRailTab::Git;
+                                this.git_subtab = GitSubtab::Changes;
+                                cx.notify();
+                            });
+                        })
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(theme::accent())
-                                .child("⟳"),
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme::info())
+                                .child("±"),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(theme::text_muted())
-                                .child(parts.join(" · ")),
+                                .font_family(mono)
+                                .text_color(theme::text_secondary())
+                                .child(file_name),
                         ),
-                )
-            } else {
-                None
+                );
             }
+            row
         });
 
         let msg_text = m.body.clone();
@@ -1608,6 +1730,60 @@ mod turn_summary_tests {
     }
 }
 
+/// Extracts short git commit hashes (7–10 hex chars) and touched source file basenames
+/// mentioned in a quark's message body for in-stream turn diff chips.
+pub(super) fn extract_turn_artifacts(body: &str) -> (Vec<String>, Vec<String>) {
+    let mut commits: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+
+    for token in body.split_whitespace() {
+        let cleaned = token.trim_matches(|c: char| {
+            matches!(
+                c,
+                '`' | '(' | ')' | '[' | ']' | ',' | '.' | ':' | ';' | '"' | '\''
+            )
+        });
+        if cleaned.is_empty() {
+            continue;
+        }
+        // Check for 7–10 char hex hash that contains both digits and hex letters (to avoid plain words/numbers)
+        if (7..=10).contains(&cleaned.len())
+            && cleaned.chars().all(|c| c.is_ascii_hexdigit())
+            && cleaned.chars().any(|c| c.is_ascii_digit())
+            && cleaned.chars().any(|c| matches!(c, 'a'..='f' | 'A'..='F'))
+        {
+            let lower = cleaned.to_ascii_lowercase();
+            if !commits.contains(&lower) && commits.len() < 4 {
+                commits.push(lower);
+            }
+            continue;
+        }
+        // Check for file paths/basenames with source extensions
+        let path_part = cleaned
+            .split('#')
+            .next()
+            .unwrap_or(cleaned)
+            .trim_start_matches("file://");
+        let basename = path_part.rsplit('/').next().unwrap_or(path_part);
+        let has_src_ext = [
+            ".rs", ".py", ".toml", ".md", ".ts", ".tsx", ".js", ".json", ".sh", ".ps1",
+        ]
+        .iter()
+        .any(|ext| basename.ends_with(ext) && basename.len() > ext.len());
+        if has_src_ext
+            && basename
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            && !files.iter().any(|f| f == basename)
+            && files.len() < 5
+        {
+            files.push(basename.to_string());
+        }
+    }
+
+    (commits, files)
+}
+
 #[cfg(test)]
 mod milestone_3_tests {
     use crate::app::tabs::ChatTab;
@@ -1770,6 +1946,14 @@ mod milestone_3_tests {
         // Move down past end from 2 -> wraps around to 0
         selected = cycle(selected, 1);
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn test_extract_turn_artifacts_parses_commits_and_files() {
+        let msg = "Committed `a1b2c3d4` touching [roster.rs](file:///path/to/roster.rs#L10-L20) and `crates/hadron-gluon/scripts/agy_acp.py`.";
+        let (commits, files) = super::extract_turn_artifacts(msg);
+        assert_eq!(commits, vec!["a1b2c3d4".to_string()]);
+        assert_eq!(files, vec!["roster.rs".to_string(), "agy_acp.py".to_string()]);
     }
 }
 

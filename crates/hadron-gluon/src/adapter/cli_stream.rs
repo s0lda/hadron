@@ -131,7 +131,7 @@ impl StreamAccumulator {
                 // Completed `agent_response` steps carry `label == "thinking"` and
                 // often arrive alongside or after a tool step. Never overwrite an
                 // active tool status back to `"thinking"` on a `DONE` agent_response.
-                if label == "thinking"
+                if (label == "thinking" || label.starts_with("thinking:"))
                     && step.get("state").and_then(Value::as_str) == Some("DONE")
                     && !self.status.is_empty()
                     && self.status != "reading the message"
@@ -225,7 +225,13 @@ fn agy_step_label(step: &Value) -> Option<String> {
         // Neither names any work: `checkpoint` and `unknown` were 2 of the 17
         // steps in the live capture and say nothing a human can act on.
         "checkpoint" | "unknown" => None,
-        "agent_response" => Some("thinking".to_string()),
+        "agent_response" => {
+            if let Some(thought) = step.get("thinking").and_then(Value::as_str).and_then(short_arg) {
+                Some(format!("thinking: {thought}"))
+            } else {
+                Some("thinking".to_string())
+            }
+        }
         "user_input" => Some("reading the message".to_string()),
         other => Some(other.replace('_', " ")),
     }

@@ -274,8 +274,150 @@ impl super::Chamber {
 
         // Telemetry line: excited_time (time_per_task)  (larger gap)  context/context_window (%)
         let now = chrono::Utc::now();
-        let latest_task = self.view.tasks.iter().find(|t| t.to == r.id);
+        let active_task = self
+            .view
+            .tasks
+            .iter()
+            .find(|t| t.to == r.id && t.state == crate::model::tasks::TaskState::Working);
+        let latest_task = active_task.or_else(|| self.view.tasks.iter().find(|t| t.to == r.id));
         let excited_secs = latest_task.map(|t| t.elapsed_secs(now)).unwrap_or(0);
+
+        let quark_wt_prefix = format!("quark/{}/", r.id);
+        let wt_info = self.git_worktrees.as_ref().and_then(|wts| {
+            wts.iter().find(|wt| {
+                wt.branch
+                    .as_deref()
+                    .is_some_and(|b| b.starts_with(&quark_wt_prefix))
+                    || wt.path.ends_with(&format!("/{}", r.id))
+            })
+        });
+        let is_gating = self
+            .last_gate_activities
+            .iter()
+            .any(|g| g.quark.as_str() == r.id);
+        let has_unmerged_branch = wt_info
+            .and_then(|wt| self.branch_merged(wt.branch.as_deref()))
+            == Some(false);
+
+        let header_row = header_row.child(
+            h_flex()
+                .items_center()
+                .gap_1()
+                .when(is_gating, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_sm()
+                            .bg(theme::halo_active().opacity(0.15))
+                            .border_1()
+                            .border_color(theme::halo_active().opacity(0.4))
+                            .text_color(theme::halo_active())
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("gating"),
+                    )
+                })
+                .when(!is_gating && has_unmerged_branch, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_sm()
+                            .bg(theme::warning().opacity(0.15))
+                            .border_1()
+                            .border_color(theme::warning().opacity(0.4))
+                            .text_color(theme::warning())
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("+branch"),
+                    )
+                }),
+        );
+
+        let live_activity_row = if let Some(act) = &activity {
+            let raw = act.detail.trim();
+            let detail_str = if raw.is_empty() || raw == "thinking" {
+                active_task
+                    .map(|t| t.title.clone())
+                    .unwrap_or_else(|| act.doing.label().to_string())
+            } else {
+                widgets::humanize_activity_detail(raw)
+            };
+            let (badge_color, badge_lbl) = match act.doing {
+                hadron_lattice::live::Doing::Thinking => (theme::halo_reasoning(), "thinking"),
+                hadron_lattice::live::Doing::Working => (theme::halo_active(), "exec"),
+                hadron_lattice::live::Doing::Planning => (theme::halo_active(), "plan"),
+                hadron_lattice::live::Doing::Speaking => (theme::halo_reasoning(), "speaking"),
+                hadron_lattice::live::Doing::Gating => (theme::halo_active(), "gating"),
+            };
+            Some(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_1p5()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_sm()
+                    .bg(theme::glass_card())
+                    .border_1()
+                    .border_color(badge_color.opacity(0.28))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(badge_color)
+                            .child(badge_lbl),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(theme::text_secondary())
+                            .truncate()
+                            .child(detail_str),
+                    ),
+            )
+        } else if matches!(effective_state, QuarkState::Excited | QuarkState::Thinking)
+            || active_task.is_some()
+        {
+            let detail_str = active_task
+                .map(|t| t.title.clone())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "starting turn…".to_string());
+            let badge_color = theme::halo_reasoning();
+            Some(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_1p5()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_sm()
+                    .bg(theme::glass_card())
+                    .border_1()
+                    .border_color(badge_color.opacity(0.28))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(badge_color)
+                            .child("active"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(theme::text_secondary())
+                            .truncate()
+                            .child(detail_str),
+                    ),
+            )
+        } else {
+            None
+        };
 
         fn format_dur(secs: i64) -> String {
             if secs < 60 {
@@ -460,7 +602,25 @@ impl super::Chamber {
                     menu
                 }
             })
-            .child(v_flex().w_full().gap_1p5().child(header_row).child(telemetry_row))
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1p5()
+                    .child(header_row)
+                    .when_some(live_activity_row, |this, row| this.child(row))
+                    .child(telemetry_row)
+                    .when_some(ctx_opt, |this, ctx| {
+                        let frac = ((ctx.used_percentage as f32) / 100.0).clamp(0.02, 1.0);
+                        let bar_color: gpui::Hsla = if ctx.used_percentage >= 90.0 {
+                            theme::error().into()
+                        } else if ctx.used_percentage >= 70.0 {
+                            theme::warning().into()
+                        } else {
+                            identity.color.opacity(0.75)
+                        };
+                        this.child(progress_meter(frac, bar_color))
+                    }),
+            )
     }
 
     /// Renders an 8px vector GPU-native status halo indicator dot.

@@ -94,15 +94,17 @@ impl InfoTab {
 pub(super) enum GitSubtab {
     Branches,
     Worktrees,
+    Changes,
     Graph,
     Diff3Way,
     Remote,
 }
 
 impl GitSubtab {
-    pub(super) const ALL: [GitSubtab; 5] = [
+    pub(super) const ALL: [GitSubtab; 6] = [
         GitSubtab::Branches,
         GitSubtab::Worktrees,
+        GitSubtab::Changes,
         GitSubtab::Graph,
         GitSubtab::Diff3Way,
         GitSubtab::Remote,
@@ -112,9 +114,10 @@ impl GitSubtab {
         match self {
             GitSubtab::Branches => 0,
             GitSubtab::Worktrees => 1,
-            GitSubtab::Graph => 2,
-            GitSubtab::Diff3Way => 3,
-            GitSubtab::Remote => 4,
+            GitSubtab::Changes => 2,
+            GitSubtab::Graph => 3,
+            GitSubtab::Diff3Way => 4,
+            GitSubtab::Remote => 5,
         }
     }
 
@@ -126,9 +129,48 @@ impl GitSubtab {
         match self {
             GitSubtab::Branches => "Branches",
             GitSubtab::Worktrees => "Worktrees",
+            GitSubtab::Changes => "Changes",
             GitSubtab::Graph => "Graph",
             GitSubtab::Diff3Way => "3-Way Diff",
             GitSubtab::Remote => "Remote & Issues",
+        }
+    }
+}
+
+/// The sub-views inside [`RightRailTab::Mission`]: implementation plan & wave DAG,
+/// live swarm task feed, and shared Nucleus memory index/features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum MissionSubtab {
+    #[default]
+    Plan,
+    Tasks,
+    Nucleus,
+}
+
+impl MissionSubtab {
+    pub(super) const ALL: [MissionSubtab; 3] = [
+        MissionSubtab::Plan,
+        MissionSubtab::Tasks,
+        MissionSubtab::Nucleus,
+    ];
+
+    pub(super) fn index(self) -> usize {
+        match self {
+            MissionSubtab::Plan => 0,
+            MissionSubtab::Tasks => 1,
+            MissionSubtab::Nucleus => 2,
+        }
+    }
+
+    pub(super) fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(MissionSubtab::Plan)
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            MissionSubtab::Plan => "Plan & Waves",
+            MissionSubtab::Tasks => "Swarm Tasks",
+            MissionSubtab::Nucleus => "Nucleus Memory",
         }
     }
 }
@@ -138,24 +180,19 @@ pub(super) enum RightRailTab {
     Terminal,
     FileTree,
     Git,
-    Changes,
-    Plan,
-    /// The live swarm task feed — a projection over the field (`ChamberView.tasks`),
-    /// beside `Plan` rather than replacing it: `Plan` is the human-authored `.md`,
-    /// this is who's working on what right now.
-    Tasks,
+    /// Unified Mission view combining the active Implementation Plan, live Swarm Tasks,
+    /// and shared Nucleus memory index/feature map.
+    Mission,
     /// Interactive 3D Sphere Topology visualizer showing live active and excited quarks.
     Visualizer,
 }
 
 impl RightRailTab {
-    pub(super) const ALL: [RightRailTab; 7] = [
+    pub(super) const ALL: [RightRailTab; 5] = [
         RightRailTab::Terminal,
         RightRailTab::FileTree,
         RightRailTab::Git,
-        RightRailTab::Changes,
-        RightRailTab::Plan,
-        RightRailTab::Tasks,
+        RightRailTab::Mission,
         RightRailTab::Visualizer,
     ];
 
@@ -164,10 +201,8 @@ impl RightRailTab {
             RightRailTab::Terminal => 0,
             RightRailTab::FileTree => 1,
             RightRailTab::Git => 2,
-            RightRailTab::Changes => 3,
-            RightRailTab::Plan => 4,
-            RightRailTab::Tasks => 5,
-            RightRailTab::Visualizer => 6,
+            RightRailTab::Mission => 3,
+            RightRailTab::Visualizer => 4,
         }
     }
 
@@ -180,9 +215,7 @@ impl RightRailTab {
             RightRailTab::Terminal => "Terminal",
             RightRailTab::FileTree => "File Tree",
             RightRailTab::Git => "Git",
-            RightRailTab::Changes => "Changes",
-            RightRailTab::Plan => "Plan",
-            RightRailTab::Tasks => "Tasks",
+            RightRailTab::Mission => "Mission",
             RightRailTab::Visualizer => "Visualizer",
         }
     }
@@ -248,5 +281,18 @@ mod tests {
         assert_eq!(InfoTab::Config.label(), "Config");
         assert_eq!(InfoTab::Stats.label(), "Stats");
         assert_eq!(InfoTab::ALL.len(), 3);
+    }
+
+    #[test]
+    fn test_mission_subtab_and_right_rail_consolidation() {
+        assert_eq!(RightRailTab::ALL.len(), 5);
+        assert_eq!(RightRailTab::from_index(3), RightRailTab::Mission);
+        assert_eq!(RightRailTab::from_index(4), RightRailTab::Visualizer);
+        assert_eq!(RightRailTab::Mission.label(), "Mission");
+        assert_eq!(MissionSubtab::default(), MissionSubtab::Plan);
+        assert_eq!(MissionSubtab::from_index(0), MissionSubtab::Plan);
+        assert_eq!(MissionSubtab::from_index(1), MissionSubtab::Tasks);
+        assert_eq!(MissionSubtab::from_index(2), MissionSubtab::Nucleus);
+        assert_eq!(GitSubtab::from_index(2), GitSubtab::Changes);
     }
 }

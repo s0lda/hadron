@@ -140,6 +140,20 @@ impl super::Chamber {
                     .child(label)
                     .on_click(cx.listener(move |this, _, _window, cx| {
                         this.git_subtab = GitSubtab::from_index(ix);
+                        if this.git_subtab == GitSubtab::Changes {
+                            let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                            cx.spawn(async move |this, cx| {
+                                let diff = cx
+                                    .background_executor()
+                                    .spawn(async move { crate::vcs::working_diff(&root) })
+                                    .await;
+                                let _ = this.update(cx, |chamber, cx| {
+                                    chamber.working_diff = diff;
+                                    cx.notify();
+                                });
+                            })
+                            .detach();
+                        }
                         cx.notify();
                     }))
             }));
@@ -166,6 +180,35 @@ impl super::Chamber {
                 .pb_3()
                 .child(self.git_worktrees_section(cx))
                 .into_any_element(),
+            GitSubtab::Changes => {
+                let diff_content = match &self.working_diff {
+                    Some(diffs) if diffs.is_empty() => div()
+                        .p_4()
+                        .text_color(theme::text_muted())
+                        .child("No changes in working tree.")
+                        .into_any_element(),
+                    Some(diffs) => self.file_diff_rows(
+                        diffs,
+                        &self.changes_open_ixs,
+                        DiffPanel::Changes,
+                        cx,
+                    ),
+                    None => div()
+                        .p_4()
+                        .text_color(theme::text_muted())
+                        .child("Loading working tree diff…")
+                        .into_any_element(),
+                };
+                div()
+                    .id("changes-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.changes_scroll)
+                    .px_3()
+                    .pb_3()
+                    .child(diff_content)
+                    .into_any_element()
+            }
             GitSubtab::Graph => div()
                 .size_full()
                 .px_3()
@@ -201,6 +244,7 @@ impl super::Chamber {
 
         let git_pane = match selected {
             GitSubtab::Graph => git_pane.vertical_scrollbar(&self.git_graph_list),
+            GitSubtab::Changes => git_pane.vertical_scrollbar(&self.changes_scroll),
             _ => git_pane.vertical_scrollbar(&self.git_scroll),
         };
 
@@ -650,7 +694,7 @@ impl super::Chamber {
 
     /// Whether a branch (by name) has landed in `main` — looked up in the already-loaded
     /// branch list. `None` when the branch is unknown or absent (e.g. a detached HEAD).
-    fn branch_merged(&self, branch: Option<&str>) -> Option<bool> {
+    pub(super) fn branch_merged(&self, branch: Option<&str>) -> Option<bool> {
         let name = branch?;
         self.git_branches
             .as_ref()?

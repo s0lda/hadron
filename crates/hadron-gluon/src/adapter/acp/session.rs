@@ -454,6 +454,11 @@ impl LiveFeed {
         if activity.full.is_none() {
             activity.full = self.draft.lock().unwrap().clone();
         }
+        if activity.started.is_none() {
+            let prev_started = live::read(&self.dir, &self.quark, chrono::Utc::now())
+                .and_then(|prev| prev.started.or(Some(prev.at)));
+            activity.started = Some(prev_started.unwrap_or(activity.at));
+        }
         let _ = live::publish(&self.dir, &activity);
     }
 

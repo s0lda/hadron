@@ -18,7 +18,7 @@ import os
 
 from google.antigravity import Agent, LocalAgentConfig
 from google.antigravity.hooks import policy
-from google.antigravity.types import Text, Thought
+from google.antigravity.types import Text, Thought, ToolCall, ToolResult
 
 # The model this seat runs. The SDK's own DEFAULT_MODEL is gemini-3.5-flash, which
 # has been returning 503 "high demand" errors; gemini-3.6-flash is its current
@@ -124,11 +124,54 @@ def send_session_update(session_id, update):
     send_notification("session/update", {"sessionId": session_id, "update": update})
 
 
+def _format_tool_call_title(call: ToolCall) -> str:
+    raw_name = getattr(call, "name", "")
+    name = getattr(raw_name, "value", None) or str(raw_name or "tool")
+    args = getattr(call, "args", None) or {}
+    if isinstance(args, dict):
+        priority_keys = (
+            "CommandLine",
+            "command",
+            "Path",
+            "path",
+            "AbsolutePath",
+            "file_path",
+            "DirectoryPath",
+            "SearchPath",
+            "Query",
+            "query",
+            "Pattern",
+            "toolSummary",
+        )
+        for key in priority_keys:
+            val = args.get(key)
+            if isinstance(val, str) and val.strip():
+                first_line = val.strip().splitlines()[0].strip()
+                if first_line.startswith("/") and "/" in first_line[1:]:
+                    first_line = first_line.rsplit("/", 1)[-1] or first_line
+                if len(first_line) > 56:
+                    first_line = first_line[:56] + "…"
+                return f"{name}: {first_line}"
+    return name
+
+
 async def handle_prompt(msg_id, session_id, prompt):
     session_data = sessions.get(session_id)
     if not session_data:
         send_error(msg_id, f"unknown session {session_id!r}")
         return
+
+    prompt_text = "\n".join(
+        b.get("text", "") for b in prompt if b.get("type") == "text"
+    )
+    if not prompt_text.strip():
+        send_response(msg_id, {"stopReason": "end_turn"})
+        return
+
+    send_session_update(session_id, {
+        "sessionUpdate": "agent_thought_chunk",
+        "content": {"type": "text", "text": "Analyzing task & preparing context…"}
+    })
 
     # Boot the SDK Agent lazily, on the FIRST prompt — not at session/new. Model
     # detection (Settings' probe) opens a session but never prompts, so it must
@@ -139,13 +182,6 @@ async def handle_prompt(msg_id, session_id, prompt):
     except Exception as e:
         logger.error(f"could not start the Antigravity agent: {e}")
         send_error(msg_id, f"could not start the Antigravity agent: {e}")
-        return
-
-    prompt_text = "\n".join(
-        b.get("text", "") for b in prompt if b.get("type") == "text"
-    )
-    if not prompt_text.strip():
-        send_response(msg_id, {"stopReason": "end_turn"})
         return
 
     try:
@@ -164,6 +200,15 @@ async def handle_prompt(msg_id, session_id, prompt):
                 send_session_update(session_id, {
                     "sessionUpdate": "agent_thought_chunk",
                     "content": {"type": "text", "text": chunk.text}
+                })
+            elif isinstance(chunk, ToolCall):
+                title = _format_tool_call_title(chunk)
+                call_id = str(getattr(chunk, "id", None) or uuid.uuid4())
+                send_session_update(session_id, {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": call_id,
+                    "title": title,
+                    "kind": "other"
                 })
 
         # Fallback if no Text chunks were streamed (e.g. model generated thoughts or text only via resolve())

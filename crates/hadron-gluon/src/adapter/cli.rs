@@ -454,6 +454,7 @@ impl<R: CliRunner> CliQuark<R> {
     async fn run_streaming(&mut self, inv: CliInvocation, stream: StreamSpec) -> anyhow::Result<TurnOutcome> {
         let dir = self.live_dir.clone();
         let quark_id = self.id.clone();
+        let turn_started = chrono::Utc::now();
         let mut acc = StreamAccumulator::new(stream.format);
         let mut last_publish: Option<Instant> = None;
         let mut on_line = |line: &str| {
@@ -469,9 +470,12 @@ impl<R: CliRunner> CliQuark<R> {
                 || last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
             if due {
                 last_publish = Some(Instant::now());
-                let activity = if is_status_only {
+                let mut activity = if is_status_only {
                     let status = acc.status();
-                    let doing = if status == "thinking" || status == "reading the message" {
+                    let doing = if status == "thinking"
+                        || status.starts_with("thinking:")
+                        || status == "reading the message"
+                    {
                         Doing::Thinking
                     } else {
                         Doing::Working
@@ -480,6 +484,7 @@ impl<R: CliRunner> CliQuark<R> {
                 } else {
                     Activity::speaking(quark_id.clone(), acc.draft())
                 };
+                activity.started = Some(turn_started);
                 let _ = live::publish(dir, &activity);
             }
         };

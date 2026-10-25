@@ -328,8 +328,53 @@ pub(super) struct QuarkLiveCapsule {
     pub elapsed_secs: Option<u64>,
 }
 
+/// Humanize verbose raw tool step strings into concise, scannable command-plane labels.
+pub(super) fn humanize_activity_detail(raw: &str) -> String {
+    let s = raw.trim();
+    if let Some(rest) = s.strip_prefix("run_command:").or_else(|| s.strip_prefix("execute_command:")) {
+        return format!("$ {}", rest.trim());
+    }
+    if let Some(rest) = s
+        .strip_prefix("read_file:")
+        .or_else(|| s.strip_prefix("view_file:"))
+        .or_else(|| s.strip_prefix("view_file_outline:"))
+    {
+        return format!("read {}", rest.trim());
+    }
+    if let Some(rest) = s
+        .strip_prefix("edit_file:")
+        .or_else(|| s.strip_prefix("replace_file_content:"))
+        .or_else(|| s.strip_prefix("multi_replace_file_content:"))
+    {
+        return format!("edit {}", rest.trim());
+    }
+    if let Some(rest) = s.strip_prefix("write_file:").or_else(|| s.strip_prefix(" write_to_file:")) {
+        return format!("write {}", rest.trim());
+    }
+    if let Some(rest) = s.strip_prefix("grep_search:").or_else(|| s.strip_prefix("find_by_name:")) {
+        return format!("search {}", rest.trim());
+    }
+    if let Some(rest) = s.strip_prefix("thinking:") {
+        let t = rest.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    s.to_string()
+}
+
+#[cfg(test)]
 pub(super) fn active_quarks_rich(
     roster: &[RosterRow],
+    live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<QuarkLiveCapsule> {
+    active_quarks_rich_with_tasks(roster, &[], live, now)
+}
+
+pub(super) fn active_quarks_rich_with_tasks(
+    roster: &[RosterRow],
+    tasks: &[crate::model::SwarmTask],
     live: impl Fn(&str) -> Option<hadron_lattice::live::Activity>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Vec<QuarkLiveCapsule> {
@@ -337,30 +382,55 @@ pub(super) fn active_quarks_rich(
         .iter()
         .filter(|r| r.adopted && r.enabled)
         .filter_map(|r| {
+            let active_task = tasks
+                .iter()
+                .find(|t| t.to == r.id && t.state == crate::model::tasks::TaskState::Working);
             if let Some(act) = live(&r.id) {
-                let detail = if act.detail.is_empty() {
-                    act.doing.label().to_string()
+                let raw = act.detail.trim();
+                let detail = if raw.is_empty() || raw == "thinking" {
+                    if let Some(t) = active_task {
+                        if act.doing == hadron_lattice::live::Doing::Speaking {
+                            format!("writing reply · {}", t.title)
+                        } else {
+                            t.title.clone()
+                        }
+                    } else if raw.is_empty() {
+                        act.doing.label().to_string()
+                    } else {
+                        raw.to_string()
+                    }
                 } else {
-                    act.detail
+                    humanize_activity_detail(raw)
                 };
-                let elapsed_secs = act.started.map(|st| (now - st).num_seconds().max(0) as u64);
+                let elapsed_secs = act
+                    .started
+                    .or_else(|| active_task.map(|t| t.asked_at))
+                    .map(|st| (now - st).num_seconds().max(0) as u64);
                 Some(QuarkLiveCapsule {
                     quark_id: act.quark.as_str().to_string(),
                     doing: act.doing,
                     detail,
                     elapsed_secs,
                 })
-            } else if matches!(r.state, QuarkState::Excited | QuarkState::Thinking) {
+            } else if matches!(r.state, QuarkState::Excited | QuarkState::Thinking)
+                || active_task.is_some()
+            {
                 let doing = if r.state == QuarkState::Thinking {
                     hadron_lattice::live::Doing::Thinking
                 } else {
                     hadron_lattice::live::Doing::Working
                 };
+                let detail = active_task
+                    .map(|t| t.title.clone())
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| "working…".to_string());
+                let elapsed_secs = active_task
+                    .map(|t| (now - t.asked_at).num_seconds().max(0) as u64);
                 Some(QuarkLiveCapsule {
                     quark_id: r.id.clone(),
                     doing,
-                    detail: "working…".to_string(),
-                    elapsed_secs: None,
+                    detail,
+                    elapsed_secs,
                 })
             } else {
                 None
@@ -2059,6 +2129,33 @@ mod tests {
         assert_eq!(cap.quark_id, "gluon");
         assert_eq!(cap.doing, hadron_lattice::live::Doing::Gating);
         assert!(cap.elapsed_secs.unwrap_or(0) >= 15);
+    }
+
+    #[test]
+    fn test_active_quarks_rich_with_tasks_replaces_working_placeholder_and_humanizes_tools() {
+        assert_eq!(
+            humanize_activity_detail("run_command: cargo test --workspace"),
+            "$ cargo test --workspace"
+        );
+        assert_eq!(humanize_activity_detail("read_file: chat.rs"), "read chat.rs");
+        assert_eq!(humanize_activity_detail("edit_file: roster.rs"), "edit roster.rs");
+
+        let now = chrono::Utc::now();
+        let asked_at = now - chrono::Duration::seconds(42);
+        let roster = vec![roster_row_fixture("cli-agy", QuarkState::Excited, true, true)];
+        let tasks = vec![crate::model::SwarmTask {
+            to: "cli-agy".to_string(),
+            from: "human".to_string(),
+            title: "Task 1: Upgrade live activity".to_string(),
+            body: "Task 1: Upgrade live activity".to_string(),
+            state: crate::model::tasks::TaskState::Working,
+            asked_at,
+            done_at: None,
+        }];
+        let rich = active_quarks_rich_with_tasks(&roster, &tasks, |_| None, now);
+        assert_eq!(rich.len(), 1);
+        assert_eq!(rich[0].detail, "Task 1: Upgrade live activity");
+        assert!(rich[0].elapsed_secs.unwrap_or(0) >= 42);
     }
 
     /// **The double-dialog bug.** Cancelling gpui's picker used to be indistinguishable

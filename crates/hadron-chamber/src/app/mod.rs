@@ -79,7 +79,7 @@ use identity::{
 };
 
 mod tabs;
-use tabs::{ChatTab, GitSubtab, InfoTab, Rail, RightRailTab, RosterTab};
+use tabs::{ChatTab, GitSubtab, InfoTab, MissionSubtab, Rail, RightRailTab, RosterTab};
 
 mod providers;
 use providers::{
@@ -293,6 +293,7 @@ struct Chamber {
     git_log_graph: Option<String>,
     git_scroll: ScrollHandle,
     git_subtab: GitSubtab,
+    mission_subtab: MissionSubtab,
     pub(super) repo_health_report: Option<hadron_gatekeeper::RepoHealthReport>,
     pub(super) git_remote_info: Option<crate::vcs::RemoteTrackingInfo>,
     pub(super) github_issues: Option<Vec<crate::vcs::GitHubIssueInfo>>,
@@ -1315,7 +1316,6 @@ impl Chamber {
             let do_workspace_scan = !is_wsl_path
                 || state.9
                 || tick_count.is_multiple_of(5)
-                || state.6 == RightRailTab::Changes
                 || state.6 == RightRailTab::Git;
             tick_count = tick_count.wrapping_add(1);
             if do_workspace_scan && state.7 {
@@ -1333,7 +1333,7 @@ impl Chamber {
                         &state.4,
                         &state.5,
                         do_workspace_scan,
-                        state.6 == RightRailTab::Changes,
+                        state.6 == RightRailTab::Git,
                         state.6 == RightRailTab::Git,
                         state.7,
                         state.8.as_deref(),
@@ -1521,6 +1521,7 @@ impl Chamber {
             git_log_graph: None,
             git_scroll: ScrollHandle::new(),
             git_subtab: GitSubtab::Branches,
+            mission_subtab: MissionSubtab::Plan,
             repo_health_report: None,
             git_remote_info: None,
             github_issues: None,

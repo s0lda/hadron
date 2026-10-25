@@ -1004,6 +1004,24 @@ fn the_python_adapters_usage_update_deserializes() {
     }
 }
 
+#[test]
+fn the_python_adapters_tool_call_update_deserializes() {
+    let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "run_command: cargo test",
+        "kind": "other"
+    }))
+    .expect("the adapter's tool_call update must deserialize");
+
+    match update {
+        SessionUpdate::ToolCall(call) => {
+            assert_eq!(session::tool_call_detail(&call), "run_command: cargo test");
+        }
+        other => panic!("expected ToolCall, got {other:?}"),
+    }
+}
+
 /// **Option C, verified against the exact wire shape.** `claude-agent-acp`'s
 /// `rate_limit_event` arm sends this precise `_meta` object (see
 /// `.hadron/docs/plans/2026-07-24-claude-plan-limits-in-stats.md`) — assert on that

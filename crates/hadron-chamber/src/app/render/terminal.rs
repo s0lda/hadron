@@ -45,31 +45,18 @@ impl super::Chamber {
                         if this.right_rail_tab == RightRailTab::Terminal {
                             window.focus(&this.terminal_focus, cx);
                         }
-                        if this.right_rail_tab == RightRailTab::Changes {
-                            let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
-                            cx.spawn(async move |this, cx| {
-                                let diff = cx
-                                    .background_executor()
-                                    .spawn(async move { crate::vcs::working_diff(&root) })
-                                    .await;
-                                let _ = this.update(cx, |chamber, cx| {
-                                    chamber.working_diff = diff;
-                                    cx.notify();
-                                });
-                            })
-                            .detach();
-                        }
                         if this.right_rail_tab == RightRailTab::Git {
                             let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
                             cx.spawn(async move |this, cx| {
-                                let (fp, branches, worktrees, graph) = cx
+                                let (fp, branches, worktrees, graph, diff) = cx
                                     .background_executor()
                                     .spawn(async move {
                                         let fp = crate::vcs::branch_fingerprint(&root);
                                         let branches = crate::vcs::list_branches(&root, "main");
                                         let worktrees = crate::vcs::list_worktrees(&root);
                                         let graph = crate::vcs::commit_graph(&root);
-                                        (fp, branches, worktrees, graph)
+                                        let diff = crate::vcs::working_diff(&root);
+                                        (fp, branches, worktrees, graph, diff)
                                     })
                                     .await;
                                 let _ = this.update(cx, |chamber, cx| {
@@ -77,6 +64,7 @@ impl super::Chamber {
                                     chamber.git_branches = Some(branches);
                                     chamber.git_worktrees = Some(worktrees);
                                     chamber.git_log_graph = graph;
+                                    chamber.working_diff = diff;
                                     chamber.rebuild_graph_rows();
                                     cx.notify();
                                 });
@@ -816,51 +804,62 @@ impl super::Chamber {
                 }
             }
             RightRailTab::Git => self.git_tab_content(cx).into_any_element(),
-            RightRailTab::Changes => {
-                let diff_content = match &self.working_diff {
-                    Some(diffs) if diffs.is_empty() => div()
-                        .p_4()
-                        .text_color(theme::text_muted())
-                        .child("No changes in working tree.")
-                        .into_any_element(),
-                    Some(diffs) => self.file_diff_rows(
-                        diffs,
-                        &self.changes_open_ixs,
-                        super::git::DiffPanel::Changes,
-                        cx,
-                    ),
-                    None => div()
-                        .p_4()
-                        .text_color(theme::text_muted())
-                        .child("Failed to load diff.")
-                        .into_any_element(),
-                };
+            RightRailTab::Mission => {
+                let selected_subtab = self.mission_subtab;
+                let working_task_count = self
+                    .view
+                    .tasks
+                    .iter()
+                    .filter(|t| t.state == crate::model::TaskState::Working)
+                    .count()
+                    + model::tasks::live_rows_from_activities(&self.last_gate_activities).len();
 
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .relative()
-                    .child(
+                let mission_subtabs = h_flex()
+                    .id("mission-capsule-subtabs")
+                    .items_center()
+                    .gap_1()
+                    .p_1()
+                    .rounded_full()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .children(MissionSubtab::ALL.map(|t| {
+                        let is_selected = t.index() == selected_subtab.index();
+                        let ix = t.index();
+                        let label = if t == MissionSubtab::Tasks && working_task_count > 0 {
+                            format!("{} ({working_task_count})", t.label())
+                        } else {
+                            t.label().to_string()
+                        };
                         div()
-                            .id("changes-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.changes_scroll)
-                            .p_3()
-                            .text_sm()
-                            .text_color(theme::text())
-                            .child(diff_content),
-                    )
-                    .child(
-                        div().absolute().top_0().bottom_0().right_0().child(
-                            Scrollbar::vertical(&self.changes_scroll)
-                                .scrollbar_show(ScrollbarShow::Always),
-                        ),
-                    )
-                    .into_any_element()
-            }
-            RightRailTab::Plan => {
-                let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                            .id(("mission-subtab-pill", ix))
+                            .flex_shrink_0()
+                            .px_3()
+                            .py_1()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .when(is_selected, |s| {
+                                s.bg(theme::glass_highlight())
+                                    .text_color(theme::accent())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                            })
+                            .when(!is_selected, |s| {
+                                s.text_color(theme::text_muted())
+                                    .hover(|h| h.text_color(theme::text()))
+                            })
+                            .text_xs()
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.mission_subtab = MissionSubtab::from_index(ix);
+                                cx.notify();
+                            }))
+                    }));
+
+                let mission_body: gpui::AnyElement = match selected_subtab {
+                    MissionSubtab::Plan => {
+                        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
 
                 // The active plan is the plan tracked by Chamber reload, or resolved from
                 // recent field messages and `.hadron/docs/plans/` directory scan.
@@ -1506,80 +1505,164 @@ impl super::Chamber {
                     }
                 };
 
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .size_full()
-                    .w_full()
-                    .min_w_0()
-                    .relative()
-                    .child(
                         div()
-                            .id("plan-scroll")
+                            .flex_1()
+                            .min_h_0()
                             .size_full()
                             .w_full()
                             .min_w_0()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.plan_scroll)
-                            .text_sm()
-                            .text_color(theme::text())
-                            .child(plan_element),
-                    )
-                    .child(
-                        div().absolute().top_0().bottom_0().right_0().child(
-                            Scrollbar::vertical(&self.plan_scroll)
-                                .scrollbar_show(ScrollbarShow::Always),
-                        ),
-                    )
-                    .into_any_element()
-            }
-            RightRailTab::Tasks => {
-                let now = chrono::Utc::now();
-                let render_now = now;
-
-                let tasks_to_render: Vec<&crate::model::SwarmTask> = self.view.tasks.iter().collect();
-
-                let live_gate_rows: Vec<crate::model::SwarmTask> =
-                    model::tasks::live_rows_from_activities(&self.last_gate_activities);
-
-                let list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
-                    div().p_4().child(empty_hint("No swarm tasks yet.")).into_any_element()
-                } else {
-                    let mono_font = cx.theme().mono_font_family.clone();
-                    let mut col = v_flex().gap_1().p_2().w_full();
-                    for t in &live_gate_rows {
-                        let to = self.resolve_identity(&t.to);
-                        let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, render_now, &to, &from, &mono_font));
+                            .relative()
+                            .child(
+                                div()
+                                    .id("plan-scroll")
+                                    .size_full()
+                                    .w_full()
+                                    .min_w_0()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.plan_scroll)
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(plan_element),
+                            )
+                            .child(
+                                div().absolute().top_0().bottom_0().right_0().child(
+                                    Scrollbar::vertical(&self.plan_scroll)
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                            )
+                            .into_any_element()
                     }
-                    for t in tasks_to_render {
-                        let to = self.resolve_identity(&t.to);
-                        let from = self.resolve_identity(&t.from);
-                        col = col.child(task_row(t, render_now, &to, &from, &mono_font));
+                    MissionSubtab::Tasks => {
+                        let now = chrono::Utc::now();
+                        let render_now = now;
+
+                        let tasks_to_render: Vec<&crate::model::SwarmTask> =
+                            self.view.tasks.iter().collect();
+
+                        let live_gate_rows: Vec<crate::model::SwarmTask> =
+                            model::tasks::live_rows_from_activities(&self.last_gate_activities);
+
+                        let list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
+                            div()
+                                .p_4()
+                                .child(empty_hint("No swarm tasks yet."))
+                                .into_any_element()
+                        } else {
+                            let mono_font = cx.theme().mono_font_family.clone();
+                            let mut col = v_flex().gap_1().p_2().w_full();
+                            for t in &live_gate_rows {
+                                let to = self.resolve_identity(&t.to);
+                                let from = self.resolve_identity(&t.from);
+                                col = col.child(task_row(t, render_now, &to, &from, &mono_font));
+                            }
+                            for t in tasks_to_render {
+                                let to = self.resolve_identity(&t.to);
+                                let from = self.resolve_identity(&t.from);
+                                col = col.child(task_row(t, render_now, &to, &from, &mono_font));
+                            }
+                            col.into_any_element()
+                        };
+
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .relative()
+                            .child(
+                                div()
+                                    .id("tasks-scroll")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.tasks_scroll)
+                                    .text_sm()
+                                    .text_color(theme::text())
+                                    .child(list),
+                            )
+                            .child(
+                                div().absolute().top_0().bottom_0().right_0().child(
+                                    Scrollbar::vertical(&self.tasks_scroll)
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                            )
+                            .into_any_element()
                     }
-                    col.into_any_element()
+                    MissionSubtab::Nucleus => {
+                        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                        let index_md = if !crate::wsl::is_wsl_unc_path(&repo) {
+                            crate::sys::read_workspace_file(&repo, ".hadron/nucleus/index.md")
+                                .unwrap_or_else(|| "No .hadron/nucleus/index.md found.".to_string())
+                        } else {
+                            "Nucleus index cached on host.".to_string()
+                        };
+                        let lesson_lines: Vec<String> = index_md
+                            .lines()
+                            .filter(|l| l.trim_start().starts_with("- ["))
+                            .take(40)
+                            .map(|l| l.trim().to_string())
+                            .collect();
+
+                        let mut col = v_flex().gap_2().p_3().w_full().min_w_0().child(
+                            v_flex()
+                                .w_full()
+                                .p_3()
+                                .rounded_lg()
+                                .bg(theme::bg_surface())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::text())
+                                        .child("Shared Swarm Nucleus (.hadron/nucleus)"),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(format!(
+                                            "{} indexed post-mortem lessons shared across quarks",
+                                            lesson_lines.len()
+                                        )),
+                                ),
+                        );
+
+                        for line in lesson_lines {
+                            col = col.child(
+                                div()
+                                    .w_full()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(theme::glass_card())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .text_xs()
+                                    .text_color(theme::text())
+                                    .child(line),
+                            );
+                        }
+
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .relative()
+                            .child(
+                                div()
+                                    .id("nucleus-scroll")
+                                    .size_full()
+                                    .overflow_y_scroll()
+                                    .child(col),
+                            )
+                            .into_any_element()
+                    }
                 };
 
-                div()
+                v_flex()
                     .flex_1()
                     .min_h_0()
-                    .relative()
-                    .child(
-                        div()
-                            .id("tasks-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.tasks_scroll)
-                            .text_sm()
-                            .text_color(theme::text())
-                            .child(list),
-                    )
-                    .child(
-                        div().absolute().top_0().bottom_0().right_0().child(
-                            Scrollbar::vertical(&self.tasks_scroll)
-                                .scrollbar_show(ScrollbarShow::Always),
-                        ),
-                    )
+                    .w_full()
+                    .child(h_flex().flex_none().px_3().py_2().child(mission_subtabs))
+                    .child(mission_body)
                     .into_any_element()
             }
             RightRailTab::Visualizer => self.visualizer_view(cx).into_any_element(),

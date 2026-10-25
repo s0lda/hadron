@@ -2192,7 +2192,7 @@ impl Chamber {
                 self.git_cursor_graph = Some(next);
                 self.git_graph_list.scroll_to_reveal_item(next);
             }
-            GitSubtab::Diff3Way | GitSubtab::Remote => {}
+            GitSubtab::Changes | GitSubtab::Diff3Way | GitSubtab::Remote => {}
         }
         cx.notify();
     }
@@ -2233,7 +2233,7 @@ impl Chamber {
                     }
                 }
             }
-            GitSubtab::Diff3Way | GitSubtab::Remote => {}
+            GitSubtab::Changes | GitSubtab::Diff3Way | GitSubtab::Remote => {}
         }
     }
 
@@ -3482,9 +3482,10 @@ mod tests {
     fn test_git_subtab_indexing_and_cycling() {
         assert_eq!(GitSubtab::from_index(0), GitSubtab::Branches);
         assert_eq!(GitSubtab::from_index(1), GitSubtab::Worktrees);
-        assert_eq!(GitSubtab::from_index(2), GitSubtab::Graph);
-        assert_eq!(GitSubtab::from_index(3), GitSubtab::Diff3Way);
-        assert_eq!(GitSubtab::from_index(4), GitSubtab::Remote);
+        assert_eq!(GitSubtab::from_index(2), GitSubtab::Changes);
+        assert_eq!(GitSubtab::from_index(3), GitSubtab::Graph);
+        assert_eq!(GitSubtab::from_index(4), GitSubtab::Diff3Way);
+        assert_eq!(GitSubtab::from_index(5), GitSubtab::Remote);
         assert_eq!(GitSubtab::from_index(99), GitSubtab::Branches);
 
         let n = GitSubtab::ALL.len() as isize;
