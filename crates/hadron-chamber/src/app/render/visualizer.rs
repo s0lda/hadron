@@ -636,6 +636,10 @@ impl super::Chamber {
         // Header strip
         let header = h_flex()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .flex_wrap()
+            .gap_2()
             .justify_between()
             .items_center()
             .px_4()
@@ -655,10 +659,12 @@ impl super::Chamber {
                 h_flex()
                     .id("vis-activity-dock")
                     .w_full()
-                    .px_4()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .flex_wrap()
+                    .px_3()
                     .py_2()
-                    .gap_2()
-                    .overflow_x_scroll()
+                    .gap_1p5()
                     .border_b_1()
                     .border_color(theme::glass_highlight())
                     .bg(theme::bg_surface().opacity(0.40))
@@ -689,7 +695,7 @@ impl super::Chamber {
                         h_flex()
                             .id(SharedString::from(format!("vis-dock-chip-{}", node.id)))
                             .items_center()
-                            .gap_2()
+                            .gap_1p5()
                             .px_2p5()
                             .py_1()
                             .rounded_md()
@@ -699,7 +705,8 @@ impl super::Chamber {
                             .border_color(chip_border)
                             .child(
                                 div()
-                                    .size_2p5()
+                                    .flex_shrink_0()
+                                    .size_2()
                                     .rounded_full()
                                     .bg(node.color),
                             )
@@ -708,6 +715,8 @@ impl super::Chamber {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::MEDIUM)
                                     .text_color(if is_sel { theme::text() } else { theme::text_secondary() })
+                                    .truncate()
+                                    .max_w(px(110.0))
                                     .child(node.name.clone()),
                             )
                             .when(node.is_excited, |chip| {
@@ -721,6 +730,7 @@ impl super::Chamber {
                                 };
                                 chip.child(
                                     div()
+                                        .flex_shrink_0()
                                         .px_1p5()
                                         .py_0p5()
                                         .rounded_sm()
@@ -731,19 +741,10 @@ impl super::Chamber {
                                         .child(phase_label),
                                 )
                             })
-                            .when_some(node.live_detail.clone(), |chip, detail| {
+                            .when_some(node.elapsed_secs.filter(|_| node.is_excited), |chip, secs| {
                                 chip.child(
                                     div()
-                                        .text_xs()
-                                        .text_color(theme::text_muted())
-                                        .truncate()
-                                        .max_w(px(140.0))
-                                        .child(detail),
-                                )
-                            })
-                            .when_some(node.elapsed_secs, |chip, secs| {
-                                chip.child(
-                                    div()
+                                        .flex_shrink_0()
                                         .text_xs()
                                         .text_color(theme::text_muted())
                                         .child(super::chat::format_duration(secs as i64)),
@@ -810,6 +811,9 @@ impl super::Chamber {
 
             h_flex()
                 .w_full()
+                .min_w_0()
+                .overflow_hidden()
+                .gap_2()
                 .justify_between()
                 .items_center()
                 .p_3()
@@ -819,10 +823,14 @@ impl super::Chamber {
                 .border_color(theme::glass_highlight())
                 .child(
                     h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
                         .gap_3()
                         .items_center()
                         .child(
                             div()
+                                .flex_shrink_0()
                                 .size_4()
                                 .rounded_full()
                                 .bg(node.color)
@@ -831,9 +839,14 @@ impl super::Chamber {
                         )
                         .child(
                             v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
                                 .gap_0p5()
                                 .child(
                                     h_flex()
+                                        .min_w_0()
+                                        .overflow_hidden()
                                         .gap_2()
                                         .items_center()
                                         .child(
@@ -841,11 +854,13 @@ impl super::Chamber {
                                                 .text_sm()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(theme::text())
+                                                .truncate()
                                                 .child(node.name),
                                         )
                                         .when(node.is_orchestrator, |this| {
                                              this.child(
                                                 div()
+                                                    .flex_shrink_0()
                                                     .px_1p5()
                                                     .py_0p5()
                                                     .rounded_sm()
@@ -857,6 +872,7 @@ impl super::Chamber {
                                         })
                                         .child(
                                             div()
+                                                .flex_shrink_0()
                                                 .px_1p5()
                                                 .py_0p5()
                                                 .rounded_sm()
@@ -871,38 +887,47 @@ impl super::Chamber {
                                 )
                                 .child(
                                     h_flex()
+                                        .min_w_0()
+                                        .overflow_hidden()
                                         .gap_2()
                                         .items_center()
                                         .text_xs()
                                         .text_color(theme::text_muted())
-                                        .child(format!("{} · {} · {}", node.id, node.model, topology_tier))
-                                        .child("·")
-                                        .child(telemetry_str),
+                                        .child(
+                                            div()
+                                                .truncate()
+                                                .child(format!("{} · {} · {} · {}", node.id, node.model, topology_tier, telemetry_str)),
+                                        ),
                                 )
                                 .when_some(node.live_detail, |this, detail| {
                                     this.child(
                                         h_flex()
+                                            .min_w_0()
+                                            .overflow_hidden()
                                             .gap_1p5()
                                             .items_center()
                                             .text_xs()
-                                            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(phase_color).child("Action:"))
-                                            .child(div().text_color(theme::text()).child(detail)),
+                                            .child(div().flex_shrink_0().font_weight(gpui::FontWeight::SEMIBOLD).text_color(phase_color).child("Action:"))
+                                            .child(div().truncate().text_color(theme::text()).child(detail)),
                                     )
                                 })
                                 .when_some(node.task_title, |this, task| {
                                     this.child(
                                         h_flex()
+                                            .min_w_0()
+                                            .overflow_hidden()
                                             .gap_1p5()
                                             .items_center()
                                             .text_xs()
-                                            .child(div().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme::accent()).child("Task:"))
-                                            .child(div().text_color(theme::text_secondary()).child(task)),
+                                            .child(div().flex_shrink_0().font_weight(gpui::FontWeight::SEMIBOLD).text_color(theme::accent()).child("Task:"))
+                                            .child(div().truncate().text_color(theme::text_secondary()).child(task)),
                                     )
                                 }),
                         ),
                 )
                 .child(
                     h_flex()
+                        .flex_shrink_0()
                         .gap_2()
                         .child(
                             text_button("vis-open-info", "View Details").on_click(cx.listener(

@@ -1111,6 +1111,8 @@ impl super::Chamber {
                                     .id("plan-overview-toggle")
                                     .w_full()
                                     .min_w_0()
+                                    .overflow_hidden()
+                                    .gap_2()
                                     .items_center()
                                     .justify_between()
                                     .p_2p5()
@@ -1126,9 +1128,11 @@ impl super::Chamber {
                                     }))
                                     .child(
                                         h_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_hidden()
                                             .gap_2()
                                             .items_center()
-                                            .min_w_0()
                                             .child(
                                                 Icon::new(if is_collapsed {
                                                     IconName::ChevronRight
@@ -1154,6 +1158,7 @@ impl super::Chamber {
                                     )
                                     .child(
                                         div()
+                                            .flex_shrink_0()
                                             .px_2()
                                             .py_0p5()
                                             .rounded_full()
@@ -1219,6 +1224,7 @@ impl super::Chamber {
 
                             let status_badge = if all_landed {
                                 div()
+                                    .flex_shrink_0()
                                     .px_2()
                                     .py_0p5()
                                     .rounded_full()
@@ -1232,6 +1238,7 @@ impl super::Chamber {
                                     .into_any_element()
                             } else if branch_step_count > 0 {
                                 div()
+                                    .flex_shrink_0()
                                     .px_2()
                                     .py_0p5()
                                     .rounded_full()
@@ -1245,6 +1252,7 @@ impl super::Chamber {
                                     .into_any_element()
                             } else {
                                 div()
+                                    .flex_shrink_0()
                                     .px_2()
                                     .py_0p5()
                                     .rounded_full()
@@ -1261,6 +1269,9 @@ impl super::Chamber {
                             let header = h_flex()
                                 .id(gpui::SharedString::from(id_str))
                                 .w_full()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .gap_2()
                                 .items_center()
                                 .justify_between()
                                 .p_2p5()
@@ -1280,9 +1291,11 @@ impl super::Chamber {
                                 }))
                                 .child(
                                     h_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
                                         .gap_2()
                                         .items_center()
-                                        .min_w_0()
                                         .child(
                                             Icon::new(if is_collapsed {
                                                 IconName::ChevronRight

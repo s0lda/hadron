@@ -9,6 +9,12 @@ pub(crate) fn compute_plan_content_hash(content: &str) -> u64 {
     hasher.finish()
 }
 
+pub(crate) const DAG_HEADER_STATS_MIN_WIDTH: f32 = 580.0;
+
+pub(crate) fn show_dag_inline_stats(inspector_width: f32) -> bool {
+    inspector_width >= DAG_HEADER_STATS_MIN_WIDTH
+}
+
 impl Chamber {
     pub(super) fn resolve_cached_plan_dag(
         &self,
@@ -74,12 +80,16 @@ impl Chamber {
         let is_expanded = self.plan_dag_expanded;
         let ready_ids = &cached.ready_ids;
         let unblocked_count = ready_ids.len();
+        let show_stats = show_dag_inline_stats(self.prefs.inspector_width);
 
         let header_bar = h_flex()
             .id("dag-toggle-header")
             .items_center()
             .justify_between()
+            .gap_2()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .p_2p5()
             .rounded_lg()
             .bg(theme::bg_surface())
@@ -93,6 +103,9 @@ impl Chamber {
             }))
             .child(
                 h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
                     .items_center()
                     .gap_2()
                     .child(
@@ -109,18 +122,28 @@ impl Chamber {
                             .text_xs()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::text())
+                            .truncate()
                             .child("Execution Topology & Wave DAG"),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_color(theme::text_muted())
-                            .child(format!("({} waves · {} nodes · {} unblocked)", waves.len(), graph.tasks.len(), unblocked_count)),
-                    ),
+                    .when(show_stats, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_color(theme::text_muted())
+                                .truncate()
+                                .child(format!(
+                                    "({} waves · {} nodes · {} unblocked)",
+                                    waves.len(),
+                                    graph.tasks.len(),
+                                    unblocked_count
+                                )),
+                        )
+                    }),
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .px_2()
                     .py_0p5()
                     .rounded_md()
@@ -332,5 +355,14 @@ mod tests {
         let h3 = compute_plan_content_hash("- [x] Task 1.1: Setup\n- [x] Task 1.2: Next\n");
         assert_eq!(h1, h2);
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_show_dag_inline_stats_hides_on_narrow_inspector() {
+        assert!(!show_dag_inline_stats(300.0));
+        assert!(!show_dag_inline_stats(480.0));
+        assert!(!show_dag_inline_stats(579.0));
+        assert!(show_dag_inline_stats(580.0));
+        assert!(show_dag_inline_stats(640.0));
     }
 }

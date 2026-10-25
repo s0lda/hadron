@@ -108,9 +108,15 @@ pub(super) fn parse_plan_progress_with_status(
         }
 
         // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
-        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
+        let body = trimmed[5..]
+            .trim()
+            .replace("**", "")
+            .replace('`', "")
+            .trim_matches('*')
+            .trim()
+            .to_string();
         let label = if current_task.is_empty() {
-            body.to_string()
+            body
         } else {
             format!("{current_task} — {body}")
         };
@@ -150,9 +156,15 @@ pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, 
             completed += 1;
         }
         // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
-        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
+        let body = trimmed[5..]
+            .trim()
+            .replace("**", "")
+            .replace('`', "")
+            .trim_matches('*')
+            .trim()
+            .to_string();
         let label = if current_task.is_empty() {
-            body.to_string()
+            body
         } else {
             format!("{current_task} — {body}")
         };
@@ -213,8 +225,14 @@ pub(super) fn parse_plan_tasks_with_status(
         };
 
         // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
-        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
-        current_steps.push((body.to_string(), status));
+        let body = trimmed[5..]
+            .trim()
+            .replace("**", "")
+            .replace('`', "")
+            .trim_matches('*')
+            .trim()
+            .to_string();
+        current_steps.push((body, status));
     }
 
     if !current_steps.is_empty() {
@@ -264,8 +282,14 @@ pub(super) fn parse_plan_tasks(content: &str) -> Vec<(String, Vec<(String, bool)
         };
 
         // `- [ ]` and `- [x]` are both 5 bytes, so a fixed skip is safe for either case.
-        let body = trimmed[5..].trim().trim_matches(|c| c == '*' || c == '`').trim();
-        current_steps.push((body.to_string(), done));
+        let body = trimmed[5..]
+            .trim()
+            .replace("**", "")
+            .replace('`', "")
+            .trim_matches('*')
+            .trim()
+            .to_string();
+        current_steps.push((body, done));
     }
 
     if !current_steps.is_empty() {
