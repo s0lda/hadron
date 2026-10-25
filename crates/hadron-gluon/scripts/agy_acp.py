@@ -31,7 +31,6 @@ SEAT_MODEL = "gemini-3.6-flash"
 # Default supported Gemini models in the Antigravity Python SDK fallback.
 DEFAULT_SUPPORTED_MODELS = [
     {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
-    {"value": "gemini-3.8-pro", "name": "Gemini 3.8 Pro"},
     {"value": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
     {"value": "gemini-3.5-flash", "name": "Gemini 3.5 Flash"},
     {"value": "gemini-3.1-pro", "name": "Gemini 3.1 Pro"},

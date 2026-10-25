@@ -67,9 +67,9 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
     if v.contains("agy") || v.contains("gemini") || v.contains("google") {
         vec![
             "gemini-4-argon-medium".to_string(),
-            "gemini-3.8-pro".to_string(),
+            "gemini-4-argon-high".to_string(),
+            "gemini-4-argon-low".to_string(),
             "gemini-3.8-flash".to_string(),
-            "gemini-3.6-pro".to_string(),
             "gemini-3.6-flash".to_string(),
             "gemini-3.5-flash".to_string(),
             "gemini-3.1-pro".to_string(),
@@ -78,11 +78,10 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
         ]
     } else if v.contains("claude") || v.contains("anthropic") {
         vec![
-            "claude-opus-5-2".to_string(),
-            "claude-opus-5".to_string(),
-            "claude-sonnet-5-2".to_string(),
-            "claude-sonnet-5".to_string(),
+            "claude-fable-5".to_string(),
             "claude-opus-4-8".to_string(),
+            "claude-opus-4-7".to_string(),
+            "claude-sonnet-5".to_string(),
             "claude-sonnet-4-5".to_string(),
             "claude-haiku-4-5".to_string(),
             "opus".to_string(),
@@ -91,8 +90,12 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
         ]
     } else if v.contains("codex") || v.contains("openai") {
         vec![
+            "gpt-5.6-sol".to_string(),
             "gpt-5.6-terra".to_string(),
-            "gpt-5.6".to_string(),
+            "gpt-5.6-luna".to_string(),
+            "gpt-5.5".to_string(),
+            "gpt-5.4-mini".to_string(),
+            "gpt-5.2".to_string(),
             "gpt-5".to_string(),
             "o3".to_string(),
             "o4-mini".to_string(),
@@ -109,8 +112,15 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
     } else if v.contains("copilot") || v.contains("github") {
         vec![
             "claude-sonnet-5".to_string(),
-            "gpt-5.6".to_string(),
+            "claude-opus-4.8".to_string(),
+            "claude-fable-5".to_string(),
+            "gpt-5.6-sol".to_string(),
+            "gpt-5.6-terra".to_string(),
+            "gpt-5.5".to_string(),
+            "gpt-5.4".to_string(),
+            "gpt-5.3-codex".to_string(),
             "claude-sonnet-4.5".to_string(),
+            "claude-haiku-4.5".to_string(),
             "gpt-5".to_string(),
             "gpt-4o".to_string(),
             "o3-mini".to_string(),
@@ -139,11 +149,16 @@ mod tests {
     #[test]
     fn vendor_fallback_models_covers_core_vendors() {
         assert!(vendor_fallback_models("agy").contains(&"gemini-4-argon-medium".to_string()));
-        assert!(vendor_fallback_models("claude").contains(&"claude-opus-5-2".to_string()));
-        assert!(vendor_fallback_models("claude").contains(&"claude-sonnet-5-2".to_string()));
+        assert!(vendor_fallback_models("agy").contains(&"gemini-3.8-flash".to_string()));
+        assert!(!vendor_fallback_models("agy").contains(&"gemini-3.8-pro".to_string()));
+        assert!(vendor_fallback_models("claude").contains(&"claude-opus-4-8".to_string()));
+        assert!(vendor_fallback_models("claude").contains(&"claude-sonnet-5".to_string()));
+        assert!(vendor_fallback_models("claude").contains(&"claude-fable-5".to_string()));
         assert!(vendor_fallback_models("codex").contains(&"gpt-5.6-terra".to_string()));
+        assert!(vendor_fallback_models("codex").contains(&"gpt-5.6-sol".to_string()));
         assert!(vendor_fallback_models("grok").contains(&"grok-4".to_string()));
-        assert!(vendor_fallback_models("copilot").contains(&"gpt-5.6".to_string()));
+        assert!(vendor_fallback_models("copilot").contains(&"gpt-5.6-sol".to_string()));
+        assert!(vendor_fallback_models("copilot").contains(&"claude-sonnet-5".to_string()));
         assert!(vendor_fallback_models("unknown-vendor").is_empty());
     }
 
