@@ -5,6 +5,31 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.12] - 2026-10-25
+
+### Added
+- **Customizable Web & File Link Accent Tokens (`hadron-chamber`)**:
+  - Added dedicated `link` (`#38bdf8` default) and `file_link` (`#e5c07b` default) tokens to `AccentPalette` (`config.rs`), `ResolvedTheme` (`theme.rs`), and the Settings Theme Editor (`settings/providers.rs`) across all built-in theme presets (`Obsidian`, `OLED`, `Midnight`, `Tokyo`, `Nord`, `Catppuccin`, `Gruvbox`).
+  - Updated `resolve_mention_names_with_human` (`mentions.rs`) to strip inner backticks from Markdown link labels (`[`symbol`](url)` -> `[symbol](url)`) and color `file://` links with `theme::file_link_hex()`.
+
+### Changed
+- **Chat Typography Line Height & Badge Corner Radius Normalization (`hadron-chamber`)**:
+  - Applied `1.55` relative line height to chat markdown bodies (`render/chat.rs`) and normalized pill/card corner radii (`rounded_md`) across chat, roster, settings, and widgets.
+
+### Fixed
+- **Mission Plan Wave DAG Section-Scoped Step IDs & Cycle Prevention (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Updated `TaskGraph::parse_from_markdown` (`task_graph.rs`) to namespace `Step N` checkboxes under their enclosing `## Task M` / `### Task M` heading (`task-M.N`), deduplicate colliding task IDs, and preserve deterministic slice order in `TaskGraph::compute_waves` (fixing false `Circular dependency in task graph` errors and frame-by-frame wave card shuffling).
+  - Updated `DagBarrierScheduler::from_hybrid_dag` (`dag_scheduler.rs`) to mark completed tasks as `GatePassed` and added a flat-wave fallback in `plan_dag_visualizer` (`render/dag_visualizer.rs`).
+- **WSL-Aware `file://` Link Resolution, Historical Turn Diff Chips & Nucleus Lesson Count (`hadron-chamber`)**:
+  - Added `resolve_file_url_for_workspace` and `strip_quark_worktree_segment` (`sys.rs`) so `file://` links clicked in a WSL UNC workspace map Linux `/home/...` paths to `\\wsl.localhost\<distro>\...` and strip `.hadron/trees/<quark>/` segments before opening on the host.
+  - Wired in-chat turn commit (`⊕ <sha>`) and file diff (`± <file>`) chips (`render/chat.rs`, `render/git.rs`) to `open_turn_diff` so `Git -> Changes` loads and expands the turn's historical commit diff even after merge.
+  - Updated `MissionSubtab::Nucleus` (`render/terminal.rs`, `app/mod.rs`) to read `cached_nucleus_docs.2` on WSL UNC workspaces and compute the total lesson count before `.take(40)` truncation.
+- **Interleaved Swarm Task Completion, Unified Duration Formatting & WSL Terminal Tab Titles (`hadron-gluon`, `hadron-chamber`)**:
+  - Added `router::request_completion` (`router/mod.rs`) and updated `swarm_tasks` (`model/tasks.rs`) to match each turn request to its specific completion event via `answers`, closing interleaved concurrent turns without orphaning earlier tasks.
+  - Added `pty::terminal_tab_title` (`pty.rs`, `actions.rs`, `terminal.rs`) to derive terminal tab labels from the resolved target shell (`wsl #N`, `pwsh #N`, etc.) and unified live duration formatting across Chat, Roster, and Visualizer via `chat::format_duration`.
+- **Transparent & Theme-Aware Default VTE Terminal Cell Backgrounds (`hadron-chamber`)**:
+  - Added `theme::resolve_term_cell_bg` and `theme::resolve_term_color` (`theme.rs`, `render/terminal.rs`, `render/pty_grid.rs`) so VTE cells with `pty::DEFAULT_BG` render with a transparent background over `#terminal-screen` and `#pty-grid-card` (`theme::term_bg()`) without dark inner margins, resolving `DEFAULT_FG` and `DEFAULT_BG` dynamically across all theme presets.
+
 ## [0.33.11] - 2026-10-25
 
 ### Added

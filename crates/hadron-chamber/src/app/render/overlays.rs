@@ -20,6 +20,22 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.12",
+        date: Some("2026-10-25"),
+        added: &[
+            "Customizable Web & File Link Accent Tokens: Added link (#38bdf8 default) and file_link (#e5c07b default) theme tokens across all built-in presets and the Settings Theme Editor, stripped inner backticks from Markdown link labels, and styled file:// links with file_link",
+        ],
+        changed: &[
+            "Chat Typography & Corner Radius Normalization: Applied 1.55 relative line height to chat markdown bodies and normalized pill/card corner radii (rounded_md) across chat, roster, settings, and widgets",
+        ],
+        fixed: &[
+            "Mission Plan Wave DAG Section-Scoped Step IDs: Namespaced Step N checkboxes under their enclosing Task M heading (task-M.N), deduplicated colliding task IDs, and preserved deterministic wave order in TaskGraph::compute_waves",
+            "WSL-Aware file:// Links, Historical Turn Diff Chips & Nucleus Lesson Count: Mapped Linux file:// paths to WSL UNC paths on Windows, wired in-chat commit/file diff chips to load historical commit diffs in Git -> Changes, and fixed WSL Nucleus lesson counts",
+            "Interleaved Swarm Task Completion & WSL Terminal Tab Titles: Matched concurrent turn requests to their specific answers completion event in swarm_tasks, unified duration formatting, and derived WSL/Windows terminal tab titles from the resolved shell",
+            "Transparent & Theme-Aware VTE Terminal Cell Backgrounds: Rendered pty::DEFAULT_BG terminal cells with transparent backgrounds over theme::term_bg() to eliminate dark inner margins and resolved default terminal colors across all theme presets",
+        ],
+    },
+    Release {
         version: "0.33.11",
         date: Some("2026-10-25"),
         added: &[
