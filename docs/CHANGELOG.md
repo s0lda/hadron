@@ -5,6 +5,25 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.14] - 2026-10-26
+
+### Added
+- **Non-Blocking Async Merge Gate, `@orchestrator` Error Routing & Atomic Worktree Detach-on-Land (`hadron-gluon`)**:
+  - Offloaded slow merge-gate `runner.sync` and `runner.tests` stages onto a concurrent `gates: JoinSet` in `Engine::run_until_quiesce` (`engine/run.rs`, `engine/turn.rs`, `engine/merge.rs`) so sibling quarks and `@orchestrator` continue dispatching without blocking on `cargo test`.
+  - Routed orchestrator-dispatched mentionless worker completions, empty outcomes, and worker turn errors back to `@orchestrator` (`engine/turn.rs`, `engine/run.rs`).
+  - Added `worktree::detach_at_base` (`worktree.rs`, `engine/merge.rs`) before `prune_merged_branches` and post-quiesce auto-GC at `THE SAFE POINT` (`cli.rs`) so merged `quark/<id>/<ulid>` branches are cleaned up immediately upon landing.
+- **GitHub Actions Workflow Runs & Security Warnings in `Git -> Remote & Issues` (`hadron-chamber`, `hadron-gluon`)**:
+  - Added `GitHubWorkflowRunInfo` and `GitHubSecurityAlertInfo` fetchers and parsers (`vcs.rs`) wired into `refresh_remote_and_github` (`actions.rs`, `render/git.rs`) with one-click `Dispatch Fix` actions, titlebar GitHub monitor prioritization (`render/titlebar.rs`), and redacted cleartext `session_id` logging in `examples/acp_probe.rs` (CodeQL alert #1).
+
+### Fixed
+- **Release-Build Readiness Gating for In-App Updates (`hadron-chamber`)**:
+  - Added `parse_remote_update_info_with_readiness` and `is_release_build_ready` (`app/update.rs`) to probe the platform release archive via `HEAD` before advertising `UpdateState::Available`, holding back newly pushed `vX.Y.Z` tags while GitHub Actions `build-release` and `publish-release` are still running and automatically re-polling in the background until builds complete.
+- **Composer `Tab`/`Right` Action Capture, Context Window Occupancy & Full-Width Chat Rows (`hadron-chamber`, `hadron-gluon`)**:
+  - Intercepted `IndentInline` (`Tab`) and `MoveRight` (`Right`) via `.capture_action` on the chat input wrapper (`app/mod.rs`, `render/chat.rs`) so accepting completions or ghost text stops propagation before `Root::on_action_tab` switches focus, and expanded chat message rows with `.w_full()` and `.flex_1()`.
+  - Read final `PLANNER_RESPONSE` window occupancy from Antigravity `transcript.jsonl` (`cli_stream.rs`, `cli.rs`), divided multi-step `raw_context` by invocation count in `scripts/agy_acp.py`, and normalized historical inflated context rows in `model::project` (`model/mod.rs`).
+- **Unified Chronological Plan Selector, Inspector Overflow Guards & Verified Model Catalogs (`hadron-chamber`, `hadron-gluon`)**:
+  - Interleaved single-file and multi-file suite plans in newest-first chronological order with active-plan auto-selection (`app/reload.rs`), guarded narrow inspector rails in `#dag-toggle-header` and `#vis-activity-dock` (`render/dag_visualizer.rs`, `render/visualizer.rs`, `render/terminal.rs`), hardened workspace path resolution (`sys.rs`), and verified real model IDs across `model_select.rs`, `agy_acp.py`, and `assets/demo.gif`.
+
 ## [0.33.13] - 2026-10-25
 
 ### Added

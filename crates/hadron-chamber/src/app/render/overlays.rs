@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.14",
+        date: Some("2026-10-26"),
+        added: &[
+            "Non-Blocking Async Merge Gate, @orchestrator Error Routing & Detach-on-Land: Offloaded slow merge-gate sync/tests onto a concurrent JoinSet, routed mentionless worker completions/errors to @orchestrator, and detached landed worktrees before branch pruning",
+            "GitHub Actions Workflow Runs & Security Warnings in Git -> Remote & Issues: Added GitHub Actions run status and CodeQL/Dependabot security alert lists with one-click Dispatch Fix actions and titlebar monitor prioritization",
+        ],
+        changed: &[],
+        fixed: &[
+            "Release-Build Readiness Gating for In-App Updates: Verified published GitHub Release platform binary archives via HEAD before showing vX.Y.Z Available and re-polled in background while GitHub Actions builds finish",
+            "Composer Tab/Right Action Capture, Context Window Occupancy & Full-Width Chat Rows: Captured IndentInline/MoveRight on the chat input wrapper for completions, fixed multi-step CLI/ACP context occupancy calculation, and expanded chat rows to full width",
+            "Unified Chronological Plan Selector, Inspector Overflow Guards & Verified Models: Interleaved single-file and suite plans newest-first with active-plan auto-selection, guarded narrow inspector rails, and updated verified model catalogs and demo.gif",
+        ],
+    },
+    Release {
         version: "0.33.13",
         date: Some("2026-10-25"),
         added: &[
