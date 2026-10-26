@@ -231,10 +231,16 @@ impl super::Chamber {
         let active_plan_path = if let Some(p) = new_plan_from_msg {
             self.manual_plan_override_at_message_len = None;
             Some(p)
-        } else if let Some(ref manual) = self.last_plan_path {
-            if all_plans.iter().any(|(_, p)| p == manual) || (!is_wsl && repo.join(manual).is_file()) {
-                Some(manual.clone())
+        } else if self.manual_plan_override_at_message_len.is_some() {
+            if let Some(ref manual) = self.last_plan_path {
+                if all_plans.iter().any(|(_, p)| p == manual) || (!is_wsl && repo.join(manual).is_file()) {
+                    Some(manual.clone())
+                } else {
+                    self.manual_plan_override_at_message_len = None;
+                    resolve_active_plan_with_plans(&repo, &self.view.messages, &all_plans)
+                }
             } else {
+                self.manual_plan_override_at_message_len = None;
                 resolve_active_plan_with_plans(&repo, &self.view.messages, &all_plans)
             }
         } else {
@@ -410,6 +416,7 @@ impl super::Chamber {
                 if scan.plan_paths != self.cached_plan_paths {
                     self.cached_plan_paths = scan.plan_paths;
                     self.cached_active_plan_content = None;
+                    self.manual_plan_override_at_message_len = None;
                     self.update_active_plan();
                     changed = true;
                 }
@@ -536,8 +543,22 @@ pub(crate) fn resolve_active_plan_with_plans(
     messages: &[crate::model::MessageRow],
     all_plans: &[(std::time::SystemTime, String)],
 ) -> Option<String> {
-    resolve_active_plan_from_messages_with_plans(repo, messages, all_plans)
-        .or_else(|| newest_plan_from_list(all_plans))
+    let newest_disk = newest_plan_from_list_with_mtime(all_plans);
+    let newest_msg = resolve_active_plan_from_messages_with_plans_and_ts(repo, messages, all_plans);
+
+    match (newest_msg, newest_disk) {
+        (Some((msg_ts, msg_plan)), Some((disk_mtime, disk_plan))) => {
+            let msg_sys_time = std::time::SystemTime::from(msg_ts);
+            if disk_mtime > msg_sys_time {
+                Some(disk_plan)
+            } else {
+                Some(msg_plan)
+            }
+        }
+        (Some((_, msg_plan)), None) => Some(msg_plan),
+        (None, Some((_, disk_plan))) => Some(disk_plan),
+        (None, None) => None,
+    }
 }
 
 pub(crate) fn resolve_active_plan_from_messages_with_plans(
@@ -545,8 +566,18 @@ pub(crate) fn resolve_active_plan_from_messages_with_plans(
     messages: &[crate::model::MessageRow],
     all_plans: &[(std::time::SystemTime, String)],
 ) -> Option<String> {
+    resolve_active_plan_from_messages_with_plans_and_ts(repo, messages, all_plans)
+        .map(|(_, plan)| plan)
+}
+
+fn resolve_active_plan_from_messages_with_plans_and_ts(
+    repo: &Path,
+    messages: &[crate::model::MessageRow],
+    all_plans: &[(std::time::SystemTime, String)],
+) -> Option<(chrono::DateTime<chrono::Utc>, String)> {
     messages.iter().rev().find_map(|m| {
         find_plan_mention_in_text_with_plans(repo, &m.body, all_plans)
+            .map(|plan| (m.ts, plan))
     })
 }
 
@@ -732,16 +763,55 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
     candidates
 }
 
-fn newest_plan_from_list(all_plans: &[(std::time::SystemTime, String)]) -> Option<String> {
+fn extract_plan_date_prefix(name: &str) -> Option<String> {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 10
+        && bytes[0..4].iter().all(|b| b.is_ascii_digit())
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(|b| b.is_ascii_digit())
+    {
+        Some(name[..10].to_string())
+    } else {
+        None
+    }
+}
+
+fn plan_rel_date_prefix(rel: &str) -> Option<String> {
+    let p = Path::new(rel);
+    if let Some(parent) = p.parent() {
+        let parent_name = parent.file_name().and_then(|f| f.to_str()).unwrap_or("");
+        if parent_name != "plans" && !parent_name.is_empty() {
+            if let Some(d) = extract_plan_date_prefix(parent_name) {
+                return Some(d);
+            }
+        }
+    }
+    let file_name = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+    extract_plan_date_prefix(file_name)
+}
+
+fn newest_plan_from_list_with_mtime(
+    all_plans: &[(std::time::SystemTime, String)],
+) -> Option<(std::time::SystemTime, String)> {
     let mut candidates = all_plans.to_vec();
     candidates.sort_by(|a, b| {
+        let date_a = plan_rel_date_prefix(&a.1);
+        let date_b = plan_rel_date_prefix(&b.1);
         let is_master_a = a.1.ends_with("master.md") || a.1.ends_with("index.md");
         let is_master_b = b.1.ends_with("master.md") || b.1.ends_with("index.md");
         b.0.cmp(&a.0)
+            .then_with(|| date_b.cmp(&date_a))
             .then_with(|| is_master_b.cmp(&is_master_a))
             .then_with(|| b.1.cmp(&a.1))
     });
-    candidates.into_iter().next().map(|(_, rel)| rel)
+    candidates.into_iter().next()
+}
+
+#[cfg(test)]
+fn newest_plan_from_list(all_plans: &[(std::time::SystemTime, String)]) -> Option<String> {
+    newest_plan_from_list_with_mtime(all_plans).map(|(_, rel)| rel)
 }
 
 /// Scan `.hadron/docs/plans/`, `docs/plans/`, and worktree trees for the most recently modified `.md` plan.
@@ -772,6 +842,8 @@ pub(crate) fn format_plan_step_label(file_name: &str) -> String {
             } else {
                 stripped.replace('-', " ")
             }
+        } else if extract_plan_date_prefix(stripped).is_some() {
+            format_suite_title(stripped)
         } else {
             stripped.replace('-', " ")
         }
@@ -820,7 +892,7 @@ pub(crate) enum PlanDropdownItem {
 }
 
 /// Discover and organize plans across `.hadron/docs/plans/`, `docs/plans/`, and worktrees into
-/// clean suite groups with active suite prioritization, headers, and step labels for the Chamber dropdown.
+/// chronological newest-first order across both multi-plan folder suites and single-file plans.
 #[cfg(test)]
 pub(crate) fn scan_plan_dropdown_items(repo: &Path, active_plan_rel: &str) -> Vec<PlanDropdownItem> {
     let all_paths = scan_all_plan_paths(repo);
@@ -878,22 +950,36 @@ pub(crate) fn build_plan_dropdown_items(
         });
     }
 
-    // Group by suite
-    let mut groups: std::collections::BTreeMap<Option<String>, Vec<PlanEntry>> = std::collections::BTreeMap::new();
+    // Group folder suites by suite name; treat each single-file root plan (`suite == None`)
+    // as its own chronological bucket so single-file plans and multi-plan folder suites
+    // are interleaved strictly newest-first.
+    let mut suite_groups: std::collections::BTreeMap<String, Vec<PlanEntry>> =
+        std::collections::BTreeMap::new();
+    let mut standalone_entries: Vec<PlanEntry> = Vec::new();
     for entry in entries {
-        groups.entry(entry.suite.clone()).or_default().push(entry);
+        if let Some(ref s) = entry.suite {
+            suite_groups.entry(s.clone()).or_default().push(entry);
+        } else {
+            standalone_entries.push(entry);
+        }
     }
 
-    // For each group, find max mtime and sort internal entries: master.md first, then filename
     struct SuiteBucket {
         suite: Option<String>,
+        sort_key: String,
+        date_prefix: Option<String>,
         max_mtime: std::time::SystemTime,
+        is_active_bucket: bool,
         entries: Vec<PlanEntry>,
     }
 
     let mut buckets: Vec<SuiteBucket> = Vec::new();
-    for (suite, mut list) in groups {
-        let max_mtime = list.iter().map(|e| e.mtime).max().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    for (suite_name, mut list) in suite_groups {
+        let max_mtime = list
+            .iter()
+            .map(|e| e.mtime)
+            .max()
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         list.sort_by(|a, b| {
             let is_master_a = a.file_name == "master.md" || a.file_name == "index.md";
             let is_master_b = b.file_name == "master.md" || b.file_name == "index.md";
@@ -901,30 +987,47 @@ pub(crate) fn build_plan_dropdown_items(
                 .cmp(&is_master_a)
                 .then_with(|| a.file_name.cmp(&b.file_name))
         });
+        let is_active_bucket = active_suite.as_deref() == Some(suite_name.as_str());
+        let date_prefix = extract_plan_date_prefix(&suite_name);
         buckets.push(SuiteBucket {
-            suite,
+            suite: Some(suite_name.clone()),
+            sort_key: suite_name,
+            date_prefix,
             max_mtime,
+            is_active_bucket,
             entries: list,
         });
     }
 
-    // Sort buckets:
-    // 1. Active suite first
-    // 2. Other suites sorted by max_mtime descending
-    // 3. Root plans (None) last
-    buckets.sort_by(|a, b| {
-        let a_is_active = a.suite == active_suite && a.suite.is_some();
-        let b_is_active = b.suite == active_suite && b.suite.is_some();
-        if a_is_active != b_is_active {
-            return b_is_active.cmp(&a_is_active);
-        }
-        if a.suite.is_some() != b.suite.is_some() {
-            return b.suite.is_some().cmp(&a.suite.is_some());
-        }
-        b.max_mtime.cmp(&a.max_mtime)
+    for entry in standalone_entries {
+        let stem = entry.file_name.strip_suffix(".md").unwrap_or(&entry.file_name).to_string();
+        let date_prefix = extract_plan_date_prefix(&entry.file_name);
+        let is_active_bucket = entry.rel == active_plan_rel;
+        let max_mtime = entry.mtime;
+        buckets.push(SuiteBucket {
+            suite: None,
+            sort_key: stem,
+            date_prefix,
+            max_mtime,
+            is_active_bucket,
+            entries: vec![entry],
+        });
+    }
+
+    // Sort all buckets strictly chronologically (newest first), regardless of whether a plan
+    // is a single-file root plan or a multi-plan folder suite:
+    // 1. YYYY-MM-DD date prefix descending when both buckets carry distinct date prefixes
+    // 2. Filesystem mtime descending
+    // 3. Sort key descending as deterministic tie-breaker
+    buckets.sort_by(|a, b| match (&a.date_prefix, &b.date_prefix) {
+        (Some(da), Some(db)) if da != db => db.cmp(da),
+        _ => b
+            .max_mtime
+            .cmp(&a.max_mtime)
+            .then_with(|| b.sort_key.cmp(&a.sort_key)),
     });
 
-    let total_suites = buckets.iter().filter(|b| b.suite.is_some()).count();
+    let total_buckets = buckets.len();
     let mut dropdown_items = Vec::new();
 
     for (i, bucket) in buckets.into_iter().enumerate() {
@@ -932,22 +1035,12 @@ pub(crate) fn build_plan_dropdown_items(
             dropdown_items.push(PlanDropdownItem::Separator);
         }
 
-        let header_title = match &bucket.suite {
-            Some(s) => {
-                let formatted = format_suite_title(s);
-                if bucket.suite == active_suite && total_suites > 1 {
-                    format!("📁 Current: {formatted}")
-                } else {
-                    format!("📁 {formatted}")
-                }
-            }
-            None => {
-                if total_suites > 0 {
-                    "📁 Other Workspace Plans".to_string()
-                } else {
-                    "📁 Implementation Plans".to_string()
-                }
-            }
+        let formatted = format_suite_title(&bucket.sort_key);
+        let icon = if bucket.suite.is_some() { "📁" } else { "📄" };
+        let header_title = if bucket.is_active_bucket && total_buckets > 1 {
+            format!("{icon} Current: {formatted}")
+        } else {
+            format!("{icon} {formatted}")
         };
 
         dropdown_items.push(PlanDropdownItem::Header(header_title));
@@ -1119,18 +1212,73 @@ mod tests {
         let items = scan_plan_dropdown_items(root, active_rel);
 
         let plan_items: Vec<_> = items.iter().filter_map(|item| match item {
-            PlanDropdownItem::Plan { rel_path, .. } => Some(rel_path.as_str()),
+            PlanDropdownItem::Plan { rel_path, is_active, .. } => Some((rel_path.as_str(), *is_active)),
             _ => None,
         }).collect();
 
         assert_eq!(plan_items.len(), 4);
 
-        // Active suite comes first
-        assert!(plan_items[0].contains("2026-08-19-twenty-capabilities/master.md"));
-        assert!(plan_items[1].contains("2026-08-19-twenty-capabilities/01-phase-1-quick-dx.md"));
-        // Second suite is also discoverable and selectable
-        assert!(plan_items[2].contains("2026-08-21-swarm-orchestration/master.md"));
-        assert!(plan_items[3].contains("2026-08-21-swarm-orchestration/01-phase-1-reactive-dag.md"));
+        // Chronological newest-first: 2026-08-21 comes first, 2026-08-19 second (with active marker preserved)
+        assert!(plan_items[0].0.contains("2026-08-21-swarm-orchestration/master.md"));
+        assert!(!plan_items[0].1);
+        assert!(plan_items[1].0.contains("2026-08-21-swarm-orchestration/01-phase-1-reactive-dag.md"));
+        assert!(!plan_items[1].1);
+        assert!(plan_items[2].0.contains("2026-08-19-twenty-capabilities/master.md"));
+        assert!(plan_items[2].1);
+        assert!(plan_items[3].0.contains("2026-08-19-twenty-capabilities/01-phase-1-quick-dx.md"));
+        assert!(!plan_items[3].1);
+    }
+
+    #[test]
+    fn test_chronological_interleaving_single_and_suite_plans_and_autoselect() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let plans_dir = root.join(".hadron").join("docs").join("plans");
+        let suite_old = plans_dir.join("2026-08-19-twenty-capabilities");
+        let suite_new = plans_dir.join("2026-08-21-swarm-orchestration");
+        std::fs::create_dir_all(&suite_old).unwrap();
+        std::fs::create_dir_all(&suite_new).unwrap();
+
+        std::fs::write(suite_old.join("master.md"), "# Twenty Caps\n").unwrap();
+        let single_mid = plans_dir.join("2026-08-20-single-file-plan.md");
+        std::fs::write(&single_mid, "# Single Mid Plan\n").unwrap();
+        let single_newest = plans_dir.join("2026-08-22-latest-hotfix.md");
+        std::fs::write(&single_newest, "# Latest Hotfix\n").unwrap();
+        std::fs::write(suite_new.join("master.md"), "# Swarm Master\n").unwrap();
+
+        let items = scan_plan_dropdown_items(root, ".hadron/docs/plans/2026-08-20-single-file-plan.md");
+        let plan_paths: Vec<_> = items
+            .iter()
+            .filter_map(|item| match item {
+                PlanDropdownItem::Plan { rel_path, .. } => Some(rel_path.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(plan_paths.len(), 4);
+        assert!(plan_paths[0].ends_with("2026-08-22-latest-hotfix.md"));
+        assert!(plan_paths[1].ends_with("2026-08-21-swarm-orchestration/master.md"));
+        assert!(plan_paths[2].ends_with("2026-08-20-single-file-plan.md"));
+        assert!(plan_paths[3].ends_with("2026-08-19-twenty-capabilities/master.md"));
+
+        // Verify auto-selection prefers a newly created/modified plan on disk over an older message mention
+        let old_msg_ts = chrono::Utc::now() - chrono::Duration::seconds(60);
+        let messages = vec![crate::model::MessageRow {
+            from: "Human".to_string(),
+            to: None,
+            body: "Old message mentioning .hadron/docs/plans/2026-08-19-twenty-capabilities/master.md".to_string(),
+            kind_label: "message",
+            usage: None,
+            ts: old_msg_ts,
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        }];
+        let resolved = resolve_active_plan(root, &messages).unwrap();
+        assert!(
+            resolved.ends_with("2026-08-22-latest-hotfix.md"),
+            "expected newest plan created after old message, got {resolved}"
+        );
     }
 
     #[test]
