@@ -648,6 +648,25 @@ pub fn archive_and_prune_branch(repo_root: &Path, branch: &str) -> anyhow::Resul
     Ok(tag_name)
 }
 
+/// Detach `wt`'s HEAD onto `base` after its branch has landed on `base`, releasing
+/// the `quark/<id>/<ulid>` branch ref so [`prune_merged_branches`] (or squash branch
+/// cleanup) can delete the landed branch immediately on the same turn rather than
+/// stranding it until the quark receives a future assignment.
+///
+/// Refuses to detach if `wt` has uncommitted changes (`is_dirty`) so uncommitted work
+/// is never disturbed.
+pub fn detach_at_base(wt: &Worktree, base: &str) -> anyhow::Result<()> {
+    if is_dirty(&wt.path)? {
+        bail!(
+            "refusing to detach dirty worktree {} at {base}",
+            wt.path.display()
+        );
+    }
+    git(&wt.path, &["checkout", "-q", "--detach", base])
+        .with_context(|| format!("detaching worktree {} at {base}", wt.path.display()))?;
+    Ok(())
+}
+
 /// Where a reap parks anything it had to move out of a tree before removing it.
 /// Gitignored like the rest of `.hadron/`, so it never dirties the human's status.
 pub fn reaped_dir(repo_root: &Path) -> PathBuf {

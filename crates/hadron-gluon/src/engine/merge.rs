@@ -48,6 +48,20 @@ pub enum DiagnosticErrorKind {
     Unknown,
 }
 
+/// Outcome of the asynchronous pre-landing gate stages (`sync` + `tests`),
+/// executed off the main dispatch loop so sibling quarks and `@orchestrator`
+/// remain responsive while a quark's test suite runs.
+pub(super) enum PreGateOutcome {
+    NoCommits,
+    Conflicted(String),
+    Emptied,
+    Ready {
+        state: hadron_gatekeeper::BranchState,
+        passed: bool,
+        tail: String,
+    },
+}
+
 /// A specific diagnostic fault point extracted from compiler/test/git output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticItem {
