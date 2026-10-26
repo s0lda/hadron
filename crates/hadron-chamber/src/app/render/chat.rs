@@ -456,16 +456,16 @@ impl super::Chamber {
                             cx.stop_propagation();
                         }
                     }))
-                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                        let key = event.keystroke.key.as_str();
-                        if key.eq_ignore_ascii_case("tab") {
-                            if this.completion.is_some() {
-                                this.accept_completion(window, cx);
-                                cx.stop_propagation();
-                            } else if this.accept_ghost_completion(window, cx) {
-                                cx.stop_propagation();
-                            }
-                        } else if key.eq_ignore_ascii_case("right") && this.completion.is_none() {
+                    .capture_action(cx.listener(|this, _: &IndentInline, window, cx| {
+                        if this.completion.is_some() {
+                            this.accept_completion(window, cx);
+                            cx.stop_propagation();
+                        } else if this.accept_ghost_completion(window, cx) {
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .capture_action(cx.listener(|this, _: &MoveRight, window, cx| {
+                        if this.completion.is_none() {
                             let (cursor, len) = {
                                 let state = this.input.read(cx);
                                 (state.cursor(), state.value().len())
@@ -723,7 +723,7 @@ impl super::Chamber {
                                     add_divider = true;
                                 }
                                 
-                                let mut row = div().pb(px(16.0));
+                                let mut row = div().w_full().pb(px(16.0));
                                 if add_divider {
                                     let label = crate::model::date_divider_label(
                                         m_date,
@@ -1019,6 +1019,7 @@ impl super::Chamber {
             return self.markdown_body(view, ix, body, roster).into_any_element();
         };
         div()
+            .w_full()
             .p(pad)
             .rounded_lg()
             .bg(accent.opacity(0.10))
@@ -1185,6 +1186,7 @@ impl super::Chamber {
         };
         h_flex()
             .id(SharedString::from(format!("chat-msg-row-{ix}")))
+            .w_full()
             .items_start()
             .gap(row_gap)
             .py(row_pad_y)
@@ -1272,6 +1274,8 @@ impl super::Chamber {
             .child(identity_avatar(id, avatar_size))
             .child(
                 v_flex()
+                    .flex_1()
+                    .w_full()
                     .min_w_0()
                     .gap_1()
                     .child(

@@ -5,6 +5,30 @@ import os
 # Ensure the scripts directory is on sys.path
 sys.path.insert(0, os.path.dirname(__file__))
 
+try:
+    import google.antigravity  # noqa: F401
+except ModuleNotFoundError:
+    import types
+    for mod_name in ("google", "google.antigravity", "google.antigravity.hooks", "google.antigravity.types", "google.genai"):
+        mod = types.ModuleType(mod_name)
+        mod.__path__ = []
+        sys.modules[mod_name] = mod
+    sys.modules["google"].antigravity = sys.modules["google.antigravity"]
+    sys.modules["google"].genai = sys.modules["google.genai"]
+    sys.modules["google.antigravity"].Agent = object
+    sys.modules["google.antigravity"].LocalAgentConfig = object
+    sys.modules["google.antigravity.hooks"].policy = object()
+    sys.modules["google.genai"].Client = object
+
+    class _Chunk:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    sys.modules["google.antigravity.types"].Text = type("Text", (_Chunk,), {})
+    sys.modules["google.antigravity.types"].Thought = type("Thought", (_Chunk,), {})
+    sys.modules["google.antigravity.types"].ToolCall = type("ToolCall", (_Chunk,), {})
+    sys.modules["google.antigravity.types"].ToolResult = type("ToolResult", (_Chunk,), {})
+
 # Import agy_acp module functions
 import agy_acp
 
@@ -119,6 +143,56 @@ class TestAgyAcpModels(unittest.TestCase):
         self.assertEqual(msg_id, 42)
         self.assertEqual(res, {"stopReason": "cancelled"})
         self.assertIsNone(agy_acp.sessions[session_id]["current_task"])
+
+    def test_handle_prompt_divides_multistep_context_usage_by_invocations(self):
+        import asyncio
+
+        session_id = "test-session-multistep-usage"
+        mock_agent = MagicMock()
+
+        class FakeResponse:
+            @property
+            async def chunks(self):
+                yield agy_acp.ToolCall(name="view_file", args={})
+                yield agy_acp.ToolCall(name="run_command", args={})
+                yield agy_acp.Text(text="done")
+
+            async def text(self):
+                return "done"
+
+            @property
+            def usage_metadata(self):
+                u = MagicMock()
+                # 3 invocations (2 tool calls + 1 final) totaling 600k prompt tokens (below max_tokens // 2 = 1M)
+                u.prompt_token_count = 600_000
+                u.cached_content_token_count = 540_000
+                u.candidates_token_count = 1_500
+                u.thoughts_token_count = 500
+                u.total_token_count = 602_000
+                u.context_window_size = 2_000_000
+                return u
+
+        async def fake_chat(prompt):
+            return FakeResponse()
+
+        mock_agent.chat.side_effect = fake_chat
+        agy_acp.sessions[session_id] = {
+            "agent": mock_agent,
+            "model": "gemini-3.6-flash",
+            "cwd": "",
+            "current_task": None,
+        }
+
+        updates = []
+        responses = []
+        with patch("agy_acp.send_session_update", side_effect=lambda sid, upd: updates.append((sid, upd))), \
+             patch("agy_acp.send_response", side_effect=lambda mid, res: responses.append((mid, res))):
+            asyncio.run(agy_acp.handle_prompt(99, session_id, [{"type": "text", "text": "go"}]))
+
+        usage_updates = [upd for _, upd in updates if upd.get("sessionUpdate") == "usage_update"]
+        self.assertEqual(len(usage_updates), 1)
+        self.assertEqual(usage_updates[0]["used"], 200_000)
+        self.assertEqual(usage_updates[0]["size"], 2_000_000)
 
 if __name__ == "__main__":
     unittest.main()

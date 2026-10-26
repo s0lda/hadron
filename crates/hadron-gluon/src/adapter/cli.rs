@@ -509,12 +509,10 @@ impl<R: CliRunner> CliQuark<R> {
             .or_else(|| (!self.model.trim().is_empty()).then(|| self.model.clone()));
         let context_tokens = res.context_used.or_else(|| {
             if !self.model.trim().is_empty() && !res.spend.is_empty() {
-                Some(
-                    res.spend
-                        .input
-                        .unwrap_or(0)
-                        .saturating_add(res.spend.cache_read.unwrap_or(0)),
-                )
+                // Never fold cumulative `res.spend.cache_read` into context window occupancy:
+                // on multi-step CLI turns (e.g. `agy --output-format stream-json`), `cache_read`
+                // sums cached prompt reads across every tool step (often 5M–15M tokens).
+                res.spend.input.filter(|&n| n > 0)
             } else {
                 None
             }
@@ -1237,5 +1235,31 @@ mod tests {
         let initial_len = crate::adapter::prompt::build(&p, &id).len();
         let prompt = fit_prompt_with_sliding_pruner(&p, &id, initial_len - 10, &config);
         assert!(prompt.contains("Sliding Context Pruner: compacted"));
+    }
+
+    #[tokio::test]
+    async fn streaming_context_fallback_never_adds_cumulative_cache_read_tokens() {
+        let lines = vec![vec![
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"done"}}"#.to_string(),
+            r#"{"event":"result","result":{"response":"done","usage":{"input_tokens":443232,"output_tokens":79850,"thinking_tokens":12000,"cache_read_tokens":14410669,"total_tokens":523082}}}"#.to_string(),
+        ]];
+        let runner = FakeRunner::with_stream_lines(lines);
+        let mut spec = CliSpec::agy();
+        spec.stream = Some(agy_stream_spec());
+        let mut q = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Orchestrator,
+            "gemini-4-argon-medium",
+            spec,
+            runner,
+        );
+        let outcome = q.excite(projection("check context")).await.unwrap();
+        assert_eq!(outcome.usage.spend.input, Some(443_232));
+        assert_eq!(outcome.usage.spend.cache_read, Some(14_410_669));
+        let ctx = outcome.usage.context.expect("context should be populated");
+        assert_eq!(
+            ctx.used_tokens, 443_232,
+            "cumulative cache_read_tokens (14.4M) must never be folded into context.used_tokens"
+        );
     }
 }

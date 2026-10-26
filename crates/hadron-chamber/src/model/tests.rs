@@ -1202,3 +1202,38 @@ fn test_message_row_format_event_line_and_to_json() {
     assert_eq!(parsed["kind_label"], "reboot");
     assert_eq!(parsed["ts"], "2026-10-09T12:34:56Z");
 }
+
+#[test]
+fn test_project_normalizes_inflated_cache_read_context_usage() {
+    let mut inflated = ev(
+        Actor::Quark(QuarkId::new("cli-agy")),
+        None,
+        Kind::EnergyReport {
+            used_tokens: 523_082,
+        },
+    );
+    inflated.usage = Some(hadron_lattice::Usage {
+        spend: hadron_lattice::TokenSpend {
+            input: Some(443_232),
+            output: Some(79_850),
+            cache_read: Some(14_410_669),
+            cache_write: None,
+        },
+        model: Some("gemini-4-argon-medium".to_string()),
+        context: Some(hadron_lattice::ContextUsage {
+            used_tokens: 14_853_901,
+            context_window_size: 2_000_000,
+            used_percentage: 742.69505,
+        }),
+        ..Default::default()
+    });
+
+    let view = project(&[inflated]);
+    let ctx = view.messages[0]
+        .usage
+        .as_ref()
+        .and_then(|u| u.context.as_ref())
+        .expect("context usage must exist");
+    assert_eq!(ctx.used_tokens, 443_232);
+    assert!((ctx.used_percentage - 22.1616).abs() < 1e-4);
+}

@@ -55,6 +55,7 @@ pub struct StreamAccumulator {
     model: Option<String>,
     context_used: Option<u32>,
     context_window: Option<u32>,
+    conversation_id: Option<String>,
 }
 
 impl StreamAccumulator {
@@ -68,6 +69,7 @@ impl StreamAccumulator {
             model: None,
             context_used: None,
             context_window: None,
+            conversation_id: None,
         }
     }
 
@@ -81,6 +83,10 @@ impl StreamAccumulator {
             return false;
         }
         let Ok(value) = serde_json::from_str::<Value>(line) else { return false };
+        if let Some(cid) = path_as_str(&value, "conversation_id").filter(|s| !s.trim().is_empty())
+        {
+            self.conversation_id = Some(cid.to_string());
+        }
         if let Some(m) = path_as_str(&value, "model")
             .or_else(|| path_as_str(&value, "result.model"))
             .or_else(|| path_as_str(&value, "step_update.model"))
@@ -224,11 +230,16 @@ impl StreamAccumulator {
     /// model, and optional context window telemetry.
     pub fn finish_result(self) -> StreamResult {
         let message = self.final_text.or_else(|| (!self.draft.is_empty()).then_some(self.draft));
+        let context_used = self.context_used.or_else(|| {
+            self.conversation_id
+                .as_deref()
+                .and_then(read_agy_transcript_context_used)
+        });
         StreamResult {
             message,
             spend: self.spend,
             model: self.model,
-            context_used: self.context_used,
+            context_used,
             context_window: self.context_window,
         }
     }
@@ -240,6 +251,64 @@ impl StreamAccumulator {
         let res = self.finish_result();
         (res.message, res.spend)
     }
+}
+
+/// Parse the final `PLANNER_RESPONSE` step's prompt window occupancy
+/// (`input_tokens + cache_read_tokens`) from an Antigravity `transcript.jsonl` file.
+///
+/// `agy --output-format stream-json` sums `input_tokens` and `cache_read_tokens`
+/// across all tool-call steps in `result.usage`, which can reach 10M+ on multi-step
+/// turns. The per-step `transcript.jsonl` records each `PLANNER_RESPONSE` call's own
+/// `input_tokens` and `cache_read_tokens`, so the last `PLANNER_RESPONSE` step gives
+/// the true end-of-turn context window occupancy.
+fn parse_transcript_context_used(contents: &str) -> Option<u32> {
+    for line in contents.lines().rev() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+        if value.get("type").and_then(Value::as_str) != Some("PLANNER_RESPONSE") {
+            continue;
+        }
+        let input = path_as_u32(&value, "input_tokens")
+            .or_else(|| path_as_u32(&value, "usage.input_tokens"));
+        let cache_read = path_as_u32(&value, "cache_read_tokens")
+            .or_else(|| path_as_u32(&value, "usage.cache_read_tokens"));
+        if input.is_some() || cache_read.is_some() {
+            let total = input.unwrap_or(0).saturating_add(cache_read.unwrap_or(0));
+            if total > 0 {
+                return Some(total);
+            }
+        }
+    }
+    None
+}
+
+fn read_agy_transcript_context_used(conversation_id: &str) -> Option<u32> {
+    let cid = conversation_id.trim();
+    if cid.is_empty() || cid.contains('/') || cid.contains('\\') || cid.contains("..") {
+        return None;
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)?;
+    for app_dir in ["antigravity-cli", "antigravity"] {
+        let path = home
+            .join(".gemini")
+            .join(app_dir)
+            .join("brain")
+            .join(cid)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            if let Some(used) = parse_transcript_context_used(&contents) {
+                return Some(used);
+            }
+        }
+    }
+    None
 }
 
 /// The Live-card line for one agy `step_update`, or `None` when the step names
@@ -537,5 +606,20 @@ mod tests {
         acc.on_line(r#"{"delta":"hi there"}"#);
         let (message, _) = acc.finish();
         assert_eq!(message.as_deref(), Some("hi there"));
+    }
+
+    #[test]
+    fn parse_transcript_context_used_reads_last_planner_response_window() {
+        let transcript = r#"{"step_index":0,"type":"USER_INPUT","status":"DONE"}
+{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":17024,"cache_read_tokens":0,"output_tokens":138}
+{"step_index":2,"type":"TOOL_RESPONSE","status":"DONE"}
+{"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":917,"cache_read_tokens":56552,"output_tokens":412}
+{"step_index":4,"type":"CHECKPOINT","status":"DONE"}
+"#;
+        assert_eq!(
+            parse_transcript_context_used(transcript),
+            Some(917 + 56552),
+            "must use the final PLANNER_RESPONSE step's single-call prompt window (input + cache_read), not cumulative sums"
+        );
     }
 }

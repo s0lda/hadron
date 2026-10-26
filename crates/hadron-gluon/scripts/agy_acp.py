@@ -239,7 +239,7 @@ async def handle_prompt(msg_id, session_id, prompt):
             max_tokens = getattr(usage, "context_window_size", 2000000) or 2000000
             invocations = max(1, tool_call_count + 1)
             raw_context = input_tokens + cached_tokens
-            if invocations > 1 and raw_context > max_tokens // 2:
+            if invocations > 1:
                 raw_context = raw_context // invocations
             used = min(max_tokens, raw_context)
 

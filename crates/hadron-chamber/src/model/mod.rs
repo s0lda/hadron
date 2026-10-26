@@ -621,20 +621,42 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
             None
         }
     });
+    let usage = e
+        .turn
+        .and_then(|t| turn_usages.get(&t.to_string()).cloned())
+        .or_else(|| e.usage.clone())
+        .map(normalize_usage_context);
     MessageRow {
         from,
         to,
         body,
         kind_label,
-        usage: e
-            .turn
-            .and_then(|t| turn_usages.get(&t.to_string()).cloned())
-            .or_else(|| e.usage.clone()),
+        usage,
         ts: e.ts,
         legacy_used_tokens,
         turn: e.turn.map(|t| t.to_string()),
         severity,
     }
+}
+
+/// Normalize `Usage.context` so historical CLI turns that folded cumulative multi-step
+/// `spend.cache_read` into `context.used_tokens` (`used_tokens == input + cache_read`)
+/// or exceeded `context_window_size` are corrected to single-window occupancy.
+fn normalize_usage_context(mut usage: hadron_lattice::Usage) -> hadron_lattice::Usage {
+    if let Some(ctx) = &mut usage.context {
+        if let (Some(input), Some(cache_read)) = (usage.spend.input, usage.spend.cache_read) {
+            if input > 0 && cache_read > 0 && ctx.used_tokens == input.saturating_add(cache_read) {
+                ctx.used_tokens = input;
+            }
+        }
+        if ctx.context_window_size > 0 {
+            if ctx.used_tokens > ctx.context_window_size {
+                ctx.used_tokens = ctx.context_window_size;
+            }
+            ctx.used_percentage = (ctx.used_tokens as f64 / ctx.context_window_size as f64) * 100.0;
+        }
+    }
+    usage
 }
 
 /// Project the field into a renderable view, with no team annotations
