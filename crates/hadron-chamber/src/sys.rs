@@ -231,10 +231,21 @@ pub fn sorted_children(node: &FileTreeNode) -> Vec<(&String, &FileTreeNode)> {
 
 /// Reads the contents of a workspace file.
 pub fn read_workspace_file(repo_root: &Path, file_path: &str) -> Option<String> {
-    let full_path = repo_root.join(file_path);
+    let clean_rel = file_path.trim_start_matches(['/', '\\']);
+    let full_path = repo_root.join(clean_rel);
     if let (Ok(canon_root), Ok(canon_full)) = (repo_root.canonicalize(), full_path.canonicalize()) {
-        if canon_full.starts_with(canon_root) {
+        let norm_root = hadron_lattice::sys::paths::strip_unc_prefix(&canon_root.to_string_lossy());
+        let norm_full = hadron_lattice::sys::paths::strip_unc_prefix(&canon_full.to_string_lossy());
+        if std::path::Path::new(&norm_full).starts_with(std::path::Path::new(&norm_root)) {
             std::fs::read_to_string(canon_full).ok()
+        } else {
+            None
+        }
+    } else if full_path.is_file() {
+        let norm_root = hadron_lattice::sys::paths::strip_unc_prefix(&repo_root.to_string_lossy());
+        let norm_full = hadron_lattice::sys::paths::strip_unc_prefix(&full_path.to_string_lossy());
+        if std::path::Path::new(&norm_full).starts_with(std::path::Path::new(&norm_root)) {
+            std::fs::read_to_string(&full_path).ok()
         } else {
             None
         }

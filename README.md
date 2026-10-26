@@ -45,7 +45,6 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 ### Prerequisites
 
-- **Rust**: Toolchain (edition 2021, Rust 1.93+ required).
 - **OS**: Linux (X11/Wayland), macOS, or Windows (native MSVC or WSL2).
 - **LLM Access**: Any ACP agent (e.g. Claude Code), Antigravity, local Ollama, or API key for OpenAI / OpenRouter / Anthropic.
 
@@ -67,8 +66,9 @@ irm https://raw.githubusercontent.com/s0lda/hadron/main/install.ps1 | iex
 
 #### Build from Source (Cargo)
 
+*Requires Rust toolchain (Rust 1.93+, edition 2021).*
+
 ```bash
-# Requires Rust 1.93+ toolchain
 cargo install --locked --git https://github.com/s0lda/hadron.git hadron
 ```
 

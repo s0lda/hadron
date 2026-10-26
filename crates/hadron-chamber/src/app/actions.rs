@@ -664,8 +664,7 @@ impl Chamber {
             }
             "timelapse" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path);
-                let out = std::process::Command::new("git")
-                    .current_dir(repo_root)
+                let out = hadron_lattice::wsl::git_command(repo_root)
                     .args(["log", "-n", "5", "--pretty=format:%h%x09%s"])
                     .output();
                 let frames = match out {
@@ -736,9 +735,8 @@ impl Chamber {
                 };
 
                 let base = hadron_gluon::worktree::default_branch(&repo_root);
-                let diff_output = match std::process::Command::new("git")
+                let diff_output = match hadron_lattice::wsl::git_command(&check_path)
                     .args(&["diff", &format!("{base}...HEAD")])
-                    .current_dir(&check_path)
                     .output()
                 {
                     Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
@@ -777,8 +775,7 @@ impl Chamber {
             }
             "baseline" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path);
-                let out = std::process::Command::new("cargo")
-                    .current_dir(repo_root)
+                let out = hadron_lattice::wsl::wsl_aware_command(repo_root, "cargo")
                     .args(["test", "--workspace", "--no-run"])
                     .output();
                 let output_str = out
@@ -1542,9 +1539,7 @@ impl Chamber {
                         }
                     }
                     let mut global_map = std::collections::HashMap::new();
-                    let home_opt = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).map(std::path::PathBuf::from).ok();
-                    if let Some(home) = home_opt {
-                        let global_notes_dir = home.join(".hadron").join("nucleus").join("notes");
+                    if let Some(global_notes_dir) = hadron_lattice::user_hadron_dir().map(|h| h.join("nucleus").join("notes")) {
                         if let Ok(rd) = std::fs::read_dir(&global_notes_dir) {
                             for e in rd.flatten() {
                                 if let Ok(c) = std::fs::read_to_string(e.path()) {
