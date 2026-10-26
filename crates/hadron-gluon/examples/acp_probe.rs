@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .block_task()
                 .await?;
             let session_id = session.session_id;
-            eprintln!("session: {session_id:?}");
+            eprintln!("session established");
 
             // Turn 1 opens the session with a fact only this turn knows.
             let one = connection

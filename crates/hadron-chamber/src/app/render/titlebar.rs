@@ -350,7 +350,29 @@ impl super::Chamber {
 
         let (label, tip, bg_color, text_color, icon) = if info.is_github {
             let slug = info.repo_slug.as_deref().unwrap_or("GitHub");
-            if let Some(issues) = &self.github_issues {
+            let sec_alerts = self.github_security_alerts.as_ref().map(|a| a.len()).unwrap_or(0);
+            let failed_runs = self
+                .github_actions
+                .as_ref()
+                .map(|r| r.iter().filter(|run| run.is_failed()).count())
+                .unwrap_or(0);
+            if sec_alerts > 0 {
+                (
+                    format!("GH: {sec_alerts} alert{}", if sec_alerts == 1 { "" } else { "s" }),
+                    format!("{slug} has {sec_alerts} open security warning(s). Click to inspect."),
+                    theme::accent_soft(),
+                    theme::error(),
+                    IconName::TriangleAlert,
+                )
+            } else if failed_runs > 0 {
+                (
+                    format!("GH: {failed_runs} failed"),
+                    format!("{slug} has {failed_runs} failed GitHub Actions run(s). Click to inspect."),
+                    theme::accent_soft(),
+                    theme::error(),
+                    IconName::TriangleAlert,
+                )
+            } else if let Some(issues) = &self.github_issues {
                 if !issues.is_empty() {
                     (
                         format!("GH: {} issues", issues.len()),

@@ -1083,6 +1083,50 @@ pub struct GitHubPrInfo {
     pub head_branch: String,
 }
 
+/// Metadata for a GitHub Actions workflow run.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitHubWorkflowRunInfo {
+    pub id: u64,
+    pub title: String,
+    pub workflow_name: String,
+    pub head_branch: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub event: String,
+    pub url: String,
+    pub created_at: String,
+}
+
+impl GitHubWorkflowRunInfo {
+    /// Returns `true` when the workflow run concluded with a failure/cancelled/timed_out state.
+    pub fn is_failed(&self) -> bool {
+        matches!(
+            self.conclusion.as_deref(),
+            Some("failure" | "timed_out" | "startup_failure" | "action_required")
+        )
+    }
+
+    /// Returns `true` when the workflow run is still queued or in progress.
+    pub fn is_in_progress(&self) -> bool {
+        !self.status.eq_ignore_ascii_case("completed")
+    }
+}
+
+/// Metadata for an open GitHub security alert (CodeQL code scanning or Dependabot).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitHubSecurityAlertInfo {
+    pub number: u64,
+    /// `"CodeQL"` or `"Dependabot"`
+    pub source: String,
+    pub rule_id: String,
+    pub severity: String,
+    pub summary: String,
+    pub location: Option<String>,
+    pub state: String,
+    pub url: String,
+    pub created_at: String,
+}
+
 /// Extracts repository slug (owner/repo) from an HTTP, SSH, or git remote URL.
 pub fn parse_repo_slug_from_url(url: &str) -> Option<String> {
     let trimmed = url.trim();
@@ -1278,6 +1322,321 @@ pub fn fetch_github_prs(repo_root: &Path) -> Result<Vec<GitHubPrInfo>, String> {
         url: p.url.unwrap_or_default(),
         head_branch: p.head_ref_name.unwrap_or_default(),
     }).collect())
+}
+
+/// Parse `gh run list --json ...` output into [`GitHubWorkflowRunInfo`] rows.
+pub fn parse_github_actions_json(bytes: &[u8]) -> Result<Vec<GitHubWorkflowRunInfo>, String> {
+    #[derive(serde::Deserialize)]
+    struct RawRun {
+        #[serde(rename = "databaseId", default)]
+        database_id: u64,
+        #[serde(rename = "displayTitle", default)]
+        display_title: String,
+        #[serde(default)]
+        name: String,
+        #[serde(rename = "workflowName", default)]
+        workflow_name: String,
+        #[serde(rename = "headBranch", default)]
+        head_branch: String,
+        #[serde(default)]
+        status: String,
+        conclusion: Option<String>,
+        #[serde(default)]
+        event: String,
+        #[serde(default)]
+        url: String,
+        #[serde(rename = "createdAt")]
+        created_at: Option<String>,
+    }
+
+    let raw: Vec<RawRun> = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Failed to parse gh run list output: {e}"))?;
+
+    Ok(raw
+        .into_iter()
+        .map(|r| {
+            let title = if !r.display_title.is_empty() {
+                r.display_title
+            } else if !r.name.is_empty() {
+                r.name
+            } else {
+                r.workflow_name.clone()
+            };
+            GitHubWorkflowRunInfo {
+                id: r.database_id,
+                title,
+                workflow_name: r.workflow_name,
+                head_branch: r.head_branch,
+                status: if r.status.is_empty() {
+                    "completed".to_string()
+                } else {
+                    r.status
+                },
+                conclusion: r.conclusion.filter(|s| !s.is_empty()),
+                event: r.event,
+                url: r.url,
+                created_at: r
+                    .created_at
+                    .map(|d| d.chars().take(10).collect())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect())
+}
+
+/// Fetch recent GitHub Actions workflow runs via the `gh` CLI in `repo_root`.
+pub fn fetch_github_actions(repo_root: &Path) -> Result<Vec<GitHubWorkflowRunInfo>, String> {
+    let output = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
+        .args([
+            "run",
+            "list",
+            "--limit",
+            "10",
+            "--json",
+            "databaseId,displayTitle,workflowName,headBranch,status,conclusion,event,url,createdAt",
+        ])
+        .output()
+        .map_err(|e| format!("GitHub CLI (`gh`) execution failed: {e}"))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            "gh run list returned non-zero exit status".to_string()
+        } else {
+            err
+        });
+    }
+
+    parse_github_actions_json(&output.stdout)
+}
+
+/// Parse GitHub Code Scanning (`code-scanning/alerts`) JSON array into [`GitHubSecurityAlertInfo`] rows.
+pub fn parse_code_scanning_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAlertInfo>, String> {
+    #[derive(serde::Deserialize)]
+    struct RawRule {
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        description: String,
+        security_severity_level: Option<String>,
+        severity: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawLocation {
+        path: Option<String>,
+        start_line: Option<u64>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawMessage {
+        text: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawInstance {
+        location: Option<RawLocation>,
+        message: Option<RawMessage>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawTool {
+        name: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawAlert {
+        number: u64,
+        #[serde(default)]
+        state: String,
+        #[serde(default)]
+        html_url: String,
+        created_at: Option<String>,
+        rule: Option<RawRule>,
+        tool: Option<RawTool>,
+        most_recent_instance: Option<RawInstance>,
+    }
+
+    let raw: Vec<RawAlert> = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Failed to parse code-scanning alerts: {e}"))?;
+
+    Ok(raw
+        .into_iter()
+        .filter(|a| a.state.is_empty() || a.state.eq_ignore_ascii_case("open"))
+        .map(|a| {
+            let source = a
+                .tool
+                .and_then(|t| t.name)
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "CodeQL".to_string());
+            let (rule_id, rule_desc, severity) = match a.rule {
+                Some(r) => {
+                    let sev = r
+                        .security_severity_level
+                        .or(r.severity)
+                        .unwrap_or_else(|| "warning".to_string());
+                    (r.id, r.description, sev)
+                }
+                None => (String::new(), String::new(), "warning".to_string()),
+            };
+            let (location, inst_msg) = match a.most_recent_instance {
+                Some(inst) => {
+                    let loc = inst.location.and_then(|l| match (l.path, l.start_line) {
+                        (Some(p), Some(line)) => Some(format!("{p}:{line}")),
+                        (Some(p), None) => Some(p),
+                        _ => None,
+                    });
+                    let msg = inst.message.and_then(|m| m.text);
+                    (loc, msg)
+                }
+                None => (None, None),
+            };
+            let summary = if !rule_desc.is_empty() {
+                rule_desc
+            } else if let Some(m) = inst_msg {
+                m
+            } else {
+                rule_id.clone()
+            };
+            GitHubSecurityAlertInfo {
+                number: a.number,
+                source,
+                rule_id,
+                severity,
+                summary,
+                location,
+                state: if a.state.is_empty() {
+                    "open".to_string()
+                } else {
+                    a.state
+                },
+                url: a.html_url,
+                created_at: a
+                    .created_at
+                    .map(|d| d.chars().take(10).collect())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect())
+}
+
+/// Parse GitHub Dependabot (`dependabot/alerts`) JSON array into [`GitHubSecurityAlertInfo`] rows.
+pub fn parse_dependabot_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAlertInfo>, String> {
+    #[derive(serde::Deserialize)]
+    struct RawPkg {
+        name: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawDep {
+        package: Option<RawPkg>,
+        manifest_path: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawAdvisory {
+        ghsa_id: Option<String>,
+        cve_id: Option<String>,
+        summary: Option<String>,
+        severity: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawDepAlert {
+        number: u64,
+        #[serde(default)]
+        state: String,
+        #[serde(default)]
+        html_url: String,
+        created_at: Option<String>,
+        dependency: Option<RawDep>,
+        security_advisory: Option<RawAdvisory>,
+    }
+
+    let raw: Vec<RawDepAlert> = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Failed to parse dependabot alerts: {e}"))?;
+
+    Ok(raw
+        .into_iter()
+        .filter(|a| a.state.is_empty() || a.state.eq_ignore_ascii_case("open"))
+        .map(|a| {
+            let (pkg_name, manifest) = match a.dependency {
+                Some(d) => (d.package.and_then(|p| p.name), d.manifest_path),
+                None => (None, None),
+            };
+            let (rule_id, summary, severity) = match a.security_advisory {
+                Some(adv) => {
+                    let id = adv
+                        .cve_id
+                        .or(adv.ghsa_id)
+                        .or(pkg_name.clone())
+                        .unwrap_or_else(|| "dependabot".to_string());
+                    let sum = match (&pkg_name, adv.summary) {
+                        (Some(pkg), Some(s)) => format!("{pkg}: {s}"),
+                        (None, Some(s)) => s,
+                        (Some(pkg), None) => pkg.clone(),
+                        (None, None) => id.clone(),
+                    };
+                    let sev = adv.severity.unwrap_or_else(|| "medium".to_string());
+                    (id, sum, sev)
+                }
+                None => (
+                    pkg_name.clone().unwrap_or_else(|| "dependabot".to_string()),
+                    pkg_name.unwrap_or_else(|| "Dependabot alert".to_string()),
+                    "medium".to_string(),
+                ),
+            };
+            GitHubSecurityAlertInfo {
+                number: a.number,
+                source: "Dependabot".to_string(),
+                rule_id,
+                severity,
+                summary,
+                location: manifest,
+                state: if a.state.is_empty() {
+                    "open".to_string()
+                } else {
+                    a.state
+                },
+                url: a.html_url,
+                created_at: a
+                    .created_at
+                    .map(|d| d.chars().take(10).collect())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect())
+}
+
+/// Fetch open GitHub security warnings (CodeQL code-scanning + Dependabot alerts) via `gh api`.
+pub fn fetch_github_security_alerts(
+    repo_root: &Path,
+    repo_slug: Option<&str>,
+) -> Result<Vec<GitHubSecurityAlertInfo>, String> {
+    let slug = match repo_slug.filter(|s| !s.trim().is_empty()) {
+        Some(s) => s.to_string(),
+        None => get_remote_tracking_info(repo_root)
+            .repo_slug
+            .ok_or_else(|| "No GitHub repository slug resolved for workspace".to_string())?,
+    };
+
+    let mut alerts = Vec::new();
+
+    if let Ok(out) = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
+        .args(["api", &format!("repos/{slug}/code-scanning/alerts?state=open")])
+        .output()
+    {
+        if out.status.success() {
+            if let Ok(mut cs) = parse_code_scanning_alerts_json(&out.stdout) {
+                alerts.append(&mut cs);
+            }
+        }
+    }
+
+    if let Ok(out) = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
+        .args(["api", &format!("repos/{slug}/dependabot/alerts?state=open")])
+        .output()
+    {
+        if out.status.success() {
+            if let Ok(mut dep) = parse_dependabot_alerts_json(&out.stdout) {
+                alerts.append(&mut dep);
+            }
+        }
+    }
+
+    Ok(alerts)
 }
 
 #[cfg(test)]
@@ -1837,6 +2196,94 @@ index a1b2c3d..e4f5g6h 100644
         // Idempotent re-initialization
         let res2 = init_repository(root).unwrap();
         assert!(res2.contains("already initialized"), "res2: {res2}");
+    }
+
+    #[test]
+    fn test_parse_github_actions_and_security_alerts_json() {
+        let actions_json = br#"[
+            {
+                "databaseId": 24942254835,
+                "displayTitle": "fix(chamber): demo models",
+                "workflowName": "CodeQL",
+                "headBranch": "main",
+                "status": "completed",
+                "conclusion": "success",
+                "event": "push",
+                "url": "https://github.com/s0lda/hadron/actions/runs/24942254835",
+                "createdAt": "2026-10-26T16:40:00Z"
+            },
+            {
+                "databaseId": 24942254900,
+                "displayTitle": "chore(release): v0.33.14",
+                "workflowName": "Release",
+                "headBranch": "main",
+                "status": "completed",
+                "conclusion": "failure",
+                "event": "push",
+                "url": "https://github.com/s0lda/hadron/actions/runs/24942254900",
+                "createdAt": "2026-10-26T16:45:00Z"
+            }
+        ]"#;
+        let runs = parse_github_actions_json(actions_json).unwrap();
+        assert_eq!(runs.len(), 2);
+        assert!(!runs[0].is_failed());
+        assert!(runs[1].is_failed());
+        assert_eq!(runs[1].workflow_name, "Release");
+        assert_eq!(runs[1].created_at, "2026-10-26");
+
+        let codeql_json = br#"[
+            {
+                "number": 1,
+                "state": "open",
+                "html_url": "https://github.com/s0lda/hadron/security/code-scanning/1",
+                "created_at": "2026-04-21T20:43:39Z",
+                "rule": {
+                    "id": "rust/cleartext-logging",
+                    "description": "Cleartext logging of sensitive information",
+                    "security_severity_level": "high"
+                },
+                "tool": { "name": "CodeQL" },
+                "most_recent_instance": {
+                    "location": {
+                        "path": "crates/hadron-gluon/examples/acp_probe.rs",
+                        "start_line": 69
+                    },
+                    "message": { "text": "This operation writes session_id to a log file." }
+                }
+            }
+        ]"#;
+        let cs_alerts = parse_code_scanning_alerts_json(codeql_json).unwrap();
+        assert_eq!(cs_alerts.len(), 1);
+        assert_eq!(cs_alerts[0].source, "CodeQL");
+        assert_eq!(cs_alerts[0].rule_id, "rust/cleartext-logging");
+        assert_eq!(cs_alerts[0].severity, "high");
+        assert_eq!(
+            cs_alerts[0].location.as_deref(),
+            Some("crates/hadron-gluon/examples/acp_probe.rs:69")
+        );
+
+        let dependabot_json = br#"[
+            {
+                "number": 2,
+                "state": "open",
+                "html_url": "https://github.com/s0lda/hadron/security/dependabot/2",
+                "created_at": "2026-10-25T10:00:00Z",
+                "dependency": {
+                    "package": { "name": "rustls-webpki" },
+                    "manifest_path": "Cargo.lock"
+                },
+                "security_advisory": {
+                    "cve_id": "CVE-2026-39863",
+                    "summary": "URI name constraint validation bypass",
+                    "severity": "medium"
+                }
+            }
+        ]"#;
+        let dep_alerts = parse_dependabot_alerts_json(dependabot_json).unwrap();
+        assert_eq!(dep_alerts.len(), 1);
+        assert_eq!(dep_alerts[0].source, "Dependabot");
+        assert_eq!(dep_alerts[0].rule_id, "CVE-2026-39863");
+        assert_eq!(dep_alerts[0].location.as_deref(), Some("Cargo.lock"));
     }
 }
 

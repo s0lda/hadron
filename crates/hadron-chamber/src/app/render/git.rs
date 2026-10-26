@@ -2020,6 +2020,259 @@ impl super::Chamber {
                     );
                 }
 
+                // GitHub Actions workflow runs
+                let actions_summary = match &self.github_actions {
+                    Some(runs) => {
+                        let failed = runs.iter().filter(|r| r.is_failed()).count();
+                        let running = runs.iter().filter(|r| r.is_in_progress()).count();
+                        if failed > 0 {
+                            (format!("{failed} failed"), theme::error())
+                        } else if running > 0 {
+                            (format!("{running} running"), theme::warning())
+                        } else {
+                            (format!("{} recent", runs.len()), theme::success())
+                        }
+                    }
+                    None => ("—".to_string(), theme::text_muted()),
+                };
+                let actions_header = h_flex()
+                    .items_center()
+                    .justify_between()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child("GitHub Actions")
+                    .child(div().text_color(actions_summary.1).child(actions_summary.0));
+                card = card.child(actions_header);
+
+                if let Some(runs) = &self.github_actions {
+                    if runs.is_empty() {
+                        card = card.child(div().pl_2().child(Self::muted("No recent workflow runs.")));
+                    } else {
+                        let mut run_list = v_flex().gap_1p5();
+                        for (ix, run) in runs.iter().take(8).enumerate() {
+                            let url_clone = run.url.clone();
+                            let is_failed = run.is_failed();
+                            let is_running = run.is_in_progress();
+                            let (badge_label, badge_color) = if is_failed {
+                                ("FAIL", theme::error())
+                            } else if is_running {
+                                ("RUN", theme::warning())
+                            } else if run.conclusion.as_deref() == Some("success") {
+                                ("PASS", theme::success())
+                            } else {
+                                ("SKIP", theme::text_muted())
+                            };
+                            let wf_label = if run.workflow_name.is_empty() {
+                                run.title.clone()
+                            } else {
+                                format!("{} · {}", run.workflow_name, run.title)
+                            };
+                            let mut row = h_flex()
+                                .id(("gh-action-row", ix))
+                                .w_full()
+                                .gap_2()
+                                .items_center()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(theme::bg_surface_raised())
+                                .border_1()
+                                .border_color(if is_failed {
+                                    theme::error()
+                                } else {
+                                    theme::border()
+                                })
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(move |_, _, _, _| {
+                                    crate::sys::open_path_or_url(&url_clone);
+                                }))
+                                .child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(badge_color)
+                                        .child(badge_label),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(theme::text())
+                                        .child(wf_label),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(run.head_branch.clone()),
+                                );
+
+                            if is_failed {
+                                let run_id = run.id;
+                                let wf_name = run.workflow_name.clone();
+                                let branch = run.head_branch.clone();
+                                let run_url = run.url.clone();
+                                row = row.child(
+                                    div()
+                                        .id(("gh-action-fix", ix))
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::accent_soft())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .cursor_pointer()
+                                        .child("Dispatch Fix")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.chat_tab = ChatTab::Chat;
+                                            this.post_chat_message(
+                                                Actor::Human,
+                                                format!(
+                                                    "@orchestrator Investigate and fix failed GitHub Actions workflow `{wf_name}` (run #{run_id} on branch `{branch}`, {run_url}). Inspect `gh run view {run_id} --log-failed` and remediate the failure."
+                                                ),
+                                                cx,
+                                            );
+                                        })),
+                                );
+                            }
+                            run_list = run_list.child(row);
+                        }
+                        card = card.child(run_list);
+                    }
+                } else {
+                    card = card.child(div().pl_2().child(Self::muted("No workflow runs fetched yet.")));
+                }
+
+                // Security Warnings (CodeQL & Dependabot)
+                let alert_count = self.github_security_alerts.as_ref().map(|a| a.len()).unwrap_or(0);
+                let security_header = h_flex()
+                    .items_center()
+                    .justify_between()
+                    .pt_1()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text())
+                    .child("Security Warnings (CodeQL & Dependabot)")
+                    .child(
+                        div()
+                            .text_color(if alert_count > 0 {
+                                theme::error()
+                            } else {
+                                theme::success()
+                            })
+                            .child(if alert_count > 0 {
+                                format!("{alert_count} open")
+                            } else {
+                                "0 open".to_string()
+                            }),
+                    );
+                card = card.child(security_header);
+
+                if let Some(alerts) = &self.github_security_alerts {
+                    if alerts.is_empty() {
+                        card = card.child(div().pl_2().child(Self::muted("No open security warnings.")));
+                    } else {
+                        let mut alert_list = v_flex().gap_1p5();
+                        for (ix, alert) in alerts.iter().take(10).enumerate() {
+                            let url_clone = alert.url.clone();
+                            let sev_upper = alert.severity.to_ascii_uppercase();
+                            let sev_color = match alert.severity.to_ascii_lowercase().as_str() {
+                                "critical" | "high" | "error" => theme::error(),
+                                "medium" | "warning" => theme::warning(),
+                                _ => theme::accent(),
+                            };
+                            let loc_suffix = alert
+                                .location
+                                .as_deref()
+                                .map(|l| format!(" ({l})"))
+                                .unwrap_or_default();
+                            let alert_title = format!(
+                                "[{}] {}: {}{}",
+                                alert.source, alert.rule_id, alert.summary, loc_suffix
+                            );
+                            let fix_source = alert.source.clone();
+                            let fix_num = alert.number;
+                            let fix_rule = alert.rule_id.clone();
+                            let fix_sum = alert.summary.clone();
+                            let fix_loc = alert.location.clone().unwrap_or_else(|| "repository".to_string());
+                            let fix_url = alert.url.clone();
+
+                            let row = h_flex()
+                                .id(("gh-sec-alert-row", ix))
+                                .w_full()
+                                .gap_2()
+                                .items_center()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(theme::bg_surface_raised())
+                                .border_1()
+                                .border_color(sev_color)
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.85))
+                                .on_click(cx.listener(move |_, _, _, _| {
+                                    crate::sys::open_path_or_url(&url_clone);
+                                }))
+                                .child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(sev_color)
+                                        .child(format!("#{} {}", alert.number, sev_upper)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(theme::text())
+                                        .child(alert_title),
+                                )
+                                .child(
+                                    div()
+                                        .id(("gh-sec-alert-fix", ix))
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::accent_soft())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .cursor_pointer()
+                                        .child("Dispatch Fix")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.chat_tab = ChatTab::Chat;
+                                            this.post_chat_message(
+                                                Actor::Human,
+                                                format!(
+                                                    "@orchestrator Remediate {fix_source} security alert #{fix_num} (`{fix_rule}`: {fix_sum}) at `{fix_loc}` ({fix_url})."
+                                                ),
+                                                cx,
+                                            );
+                                        })),
+                                );
+                            alert_list = alert_list.child(row);
+                        }
+                        card = card.child(alert_list);
+                    }
+                } else {
+                    card = card.child(div().pl_2().child(Self::muted("No security alerts fetched yet.")));
+                }
+
                 // Pull requests list
                 let pr_count = self.github_prs.as_ref().map(|p| p.len()).unwrap_or(0);
                 let pr_header = h_flex()

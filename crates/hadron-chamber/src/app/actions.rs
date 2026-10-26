@@ -225,19 +225,24 @@ impl Chamber {
         .detach();
     }
 
-    /// Asynchronously refresh local repository health, git remote tracking, and GitHub issues/PRs.
+    /// Asynchronously refresh local repository health, git remote tracking, GitHub Actions, Security Alerts, and Issues/PRs.
     pub(super) fn refresh_remote_and_github(&mut self, cx: &mut Context<Self>) {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
         self.github_status_msg = Some("Refreshing remote & GitHub...".to_string());
         cx.spawn(async move |this, cx| {
-            let (health, remote_info, issues_res, prs_res) = cx
+            let (health, remote_info, issues_res, prs_res, actions_res, alerts_res) = cx
                 .background_executor()
                 .spawn(async move {
                     let health = hadron_gatekeeper::RepoMonitor::check_repo(&repo_root);
                     let remote_info = crate::vcs::get_remote_tracking_info(&repo_root);
                     let issues_res = crate::vcs::fetch_github_issues(&repo_root);
                     let prs_res = crate::vcs::fetch_github_prs(&repo_root);
-                    (health, remote_info, issues_res, prs_res)
+                    let actions_res = crate::vcs::fetch_github_actions(&repo_root);
+                    let alerts_res = crate::vcs::fetch_github_security_alerts(
+                        &repo_root,
+                        remote_info.repo_slug.as_deref(),
+                    );
+                    (health, remote_info, issues_res, prs_res, actions_res, alerts_res)
                 })
                 .await;
 
@@ -257,6 +262,14 @@ impl Chamber {
                 match prs_res {
                     Ok(prs) => chamber.github_prs = Some(prs),
                     Err(_) => chamber.github_prs = None,
+                }
+                match actions_res {
+                    Ok(runs) => chamber.github_actions = Some(runs),
+                    Err(_) => chamber.github_actions = None,
+                }
+                match alerts_res {
+                    Ok(alerts) => chamber.github_security_alerts = Some(alerts),
+                    Err(_) => chamber.github_security_alerts = None,
                 }
                 cx.notify();
             });
