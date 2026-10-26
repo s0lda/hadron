@@ -50,29 +50,60 @@ fn release_version(tag: &str) -> Option<Vec<u64>> {
     (!parts.is_empty()).then_some(parts)
 }
 
-pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> UpdateState {
+/// Parses `git ls-remote` output and returns the newest release strictly newer than
+/// `current_version` whose GitHub Release build is ready (`is_ready(version) == true`),
+/// along with a boolean indicating whether a newer release tag exists on remote git whose
+/// build is not ready yet (so the caller can re-poll while GitHub Actions finishes).
+pub fn parse_remote_update_info_with_readiness<F>(
+    remote_output: &str,
+    current_version: &str,
+    mut is_ready: F,
+) -> (UpdateState, bool)
+where
+    F: FnMut(&str) -> bool,
+{
     let current = release_version(&format!("v{current_version}"));
-    let mut newest: Option<(Vec<u64>, String, String)> = None;
+    let mut candidates: Vec<(Vec<u64>, String, String)> = Vec::new();
 
     for line in remote_output.trim().lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         let [sha, refname, ..] = parts[..] else { continue };
         let Some(tag) = refname.strip_prefix("refs/tags/") else { continue };
         let Some(key) = release_version(tag) else { continue };
-        if newest.as_ref().is_none_or(|(best, _, _)| key > *best) {
-            let version = tag.trim_end_matches("^{}").trim_start_matches('v').to_string();
-            newest = Some((key, version, sha[..7.min(sha.len())].to_string()));
+        // Strictly newer only. `!=` offered a *downgrade* to anyone running a build ahead
+        // of the newest tag — every developer working from a checkout.
+        if current.as_ref().is_none_or(|c| key > *c) {
+            if !candidates.iter().any(|(k, _, _)| *k == key) {
+                let version = tag.trim_end_matches("^{}").trim_start_matches('v').to_string();
+                let short_sha = sha[..7.min(sha.len())].to_string();
+                candidates.push((key, version, short_sha));
+            }
         }
     }
 
-    match newest {
-        // Strictly newer only. `!=` offered a *downgrade* to anyone running a build ahead
-        // of the newest tag — every developer working from a checkout.
-        Some((key, version, sha)) if current.as_ref().is_none_or(|c| key > *c) => {
-            UpdateState::Available { version, commit: Some(sha) }
+    // Check from newest release version to oldest.
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut has_pending_unbuilt_tag = false;
+    for (_key, version, sha) in candidates {
+        if is_ready(&version) {
+            return (
+                UpdateState::Available {
+                    version,
+                    commit: Some(sha),
+                },
+                has_pending_unbuilt_tag,
+            );
         }
-        _ => UpdateState::UpToDate,
+        has_pending_unbuilt_tag = true;
     }
+
+    (UpdateState::UpToDate, has_pending_unbuilt_tag)
+}
+
+#[cfg(test)]
+pub fn parse_remote_update_info(remote_output: &str, current_version: &str) -> UpdateState {
+    parse_remote_update_info_with_readiness(remote_output, current_version, |_| true).0
 }
 
 /// The install command, built in one place so a test can inspect it without running it.
@@ -362,14 +393,86 @@ pub fn detect_install_method_from_path(path: &Path) -> InstallMethod {
     }
 }
 
+fn hide_console_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
+/// Returns the target triple matching `.github/workflows/release.yml` for the current OS/arch.
+pub fn current_platform_target_triple() -> Option<&'static str> {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        Some("x86_64-unknown-linux-gnu")
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        Some("aarch64-apple-darwin")
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        Some("x86_64-apple-darwin")
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        Some("x86_64-pc-windows-msvc")
+    } else {
+        None
+    }
+}
+
 /// Builds the release asset tarball URL for a target platform.
-#[cfg(test)]
 pub fn release_asset_url(version: &str, target_triple: &str) -> String {
+    let clean = version.trim_start_matches('v');
     let ext = if target_triple.contains("windows") { "zip" } else { "tar.gz" };
     format!(
-        "https://github.com/s0lda/hadron/releases/download/v{version}/hadron-v{version}-{target_triple}.{ext}"
+        "https://github.com/s0lda/hadron/releases/download/v{clean}/hadron-v{clean}-{target_triple}.{ext}"
     )
 }
+
+/// Checks whether the GitHub Release build artifacts for `version` have finished building
+/// and are published on GitHub Releases.
+///
+/// Pushing a `vX.Y.Z` tag makes the tag immediately visible to `git ls-remote`, while
+/// `.github/workflows/release.yml` takes ~10-15 minutes to compile all platform binaries
+/// in `build-release` before `publish-release` creates the GitHub Release and uploads the
+/// archives. Probing the platform archive URL with a `HEAD` request ensures Hadron only
+/// advertises `UpdateState::Available` once the binary is actually downloadable.
+pub fn is_release_build_ready(version: &str) -> bool {
+    let clean = version.trim_start_matches('v');
+    if clean.is_empty()
+        || clean.len() > 64
+        || !clean
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return false;
+    }
+
+    let url = match current_platform_target_triple() {
+        Some(triple) => release_asset_url(clean, triple),
+        None => format!("https://github.com/s0lda/hadron/releases/tag/v{clean}"),
+    };
+
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-fsIL",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "15",
+        &url,
+    ])
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
+    hide_console_window(&mut cmd);
+
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// How quickly to re-check in the background when a newer git tag exists on origin
+/// whose GitHub Actions release build has not finished publishing yet.
+const PENDING_RELEASE_BUILD_POLL: Duration = Duration::from_secs(60);
 
 /// Dispatches self-update based on the detected install method.
 pub fn perform_update(target_version: &str) -> UpdateState {
@@ -414,14 +517,16 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
     let script_filename = if is_windows { "install.ps1" } else { "install.sh" };
     let script_path = update_dir.join(script_filename);
 
-    let curl_out = Command::new("curl")
+    let mut curl_cmd = Command::new("curl");
+    curl_cmd
         .args([
             "-fsSL",
             &format!("https://raw.githubusercontent.com/s0lda/hadron/main/{script_filename}"),
             "-o",
         ])
-        .arg(&script_path)
-        .output();
+        .arg(&script_path);
+    hide_console_window(&mut curl_cmd);
+    let curl_out = curl_cmd.output();
 
     match curl_out {
         Ok(o) if !o.status.success() => {
@@ -461,6 +566,7 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
         c
     };
     cmd.stdin(std::process::Stdio::null());
+    hide_console_window(&mut cmd);
     let shown = format!("{cmd:?}");
     let out = cmd.output();
 
@@ -491,34 +597,78 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
 
 impl Chamber {
     pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.update_state, UpdateState::Installing { .. }) {
+        self.poll_for_updates(true, cx);
+    }
+
+    fn poll_for_updates(&mut self, show_checking: bool, cx: &mut Context<Self>) {
+        if matches!(
+            self.update_state,
+            UpdateState::Installing { .. } | UpdateState::Installed { .. }
+        ) {
             return;
         }
-        self.update_state = UpdateState::Checking;
-        cx.notify();
+        if show_checking {
+            self.update_state = UpdateState::Checking;
+            cx.notify();
+        }
 
         let current_version = env!("CARGO_PKG_VERSION");
         cx.spawn(async move |this, cx| {
-            let state = cx
+            let (state, has_pending_unbuilt_tag) = cx
                 .background_executor()
                 .spawn(async move {
-                    let out = Command::new("git")
-                        .args(["ls-remote", "https://github.com/s0lda/hadron", "HEAD", "refs/tags/*"])
-                        .output();
+                    let mut cmd = Command::new("git");
+                    cmd.args([
+                        "ls-remote",
+                        "https://github.com/s0lda/hadron",
+                        "HEAD",
+                        "refs/tags/*",
+                    ])
+                    .stdin(std::process::Stdio::null())
+                    .env("GIT_TERMINAL_PROMPT", "0");
+                    hide_console_window(&mut cmd);
+                    let out = cmd.output();
                     match out {
                         Ok(o) if o.status.success() => {
                             let text = String::from_utf8_lossy(&o.stdout);
-                            parse_remote_update_info(&text, current_version)
+                            parse_remote_update_info_with_readiness(
+                                &text,
+                                current_version,
+                                is_release_build_ready,
+                            )
                         }
-                        _ => UpdateState::Failed("Could not query update repository".into()),
+                        _ => (
+                            UpdateState::Failed("Could not query update repository".into()),
+                            false,
+                        ),
                     }
                 })
                 .await;
 
             let _ = this.update(cx, |chamber, cx| {
-                chamber.update_state = state;
-                cx.notify();
+                if !matches!(
+                    chamber.update_state,
+                    UpdateState::Installing { .. } | UpdateState::Installed { .. }
+                ) {
+                    // Do not clobber a healthy state with a transient error during a silent
+                    // background re-poll.
+                    if show_checking || !matches!(state, UpdateState::Failed(_)) {
+                        if chamber.update_state != state {
+                            chamber.update_state = state;
+                            cx.notify();
+                        }
+                    }
+                }
             });
+
+            if has_pending_unbuilt_tag {
+                cx.background_executor()
+                    .timer(PENDING_RELEASE_BUILD_POLL)
+                    .await;
+                let _ = this.update(cx, |chamber, cx| {
+                    chamber.poll_for_updates(false, cx);
+                });
+            }
         })
         .detach();
     }
@@ -832,6 +982,43 @@ mod tests {
         assert_eq!(std::fs::read(&hadron_exe).unwrap(), b"new-hadron");
         assert_eq!(std::fs::read(&gluon_exe).unwrap(), b"old-gluon");
         assert_eq!(std::fs::read(&mcp_exe).unwrap(), b"old-mcp");
+    }
+
+    #[test]
+    fn unbuilt_release_tag_is_held_back_until_github_actions_finishes() {
+        let out = "111111111111\trefs/tags/v0.33.13\n\
+                   222222222222\trefs/tags/v0.33.14\n\
+                   333333333333\trefs/tags/v0.33.14^{}";
+        let mut probed = Vec::new();
+        let (state, pending) = parse_remote_update_info_with_readiness(out, "0.33.13", |ver| {
+            probed.push(ver.to_string());
+            false // GitHub Actions build-release is still running for v0.33.14
+        });
+        assert_eq!(state, UpdateState::UpToDate);
+        assert!(pending, "must flag pending unbuilt tag so chamber re-polls");
+        assert_eq!(
+            probed,
+            vec!["0.33.14".to_string()],
+            "must probe each newer version once and never probe <= current_version"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_latest_finished_release_when_newest_tag_is_still_building() {
+        let out = "111111111111\trefs/tags/v0.33.12\n\
+                   222222222222\trefs/tags/v0.33.13\n\
+                   333333333333\trefs/tags/v0.33.14";
+        let (state, pending) = parse_remote_update_info_with_readiness(out, "0.33.12", |ver| {
+            ver == "0.33.13" // 0.33.13 build is published; 0.33.14 is still building
+        });
+        assert_eq!(
+            state,
+            UpdateState::Available {
+                version: "0.33.13".into(),
+                commit: Some("2222222".into()),
+            }
+        );
+        assert!(pending, "must continue polling for 0.33.14 build completion");
     }
 }
 
