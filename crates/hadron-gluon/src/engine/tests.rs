@@ -6955,3 +6955,222 @@ fn should_rotate_session_triggers_at_seventy_percent_context() {
     });
     assert!(super::should_rotate_session(&usage));
 }
+
+#[tokio::test]
+async fn a_slow_merge_gate_does_not_block_sibling_quark_dispatch() {
+    struct SignallingSlowGateRunner {
+        gate_entered: Arc<tokio::sync::Notify>,
+        gate_duration: Duration,
+        gate_finished_at: Arc<Mutex<Option<std::time::Instant>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::merge::MergeRunner for SignallingSlowGateRunner {
+        async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+            self.gate_entered.notify_waiters();
+            tokio::time::sleep(self.gate_duration).await;
+            *self.gate_finished_at.lock().unwrap() = Some(std::time::Instant::now());
+            Ok((true, String::new()))
+        }
+        fn land(
+            &self,
+            repo_root: &std::path::Path,
+            wt: &crate::worktree::Worktree,
+            base: &str,
+        ) -> anyhow::Result<crate::merge::Landed> {
+            crate::merge::land(repo_root, wt, base)
+        }
+    }
+
+    struct TimestampQuark {
+        id: QuarkId,
+        completed_at: Arc<Mutex<Option<std::time::Instant>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for TimestampQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Worker
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            *self.completed_at.lock().unwrap() = Some(std::time::Instant::now());
+            Ok(TurnOutcome {
+                message: Some("sibling finished".to_string()),
+                ..Default::default()
+            })
+        }
+    }
+
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    seed_mode(&field, Some("b"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let gate_entered = Arc::new(tokio::sync::Notify::new());
+    let gate_finished_at = Arc::new(Mutex::new(None));
+    let b_completed_at = Arc::new(Mutex::new(None));
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(ReportingWriter {
+                id: QuarkId::new("w"),
+                file: "w.txt",
+                reply: "done",
+            }),
+            Box::new(TimestampQuark {
+                id: QuarkId::new("b"),
+                completed_at: b_completed_at.clone(),
+            }),
+        ],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(SignallingSlowGateRunner {
+        gate_entered: gate_entered.clone(),
+        gate_duration: Duration::from_millis(500),
+        gate_finished_at: gate_finished_at.clone(),
+    }));
+
+    let field_for_sender = field.clone();
+    let gate_entered_wait = gate_entered.clone();
+    let sender = tokio::spawn(async move {
+        gate_entered_wait.notified().await;
+        append_event(
+            &field_for_sender,
+            &Event::new(Actor::Human, None, Kind::Message { body: "@b quick task".into() }),
+        )
+        .unwrap();
+    });
+
+    engine.run_until_quiesce().await.unwrap();
+    sender.await.unwrap();
+
+    let b_time = b_completed_at
+        .lock()
+        .unwrap()
+        .expect("sibling quark b must have completed its turn");
+    let gate_time = gate_finished_at
+        .lock()
+        .unwrap()
+        .expect("quark w's merge gate must have finished");
+    assert!(
+        b_time < gate_time,
+        "sibling quark b must dispatch and finish while quark w's slow merge gate is still running"
+    );
+}
+
+#[tokio::test]
+async fn an_orchestrator_dispatched_worker_reply_without_mention_wakes_the_orchestrator() {
+    struct TwoStepOrch {
+        calls: Arc<Mutex<usize>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for TwoStepOrch {
+        fn id(&self) -> QuarkId {
+            QuarkId::new("orch")
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let mut c = self.calls.lock().unwrap();
+            *c += 1;
+            let msg = if *c == 1 {
+                "@w implement feature"
+            } else {
+                "Verified worker completion."
+            };
+            Ok(TurnOutcome {
+                message: Some(msg.to_string()),
+                ..Default::default()
+            })
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "start".into() }),
+    )
+    .unwrap();
+
+    let orch_calls = Arc::new(Mutex::new(0usize));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![
+            Box::new(TwoStepOrch {
+                calls: orch_calls.clone(),
+            }),
+            // Worker replies WITHOUT an `@orchestrator` mention:
+            Box::new(MockQuark::repeating(
+                QuarkId::new("w"),
+                Flavor::Worker,
+                "**Done**: implemented feature",
+            )),
+        ],
+        10,
+    );
+
+    engine.run_until_quiesce().await.unwrap();
+
+    assert_eq!(
+        *orch_calls.lock().unwrap(),
+        2,
+        "orchestrator must be woken when its dispatched worker replies even without an explicit @orchestrator mention"
+    );
+}
+
+#[tokio::test]
+async fn a_landed_turn_detaches_its_worktree_and_prunes_its_branch_immediately() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w write w.txt".into() }),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(ReportingWriter {
+            id: QuarkId::new("w"),
+            file: "w.txt",
+            reply: "done",
+        })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    assert!(root.join("w.txt").exists(), "w.txt must have landed on main");
+    let remaining_branches =
+        crate::snapshot::git(&root, &["branch", "--list", "quark/w/*"]).unwrap();
+    assert!(
+        remaining_branches.trim().is_empty(),
+        "landed quark/w/* branch must be detached and pruned on the same turn, got: {remaining_branches}"
+    );
+}

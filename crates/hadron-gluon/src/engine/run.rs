@@ -209,6 +209,17 @@ impl super::Engine {
             Option<ulid::Ulid>,
             anyhow::Result<TurnOutcome>,
         )> = JoinSet::new();
+        let mut gates: JoinSet<(
+            QuarkId,
+            Lane,
+            TurnTree,
+            Option<ulid::Ulid>,
+            TurnOutcome,
+            Option<(Vec<String>, String)>,
+            super::merge::GateHeartbeat,
+            anyhow::Result<super::merge::PreGateOutcome>,
+        )> = JoinSet::new();
+        let mut in_gate: HashSet<(QuarkId, Lane)> = HashSet::new();
         // The first turn error wins; siblings still run to completion (and still get
         // their terminal status) so a single failure can't strand the rest as
         // forever-Excited in the field.
@@ -234,6 +245,8 @@ impl super::Engine {
                 // pending for it — drop the bookkeeping so it cannot outlive the
                 // `in_flight` entry it described.
                 for target in &rebooted {
+                    in_gate.remove(&(target.clone(), Lane::Work));
+                    in_gate.remove(&(target.clone(), Lane::Chat));
                     cancel_requested.remove(&(target.clone(), Lane::Work));
                     cancel_requested.remove(&(target.clone(), Lane::Chat));
                     dispatched_at_len.remove(&(target.clone(), Lane::Work));
@@ -282,11 +295,12 @@ impl super::Engine {
                         // interrupt it instead of leaving the message queued behind a
                         // turn that may run for a long time (Task 4 of
                         // `.hadron/docs/plans/2026-07-31-responsive-orchestrator.md`).
-                        // Only reachable when `in_flight` itself holds `key` — a
-                        // seat caught by the `rebooted` half of the condition was
-                        // already cleared from `in_flight` by `service_reboots` on
-                        // THIS pass, so there is nothing here left to cancel.
-                        if in_flight.contains(&key) {
+                        // Only reachable when `in_flight` itself holds `key` (and is not
+                        // already in the post-turn merge gate `in_gate`) — a seat caught
+                        // by the `rebooted` half of the condition was already cleared
+                        // from `in_flight` by `service_reboots` on THIS pass, so there
+                        // is nothing here left to cancel.
+                        if in_flight.contains(&key) && !in_gate.contains(&key) {
                             if let Some(requested_at) = cancel_requested.get(&key).copied() {
                                 // Already asked once — bound the wait. A transport
                                 // that ignores `session/cancel` (or has none) must
@@ -813,7 +827,7 @@ impl super::Engine {
                 // nothing resumes the worker, and the *next* pass around this same
                 // check sees the ask already made and lets the loop quiesce for a
                 // human, exactly as if the toggle were off. It never spins.
-                if turns.is_empty() && !spawned_any && self.no_human {
+                if turns.is_empty() && gates.is_empty() && !spawned_any && self.no_human {
                     if let Some(msg) = self.orchestrator_adjudication_message(&events) {
                         self.append(msg).await?;
                         spawned_any = true; // re-loop; the next pass dispatches it
@@ -822,151 +836,300 @@ impl super::Engine {
             }
 
             // Quiesce is the conjunction: nothing new to start AND nothing running.
-            if turns.is_empty() && !spawned_any {
+            if turns.is_empty() && gates.is_empty() && !spawned_any {
                 break;
             }
 
-            // Something is running. Wait for the next turn to land — but do NOT wait
-            // only on that: a message can arrive in the field *while* a turn grinds,
-            // addressed to a quark that is free. Blocking solely on `join_next` would
-            // queue it behind the running turn, so handing one quark a long task would
-            // freeze the conversation with every other quark. So we race the join
-            // against a poll tick, and on a tick we loop back to re-read the field and
-            // dispatch anything newly pending.
-            let joined = tokio::select! {
-                joined = turns.join_next() => joined,
-                _ = tokio::time::sleep(FIELD_POLL) => continue,
-            };
-            let Some(joined) = joined else {
-                continue; // everything we spawned was already drained
+            // Something is running. Wait for the next turn or merge gate to land — but do
+            // NOT wait only on that: a message can arrive in the field *while* a turn or
+            // merge gate grinds, addressed to a quark that is free. Blocking solely on
+            // `join_next` would queue it behind the running turn or slow test suite, so
+            // handing one quark a long task or `cargo test` would freeze the conversation
+            // with every other quark. So we race `turns.join_next()`, `gates.join_next()`,
+            // and a poll tick, and on a tick we loop back to re-read the field and dispatch
+            // anything newly pending.
+            enum StepEvent {
+                Turn(
+                    Result<
+                        (
+                            QuarkId,
+                            Lane,
+                            Option<TurnTree>,
+                            Option<ulid::Ulid>,
+                            anyhow::Result<TurnOutcome>,
+                        ),
+                        tokio::task::JoinError,
+                    >,
+                ),
+                Gate(
+                    Result<
+                        (
+                            QuarkId,
+                            Lane,
+                            TurnTree,
+                            Option<ulid::Ulid>,
+                            TurnOutcome,
+                            Option<(Vec<String>, String)>,
+                            super::merge::GateHeartbeat,
+                            anyhow::Result<super::merge::PreGateOutcome>,
+                        ),
+                        tokio::task::JoinError,
+                    >,
+                ),
+                Tick,
+            }
+
+            let step = tokio::select! {
+                Some(joined) = turns.join_next(), if !turns.is_empty() => StepEvent::Turn(joined),
+                Some(gated) = gates.join_next(), if !gates.is_empty() => StepEvent::Gate(gated),
+                _ = tokio::time::sleep(FIELD_POLL) => StepEvent::Tick,
             };
 
-            match joined {
-                Ok((target, lane, tree, assignment, Ok(outcome))) => {
-                    heartbeat_tracker.unregister(&target);
-                    in_flight.remove(&(target.clone(), lane));
-                    abort_handles.remove(&(target.clone(), lane));
-                    cancel_requested.remove(&(target.clone(), lane));
-                    dispatched_at_len.remove(&(target.clone(), lane));
-                    let dispatched = dispatched_assignment.remove(&(target.clone(), lane)).flatten();
-                    let rotate_session = should_rotate_session(&outcome.usage);
-                    // The graceful cancel's ordinary resolution: the transport honoured
-                    // `session/cancel` and the turn returned normally with
-                    // `outcome.cancelled == true` — this is the common path, NOT the
-                    // CANCEL_DEADLINE fallback above, which only fires when a transport
-                    // never resolves the request at all. `finish_turn` grounds this
-                    // turn's assignment unconditionally (a cancelled turn is still a
-                    // terminal one), so without this the interrupted task is gone the
-                    // instant it grounds. Task 3 of `.hadron/docs/plans/2026-08-02-
-                    // fonts-tools-orchestrator.md`: hand it to `interrupted_task`
-                    // instead, the same as the fallback path does.
-                    if outcome.cancelled {
-                        if let Some((_, task)) = dispatched {
-                            if !task.trim().is_empty() {
-                                interrupted_task.insert(target.clone(), task);
+            match step {
+                StepEvent::Tick => continue,
+                StepEvent::Turn(joined) => match joined {
+                    Ok((target, lane, tree, assignment, Ok(outcome))) => {
+                        heartbeat_tracker.unregister(&target);
+                        abort_handles.remove(&(target.clone(), lane));
+                        cancel_requested.remove(&(target.clone(), lane));
+                        dispatched_at_len.remove(&(target.clone(), lane));
+                        let dispatched = dispatched_assignment.remove(&(target.clone(), lane)).flatten();
+                        // The graceful cancel's ordinary resolution: the transport honoured
+                        // `session/cancel` and the turn returned normally with
+                        // `outcome.cancelled == true` — this is the common path, NOT the
+                        // CANCEL_DEADLINE fallback above, which only fires when a transport
+                        // never resolves the request at all. `finish_turn` grounds this
+                        // turn's assignment unconditionally (a cancelled turn is still a
+                        // terminal one), so without this the interrupted task is gone the
+                        // instant it grounds. Task 3 of `.hadron/docs/plans/2026-08-02-
+                        // fonts-tools-orchestrator.md`: hand it to `interrupted_task`
+                        // instead, the same as the fallback path does.
+                        if outcome.cancelled {
+                            if let Some((_, task)) = dispatched {
+                                if !task.trim().is_empty() {
+                                    interrupted_task.insert(target.clone(), task);
+                                }
+                            }
+                        }
+
+                        match self.prepare_async_gate(&target, &outcome, tree.as_ref()) {
+                            Ok(Some((t, edit_info, runner, heartbeat))) => {
+                                let key = (target.clone(), lane);
+                                in_gate.insert(key.clone());
+                                let shadow_gate = Arc::clone(&self.shadow_gate);
+                                let gate_abort = gates.spawn(async move {
+                                    let pre_res =
+                                        Self::run_pre_gate(runner, &t, &heartbeat, &shadow_gate).await;
+                                    (
+                                        target,
+                                        lane,
+                                        t,
+                                        assignment,
+                                        outcome,
+                                        edit_info,
+                                        heartbeat,
+                                        pre_res,
+                                    )
+                                });
+                                abort_handles.insert(key, gate_abort);
+                            }
+                            Ok(None) => {
+                                in_flight.remove(&(target.clone(), lane));
+                                let rotate_session = should_rotate_session(&outcome.usage);
+                                if let Err(err) =
+                                    self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
+                                {
+                                    if first_err.is_none() {
+                                        first_err = Some(err);
+                                    }
+                                }
+                                if rotate_session {
+                                    if let Some(quark) =
+                                        self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned()
+                                    {
+                                        term::info(
+                                            Source::Gluon,
+                                            &format!(
+                                                "rotating session for {} (post-turn context >= 70%)",
+                                                target.as_str()
+                                            ),
+                                        );
+                                        quark.lock().await.reset_session();
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                in_flight.remove(&(target.clone(), lane));
+                                if first_err.is_none() {
+                                    first_err = Some(err);
+                                }
                             }
                         }
                     }
-                    if let Err(err) =
-                        self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
-                    {
+                    Ok((target, lane, tree, assignment, Err(err))) => {
+                        // A failed turn must still leave a terminal status behind, or the
+                        // quark reads as forever-working. Its siblings keep running.
+                        heartbeat_tracker.unregister(&target);
+                        in_flight.remove(&(target.clone(), lane));
+                        abort_handles.remove(&(target.clone(), lane));
+                        cancel_requested.remove(&(target.clone(), lane));
+                        dispatched_at_len.remove(&(target.clone(), lane));
+                        dispatched_assignment.remove(&(target.clone(), lane));
+                        if let Some(t) = tree.as_ref() {
+                            let _ = crate::worktree::checkpoint_atomic_step(
+                                &t.wt.path,
+                                &target,
+                                "WIP checkpoint before turn error",
+                            );
+                        }
+                        let err_msg = self.format_error_message(&target, &err);
+                        let _ = self
+                            .append(
+                                Event::new(Actor::Gluon, None, Kind::Message { body: err_msg })
+                                    .with_severity(hadron_lattice::Severity::Error),
+                            )
+                            .await;
+                        let grounded = self
+                            .append(
+                                Event::new(
+                                    Actor::Quark(target.clone()),
+                                    None,
+                                    Kind::Status { state: QuarkState::Error },
+                                )
+                                .answering(assignment),
+                            )
+                            .await;
                         if first_err.is_none() {
                             first_err = Some(err);
+                            if let Err(io_err) = grounded {
+                                first_err = Some(io_err);
+                            }
                         }
                     }
-                    if rotate_session {
-                        if let Some(quark) =
-                            self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned()
-                        {
-                            term::info(
-                                Source::Gluon,
-                                &format!(
-                                    "rotating session for {} (post-turn context >= 70%)",
-                                    target.as_str()
-                                ),
-                            );
-                            quark.lock().await.reset_session();
+                    Err(join_err) if join_err.is_cancelled() => {
+                        // A turn we aborted on purpose — the human's force-restart. Its
+                        // cleanup (out of `in_flight`, terminal `Ground`, session reset)
+                        // already happened in `service_reboots`; the corpse joining here is
+                        // expected, not a panic. Discard it and keep the siblings running.
+                        // (Distinguishing on `is_cancelled` is what keeps a targeted reboot
+                        // from tripping the ground-everyone path below.)
+                        continue;
+                    }
+                    Err(join_err) => {
+                        // A panicking turn: we cannot tell which quark it was from the
+                        // JoinError alone, so ground every quark still in flight rather than
+                        // strand one Excited, and abort.
+                        abort_handles.clear();
+                        in_gate.clear();
+                        cancel_requested.clear();
+                        dispatched_at_len.clear();
+                        dispatched_assignment.clear();
+                        for (target, _lane) in std::mem::take(&mut in_flight) {
+                            let _ = self
+                                .append(Event::new(
+                                    Actor::Quark(target),
+                                    None,
+                                    Kind::Status { state: QuarkState::Error },
+                                ))
+                                .await;
                         }
-                    }
-                }
-                Ok((target, lane, tree, _, Err(err))) => {
-                    // A failed turn must still leave a terminal status behind, or the
-                    // quark reads as forever-working. Its siblings keep running.
-                    heartbeat_tracker.unregister(&target);
-                    in_flight.remove(&(target.clone(), lane));
-                    abort_handles.remove(&(target.clone(), lane));
-                    cancel_requested.remove(&(target.clone(), lane));
-                    dispatched_at_len.remove(&(target.clone(), lane));
-                    dispatched_assignment.remove(&(target.clone(), lane));
-                    if let Some(t) = tree.as_ref() {
-                        let _ = crate::worktree::checkpoint_atomic_step(
-                            &t.wt.path,
-                            &target,
-                            "WIP checkpoint before turn error",
-                        );
-                    }
-                    let err_msg = self.format_error_message(&target, &err);
-                    let _ = self
-                        .append(
-                            Event::new(Actor::Gluon, None, Kind::Message { body: err_msg })
-                                .with_severity(hadron_lattice::Severity::Error),
-                        )
-                        .await;
-                    let grounded = self
-                        .append(Event::new(
-                            Actor::Quark(target.clone()),
-                            None,
-                            Kind::Status { state: QuarkState::Error },
-                        ))
-                        .await;
-                    if first_err.is_none() {
-                        first_err = Some(err);
-                        if let Err(io_err) = grounded {
-                            first_err = Some(io_err);
-                        }
-                    }
-                }
-                Err(join_err) if join_err.is_cancelled() => {
-                    // A turn we aborted on purpose — the human's force-restart. Its
-                    // cleanup (out of `in_flight`, terminal `Ground`, session reset)
-                    // already happened in `service_reboots`; the corpse joining here is
-                    // expected, not a panic. Discard it and keep the siblings running.
-                    // (Distinguishing on `is_cancelled` is what keeps a targeted reboot
-                    // from tripping the ground-everyone path below.)
-                    continue;
-                }
-                Err(join_err) => {
-                    // A panicking turn: we cannot tell which quark it was from the
-                    // JoinError alone, so ground every quark still in flight rather than
-                    // strand one Excited, and abort.
-                    abort_handles.clear();
-                    cancel_requested.clear();
-                    dispatched_at_len.clear();
-                    dispatched_assignment.clear();
-                    for (target, _lane) in std::mem::take(&mut in_flight) {
+                        let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
+                        let panic_msg = match orchestrator {
+                            Some(_orch) => format!(
+                                "@{} A quark turn panicked: {join_err}",
+                                crate::router::ORCHESTRATOR_ALIAS
+                            ),
+                            None => format!("A quark turn panicked: {join_err}"),
+                        };
                         let _ = self
-                            .append(Event::new(
-                                Actor::Quark(target),
-                                None,
-                                Kind::Status { state: QuarkState::Error },
-                            ))
+                            .append(Event::new(Actor::Gluon, None, Kind::Message { body: panic_msg }).with_severity(hadron_lattice::Severity::Error))
                             .await;
+                        if first_err.is_none() {
+                            first_err = Some(anyhow::anyhow!("a quark turn panicked: {join_err}"));
+                        }
                     }
-                    let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
-                    let panic_msg = match orchestrator {
-                        Some(_orch) => format!(
-                            "@{} A quark turn panicked: {join_err}",
-                            crate::router::ORCHESTRATOR_ALIAS
-                        ),
-                        None => format!("A quark turn panicked: {join_err}"),
-                    };
-                    let _ = self
-                        .append(Event::new(Actor::Gluon, None, Kind::Message { body: panic_msg }).with_severity(hadron_lattice::Severity::Error))
-                        .await;
-                    if first_err.is_none() {
-                        first_err = Some(anyhow::anyhow!("a quark turn panicked: {join_err}"));
+                },
+                StepEvent::Gate(gated) => match gated {
+                    Ok((target, lane, t, assignment, outcome, edit_info, heartbeat, pre_res)) => {
+                        let key = (target.clone(), lane);
+                        in_flight.remove(&key);
+                        in_gate.remove(&key);
+                        abort_handles.remove(&key);
+                        let rotate_session = should_rotate_session(&outcome.usage);
+                        match pre_res {
+                            Ok(pre_outcome) => {
+                                if let Err(err) = self
+                                    .finish_turn_with_gate(
+                                        &target,
+                                        outcome,
+                                        Some(&t),
+                                        assignment,
+                                        Some(edit_info),
+                                        Some((pre_outcome, heartbeat)),
+                                    )
+                                    .await
+                                {
+                                    if first_err.is_none() {
+                                        first_err = Some(err);
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                drop(heartbeat);
+                                if first_err.is_none() {
+                                    first_err = Some(err);
+                                }
+                            }
+                        }
+                        if rotate_session {
+                            if let Some(quark) =
+                                self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned()
+                            {
+                                term::info(
+                                    Source::Gluon,
+                                    &format!(
+                                        "rotating session for {} (post-turn context >= 70%)",
+                                        target.as_str()
+                                    ),
+                                );
+                                quark.lock().await.reset_session();
+                            }
+                        }
                     }
-                }
+                    Err(join_err) if join_err.is_cancelled() => {
+                        continue;
+                    }
+                    Err(join_err) => {
+                        abort_handles.clear();
+                        in_gate.clear();
+                        cancel_requested.clear();
+                        dispatched_at_len.clear();
+                        dispatched_assignment.clear();
+                        for (target, _lane) in std::mem::take(&mut in_flight) {
+                            let _ = self
+                                .append(Event::new(
+                                    Actor::Quark(target),
+                                    None,
+                                    Kind::Status { state: QuarkState::Error },
+                                ))
+                                .await;
+                        }
+                        let orchestrator = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator);
+                        let panic_msg = match orchestrator {
+                            Some(_orch) => format!(
+                                "@{} A quark merge gate panicked: {join_err}",
+                                crate::router::ORCHESTRATOR_ALIAS
+                            ),
+                            None => format!("A quark merge gate panicked: {join_err}"),
+                        };
+                        let _ = self
+                            .append(Event::new(Actor::Gluon, None, Kind::Message { body: panic_msg }).with_severity(hadron_lattice::Severity::Error))
+                            .await;
+                        if first_err.is_none() {
+                            first_err = Some(anyhow::anyhow!("a quark merge gate panicked: {join_err}"));
+                        }
+                    }
+                },
             }
         }
 

@@ -60,7 +60,87 @@ impl super::Engine {
         Ok(())
     }
 
+    /// Check if a completed turn requires running the merge gate, and if so, commit its
+    /// worktree changes now and return `(TurnTree, Option<(Vec<String>, String)>, Arc<dyn MergeRunner>, GateHeartbeat)`
+    /// so `run_until_quiesce` can spawn [`Engine::run_pre_gate`] onto `gates: JoinSet`
+    /// without blocking the main dispatch loop.
+    pub(super) fn prepare_async_gate(
+        &self,
+        target: &QuarkId,
+        outcome: &TurnOutcome,
+        tree: Option<&TurnTree>,
+    ) -> anyhow::Result<
+        Option<(
+            TurnTree,
+            Option<(Vec<String>, String)>,
+            Arc<dyn crate::merge::MergeRunner>,
+            super::merge::GateHeartbeat,
+        )>,
+    > {
+        if outcome.cancelled || outcome.permission.is_some() || self.repo_root.is_none() {
+            return Ok(None);
+        }
+        let Some(runner) = &self.merge else {
+            return Ok(None);
+        };
+        let Some(t) = tree else {
+            return Ok(None);
+        };
+        let preons = self.loaded_preons();
+        let addressee = outcome
+            .message
+            .as_deref()
+            .and_then(|body| parse_addressee(body, &self.roster, Some(target), &preons))
+            .or_else(|| {
+                if !self.is_orchestrator(target) && outcome.message.is_some() {
+                    self.orchestrator_id()
+                } else {
+                    None
+                }
+            });
+        if !self.assignment_complete(target, addressee.as_ref()) {
+            return Ok(None);
+        }
+        let headline = outcome
+            .message
+            .as_deref()
+            .and_then(|m| m.lines().find(|l| !l.trim().is_empty()))
+            .unwrap_or("work")
+            .trim()
+            .chars()
+            .take(72)
+            .collect::<String>();
+        let message = format!("{}: {headline} [{}]", target.as_str(), t.assignment);
+        crate::worktree::commit_turn(&t.wt, &message)?;
+        let head_now = crate::worktree::head(&t.wt.path);
+        let edit_info = if head_now.is_some() && head_now != t.head_before {
+            let git = head_now.unwrap_or_default();
+            let paths = crate::worktree::changed_paths(&t.wt, &t.base)?;
+            Some((paths, git))
+        } else {
+            None
+        };
+        let heartbeat = self.start_gate_heartbeat(target, &t.wt.branch);
+        Ok(Some((
+            t.clone(),
+            edit_info,
+            Arc::clone(runner),
+            heartbeat,
+        )))
+    }
+
     pub(super) async fn finish_turn(
+        &self,
+        target: &QuarkId,
+        outcome: TurnOutcome,
+        tree: Option<&TurnTree>,
+        assignment: Option<ulid::Ulid>,
+    ) -> anyhow::Result<()> {
+        self.finish_turn_with_gate(target, outcome, tree, assignment, None, None)
+            .await
+    }
+
+    pub(super) async fn finish_turn_with_gate(
         &self,
         target: &QuarkId,
         outcome: TurnOutcome,
@@ -69,6 +149,8 @@ impl super::Engine {
         // turn emits, so a reader can ask "is the human still waiting?" and get a fact
         // rather than an inference from what happens to come after what.
         assignment: Option<ulid::Ulid>,
+        pre_committed_edit: Option<Option<(Vec<String>, String)>>,
+        pre_gate: Option<(super::merge::PreGateOutcome, super::merge::GateHeartbeat)>,
     ) -> anyhow::Result<()> {
         // ONE id for everything this turn emits. The reply and the energy report are
         // separate events, and turns run in parallel — so without this a reader trying
@@ -113,6 +195,21 @@ impl super::Engine {
                     None
                 }
             });
+
+        let dispatched_by_orchestrator = if !self.is_orchestrator(target) {
+            if let Some(assign_id) = assignment {
+                read_events(&self.field_path).ok().is_some_and(|evs| {
+                    evs.iter().any(|e| {
+                        e.id == assign_id
+                            && matches!(&e.from, Actor::Quark(s) if self.is_orchestrator(s))
+                    })
+                })
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         // THE ONE TOTALLER. No adapter computes this; they report components and
         // `TokenSpend::fresh` sums the comparable ones (input + output, cache
@@ -181,9 +278,14 @@ impl super::Engine {
             // truncated report can hide the one line the human needed (a reported-but-
             // unread critical issue is worse than a long one). The addressee is parsed
             // from the reply as written, so what routes is exactly what the field carries.
+            // If a worker turn was dispatched by `@orchestrator` and the worker's reply
+            // omitted an explicit `@mention`, route `to` back to `@orchestrator` so
+            // orchestration never stalls silently.
             let addressees = parse_all_addressees(&body, &self.roster, Some(target), &preons);
             let to = if addressees.len() == 1 {
                 Some(addressees[0].clone())
+            } else if addressees.is_empty() && dispatched_by_orchestrator {
+                self.orchestrator_id()
             } else {
                 None
             };
@@ -191,6 +293,23 @@ impl super::Engine {
                 .with_turn(turn)
                 .answering(assignment);
             self.append(event).await?;
+        } else if !cancelled && outcome.permission.is_none() && dispatched_by_orchestrator {
+            if let Some(orch) = self.orchestrator_id() {
+                let event = Event::new(
+                    Actor::Gluon,
+                    Some(orch),
+                    Kind::Message {
+                        body: format!(
+                            "@{} Quark `{}` completed its turn with no message output.",
+                            crate::router::ORCHESTRATOR_ALIAS,
+                            target.as_str()
+                        ),
+                    },
+                )
+                .with_turn(turn)
+                .answering(assignment);
+                self.append(event).await?;
+            }
         }
 
         // A self-declared permission ask: record it, then let the effective mode
@@ -312,16 +431,27 @@ impl super::Engine {
         // The turn ends on a COMMIT in the quark's branch. Only here, on the Ground
         // path: both permission branches above return early, uncommitted, on purpose.
         if let Some(t) = tree {
-            let message = format!("{}: {headline} [{}]", target.as_str(), t.assignment);
-            crate::worktree::commit_turn(&t.wt, &message)?;
+            let edit_info = match pre_committed_edit {
+                Some(pre_edit) => pre_edit,
+                None => {
+                    let message = format!("{}: {headline} [{}]", target.as_str(), t.assignment);
+                    crate::worktree::commit_turn(&t.wt, &message)?;
 
-            // Compare HEAD; don't assume WE committed. A Bypass-mode CLI may have run
-            // `git commit` itself, leaving a clean tree behind an advanced branch —
-            // `commit_turn` returns `Ok(None)` there, but the work still happened.
-            let head_now = crate::worktree::head(&t.wt.path);
-            if head_now.is_some() && head_now != t.head_before {
-                let git = head_now.unwrap_or_default();
-                let paths = crate::worktree::changed_paths(&t.wt, &t.base)?;
+                    // Compare HEAD; don't assume WE committed. A Bypass-mode CLI may have run
+                    // `git commit` itself, leaving a clean tree behind an advanced branch —
+                    // `commit_turn` returns `Ok(None)` there, but the work still happened.
+                    let head_now = crate::worktree::head(&t.wt.path);
+                    if head_now.is_some() && head_now != t.head_before {
+                        let git = head_now.unwrap_or_default();
+                        let paths = crate::worktree::changed_paths(&t.wt, &t.base)?;
+                        Some((paths, git))
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if let Some((paths, git)) = edit_info {
                 // `Kind::Edit` has existed in the lattice since day one and was emitted
                 // by nobody. This is what it was for: a quark's work, attributed.
                 self.append(
@@ -351,9 +481,17 @@ impl super::Engine {
             if !cancelled
                 && self.assignment_complete(target, addressee.as_ref())
                 && self.merge.is_some()
-                && self.merge_gate(target, t).await?
             {
-                return Ok(()); // the gate parked the quark (Waiting / Blocked)
+                let parked = match pre_gate {
+                    Some((pre_outcome, heartbeat)) => {
+                        self.merge_gate_body(target, t, Some(pre_outcome), &heartbeat)
+                            .await?
+                    }
+                    None => self.merge_gate(target, t).await?,
+                };
+                if parked {
+                    return Ok(()); // the gate parked the quark (Waiting / Blocked)
+                }
             }
         }
 

@@ -709,6 +709,42 @@ pub async fn run() {
             }
         }
 
+        if (after > before || repo_changed.is_some() || global_changed.is_some())
+            && !running_team.quarks.is_empty()
+        {
+            let keep: Vec<_> = running_team
+                .quarks
+                .iter()
+                .filter(|s| s.enabled)
+                .map(|s| s.id.clone())
+                .collect();
+            let current_base = crate::worktree::default_branch(&repo_root);
+            if let Ok(reaped) = crate::worktree::reap_idle_worktrees(&repo_root, &keep, &current_base) {
+                for r in &reaped {
+                    if let crate::worktree::Reap::Removed { quark, preserved, .. } = r {
+                        term::info(
+                            Source::Gluon,
+                            &format!(
+                                "reclaimed {}'s idle worktree at safe point (recreated on its next turn)",
+                                quark.as_str()
+                            ),
+                        );
+                        for note in preserved {
+                            term::info(Source::Gluon, &format!("  {note}"));
+                        }
+                    }
+                }
+            }
+            if let Ok(pruned) = crate::worktree::prune_merged_branches(&repo_root, &current_base) {
+                if !pruned.is_empty() {
+                    term::info(
+                        Source::Gluon,
+                        &format!("pruned {} merged quark branch(es) at safe point", pruned.len()),
+                    );
+                }
+            }
+        }
+
         tokio::select! {
             _ = &mut shutdown_signal => {
                 term::info(Source::Gluon, "shutting down daemon...");

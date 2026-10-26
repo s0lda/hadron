@@ -375,7 +375,69 @@ impl super::Engine {
     /// early-returns and the error path — there is no explicit cleanup call to forget.
     pub(super) async fn merge_gate(&self, target: &QuarkId, t: &TurnTree) -> anyhow::Result<bool> {
         let heartbeat = self.start_gate_heartbeat(target, &t.wt.branch);
-        self.merge_gate_body(target, t, &heartbeat).await
+        self.merge_gate_body(target, t, None, &heartbeat).await
+    }
+
+    /// Execute the slow pre-landing gate stages (`sync` + `runner.tests`) inside a
+    /// concurrent `gates` task so `run_until_quiesce` can continue polling the field
+    /// and dispatching sibling quarks while `cargo test` runs on `t.wt`.
+    pub(super) async fn run_pre_gate(
+        runner: Arc<dyn crate::merge::MergeRunner>,
+        t: &TurnTree,
+        heartbeat: &GateHeartbeat,
+        shadow_gate: &tokio::sync::Mutex<crate::engine::shadow_gate::ShadowGate>,
+    ) -> anyhow::Result<PreGateOutcome> {
+        use hadron_gatekeeper::BranchState;
+        let state = BranchState {
+            commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
+            dirty: crate::worktree::is_dirty(&t.wt.path)?,
+            is_default_branch: t.wt.branch == t.base,
+        };
+        if state.commits == 0 {
+            return Ok(PreGateOutcome::NoCommits);
+        }
+
+        let state = if state.dirty {
+            state
+        } else {
+            heartbeat.set_stage(&format!("syncing branch onto {}", t.base));
+            match runner.sync(&t.wt, &t.base) {
+                crate::merge::Synced::Conflicted(err) => {
+                    return Ok(PreGateOutcome::Conflicted(err));
+                }
+                crate::merge::Synced::AlreadyCurrent => state,
+                crate::merge::Synced::Rebased => BranchState {
+                    commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
+                    ..state
+                },
+            }
+        };
+        if state.commits == 0 {
+            return Ok(PreGateOutcome::Emptied);
+        }
+
+        let head_sha = crate::worktree::head(&t.wt.path).unwrap_or_default();
+        let cached_result = {
+            let gate = shadow_gate.lock().await;
+            gate.get_speculative_result(&t.wt.branch, &head_sha).cloned()
+        };
+
+        let (passed, tail) = if let Some(spec) = cached_result {
+            heartbeat.set_stage("using cached speculative test result");
+            (spec.passed, spec.tail)
+        } else {
+            heartbeat.set_stage("running test suite");
+            let (passed, tail) = runner.tests(&t.wt).await?;
+            let mut gate = shadow_gate.lock().await;
+            gate.record_speculative_result(&t.wt.branch, &head_sha, passed, &tail);
+            (passed, tail)
+        };
+
+        Ok(PreGateOutcome::Ready {
+            state,
+            passed,
+            tail,
+        })
     }
 
     /// The decision + effects the gate actually performs. See [`Engine::merge_gate`]
@@ -389,101 +451,67 @@ impl super::Engine {
     /// the quark, surfaced by `gatekeeper::pending_permission`, rendered by the chamber
     /// the human already has, answered by the same `PermissionGrant`. No second
     /// approval mechanism.
-    async fn merge_gate_body(
+    pub(super) async fn merge_gate_body(
         &self,
         target: &QuarkId,
         t: &TurnTree,
+        pre_gate: Option<PreGateOutcome>,
         heartbeat: &GateHeartbeat,
     ) -> anyhow::Result<bool> {
-        use hadron_gatekeeper::{BlockReason, BranchState, MergeVerdict};
+        use hadron_gatekeeper::{BlockReason, MergeVerdict};
         let Some(runner) = &self.merge else { return Ok(false) };
         let Some(root) = &self.repo_root else { return Ok(false) };
 
-        let state = BranchState {
-            commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
-            dirty: crate::worktree::is_dirty(&t.wt.path)?,
-            is_default_branch: t.wt.branch == t.base,
+        let outcome = match pre_gate {
+            Some(pre) => pre,
+            None => Self::run_pre_gate(Arc::clone(runner), t, heartbeat, &self.shadow_gate).await?,
         };
-        // Nothing to land (a pure-conversation turn): quiesce normally, silently.
-        if state.commits == 0 {
-            return Ok(false);
-        }
 
-        // **Rebase BEFORE testing, not after.** See `merge::sync` for the two live
-        // failures this order fixes; the short version is that a branch cut before a
-        // fix landed on `base` was tested without that fix and reported red forever.
-        // A conflict is reported here rather than after a full test run: a branch that
-        // cannot replay onto `base` cannot land whatever the tests say.
-        //
-        // A DIRTY tree is skipped, not rebased: `git rebase` would refuse and the human
-        // would be told "conflict" when the real answer is `BlockReason::DirtyTree`,
-        // which the verdict below already words correctly.
-        let state = if state.dirty {
-            state
-        } else {
-            heartbeat.set_stage(&format!("syncing branch onto {}", t.base));
-            match runner.sync(&t.wt, &t.base) {
-                crate::merge::Synced::Conflicted(err) => {
-                    // A conflict a machine must not resolve *unattended* — but the quark
-                    // whose branch it is may absolutely resolve it, in its own tree, with
-                    // its own judgment. Hand it back rather than freezing it.
-                    self.hand_back_to_quark(
-                        target,
-                        t.assignment,
-                        &crate::merge::Landed::Conflicted(err.clone()).describe(&t.wt.branch, &t.base),
-                    )
-                    .await?;
-                    if !self.is_orchestrator(target) {
-                        if let Some(_orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
-                            self.append(
-                                Event::new(
-                                    Actor::Gluon,
-                                    None,
-                                    Kind::Message {
-                                        body: format!(
-                                            "@{} Merge gate conflict syncing `{}` onto `{}`: {err}",
-                                            crate::router::ORCHESTRATOR_ALIAS,
-                                            t.wt.branch,
-                                            t.base
-                                        ),
-                                    },
-                                )
-                                .with_severity(hadron_lattice::Severity::Error),
-                            )
-                            .await?;
-                        }
-                    }
-                    return Ok(true);
-                }
-                crate::merge::Synced::AlreadyCurrent => state,
-                crate::merge::Synced::Rebased => BranchState {
-                    commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
-                    ..state
-                },
-            }
-        };
-        // The rebase emptied the branch: every commit was already on `base` by another
-        // route (a cherry-pick, a sibling branch). There is nothing to test and nothing
-        // to land — falling through here is what made an already-landed branch fail the
-        // gate on every single retry. It is NOT silent, unlike the pure-conversation
-        // early-out above: this branch has been visibly failing, and going quiet is
-        // indistinguishable from the gate breaking. `Actor::Gluon` + `to: None` + no
-        // line starting with `@` prints without waking a seat.
-        if state.commits == 0 {
-            self.append(
-                Event::new(
-                    Actor::Gluon,
-                    None,
-                    Kind::Message {
-                        body: crate::merge::Landed::AlreadyLanded
-                            .describe(&t.wt.branch, &t.base),
-                    },
+        let (state, tests_passed, tail) = match outcome {
+            // Nothing to land (a pure-conversation turn): quiesce normally, silently.
+            PreGateOutcome::NoCommits => return Ok(false),
+            PreGateOutcome::Conflicted(err) => {
+                // A conflict a machine must not resolve *unattended* — but the quark
+                // whose branch it is may absolutely resolve it, in its own tree, with
+                // its own judgment. Hand it back rather than freezing it.
+                self.hand_back_to_quark(
+                    target,
+                    t.assignment,
+                    &crate::merge::Landed::Conflicted(err).describe(&t.wt.branch, &t.base),
                 )
-                .with_severity(hadron_lattice::Severity::Info),
-            )
-            .await?;
-            return Ok(false);
-        }
+                .await?;
+                return Ok(true);
+            }
+            // The rebase emptied the branch: every commit was already on `base` by another
+            // route (a cherry-pick, a sibling branch). There is nothing to test and nothing
+            // to land — falling through here is what made an already-landed branch fail the
+            // gate on every single retry. It is NOT silent, unlike the pure-conversation
+            // early-out above: this branch has been visibly failing, and going quiet is
+            // indistinguishable from the gate breaking. `Actor::Gluon` + `to: None` + no
+            // line starting with `@` prints without waking a seat.
+            PreGateOutcome::Emptied => {
+                self.append(
+                    Event::new(
+                        Actor::Gluon,
+                        None,
+                        Kind::Message {
+                            body: crate::merge::Landed::AlreadyLanded
+                                .describe(&t.wt.branch, &t.base),
+                        },
+                    )
+                    .with_severity(hadron_lattice::Severity::Info),
+                )
+                .await?;
+                let _ = crate::worktree::detach_at_base(&t.wt, &t.base);
+                let _ = crate::worktree::prune_merged_branches(root, &t.base);
+                return Ok(false);
+            }
+            PreGateOutcome::Ready {
+                state,
+                passed,
+                tail,
+            } => (state, passed, tail),
+        };
 
         let events = read_events(&self.field_path)?;
         let op = hadron_gatekeeper::merge_op(&t.wt.branch, &t.base);
@@ -522,26 +550,6 @@ impl super::Engine {
             hadron_gatekeeper::Decision::AutoApprove
         );
         let approved = delegated || hadron_gatekeeper::merge_approved(&events, target, &op);
-
-        // Tests run IN the quark's worktree, on the branch as it now stands — so we
-        // never land untested commits, even on the re-asked second pass.
-        // Speculative pre-testing cache lookup: avoid duplicate test runs if already run.
-        let head_sha = crate::worktree::head(&t.wt.path).unwrap_or_default();
-        let cached_result = {
-            let gate = self.shadow_gate.lock().await;
-            gate.get_speculative_result(&t.wt.branch, &head_sha).cloned()
-        };
-
-        let (tests_passed, tail) = if let Some(spec) = cached_result {
-            heartbeat.set_stage("using cached speculative test result");
-            (spec.passed, spec.tail)
-        } else {
-            heartbeat.set_stage("running test suite");
-            let (passed, tail) = runner.tests(&t.wt).await?;
-            let mut gate = self.shadow_gate.lock().await;
-            gate.record_speculative_result(&t.wt.branch, &head_sha, passed, &tail);
-            (passed, tail)
-        };
 
         match hadron_gatekeeper::merge_decision(tests_passed, approved, &state) {
             MergeVerdict::Merge => {
@@ -626,26 +634,9 @@ impl super::Engine {
                     }
                 };
 
-                if let crate::merge::Landed::Conflicted(ref err) = landed {
+                if matches!(landed, crate::merge::Landed::Conflicted(_)) {
                     let desc = landed.describe(&t.wt.branch, &t.base);
                     self.hand_back_to_quark(target, t.assignment, &desc).await?;
-                    if delegated && !self.is_orchestrator(target) {
-                        self.append(
-                            Event::new(
-                                Actor::Gluon,
-                                None,
-                                Kind::Message {
-                                    body: format!(
-                                        "@{} Merge gate rejected `{}`: {err}",
-                                        crate::router::ORCHESTRATOR_ALIAS,
-                                        t.wt.branch
-                                    ),
-                                },
-                            )
-                            .with_severity(hadron_lattice::Severity::Error),
-                        )
-                        .await?;
-                    }
                     return Ok(true);
                 }
 
@@ -700,15 +691,26 @@ impl super::Engine {
                     .await?;
                 }
 
-                // Ride cleanup on every successful land, not just daemon startup — a
-                // long-running daemon otherwise accumulates one `quark/*` branch per
-                // turn between restarts. Non-fatal, same as the startup sweep in
-                // `bin/hadron-gluon.rs`: a land that succeeded must not be undone by a
-                // prune failure. The branch just landed is still checked out in `t.wt`
-                // (a new assignment only moves it off at the next `ensure`), so `-d`
-                // will safely refuse to delete it and this pass sweeps everyone ELSE's
-                // already-landed, now-idle branches instead.
+                // Detach `t.wt` onto `t.base` immediately upon landing so `t.wt.branch`
+                // is no longer held checked out by `t.wt`. That allows `prune_merged_branches`
+                // (or `archive_and_prune_branch` for squash merges) to delete this turn's
+                // `quark/<id>/<ulid>` branch on the very turn it lands, as well as any
+                // previously merged branches across the repo.
                 heartbeat.set_stage("pruning merged branches");
+                if let Err(e) = crate::worktree::detach_at_base(&t.wt, &t.base) {
+                    term::warn(
+                        Source::Gluon,
+                        &format!("detaching worktree after land failed (non-fatal): {e:#}"),
+                    );
+                }
+                if strategy == hadron_lattice::MergeStrategy::Squash {
+                    if let Err(e) = crate::worktree::archive_and_prune_branch(root, &t.wt.branch) {
+                        term::warn(
+                            Source::Gluon,
+                            &format!("squash branch archive-prune after land failed (non-fatal): {e:#}"),
+                        );
+                    }
+                }
                 if let Err(e) = crate::worktree::prune_merged_branches(root, &t.base) {
                     term::warn(Source::Gluon, &format!("branch prune after land failed (non-fatal): {e:#}"));
                 }
@@ -754,26 +756,6 @@ impl super::Engine {
                     // already standing in the right place to fix them.
                     BlockReason::TestsFailed | BlockReason::DirtyWorktree => {
                         self.hand_back_to_quark(target, t.assignment, &why).await?;
-                        if delegated && !self.is_orchestrator(target) {
-                            if let Some(_orch) = self.roster.iter().find(|c| c.flavor == Flavor::Orchestrator) {
-                                self.append(
-                                    Event::new(
-                                        Actor::Gluon,
-                                        None,
-                                        Kind::Message {
-                                            body: format!(
-                                                "@{} Merge gate blocked `{}` on {}: {why}",
-                                                crate::router::ORCHESTRATOR_ALIAS,
-                                                t.wt.branch,
-                                                reason.describe()
-                                            ),
-                                        },
-                                    )
-                                    .with_severity(hadron_lattice::Severity::Error),
-                                )
-                                .await?;
-                            }
-                        }
                     }
                     // `BranchIsDefault` is a discipline violation the quark cannot undo
                     // from inside (it is standing ON the branch it must never be on), and
@@ -799,7 +781,7 @@ impl super::Engine {
     /// [`GATE_HEARTBEAT_INTERVAL`] for as long as the returned guard lives. Keyed by
     /// `branch`, never by `target` — see `live::gates_dir`'s own doc for why a gate
     /// must not share a quark's `<id>.json`.
-    fn start_gate_heartbeat(&self, target: &QuarkId, branch: &str) -> GateHeartbeat {
+    pub(super) fn start_gate_heartbeat(&self, target: &QuarkId, branch: &str) -> GateHeartbeat {
         let dir = hadron_lattice::live::gates_dir(&self.field_path);
         let quark = target.clone();
         let branch = branch.to_string();
@@ -849,7 +831,7 @@ const GATE_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_s
 /// [`Engine::merge_gate_body`], `?` early-returns included — aborts the republishing
 /// task and removes the `live/gates/` file, so a gate never leaves behind a stale
 /// "still running" row.
-struct GateHeartbeat {
+pub(super) struct GateHeartbeat {
     dir: std::path::PathBuf,
     branch: String,
     quark: QuarkId,
