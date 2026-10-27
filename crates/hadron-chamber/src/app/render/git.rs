@@ -2153,7 +2153,8 @@ impl super::Chamber {
                 }
 
                 // Security Warnings (CodeQL & Dependabot)
-                let alert_count = self.github_security_alerts.as_ref().map(|a| a.len()).unwrap_or(0);
+                let alerts = self.github_security_alerts.as_deref().unwrap_or(&[]);
+                let alert_count = alerts.len();
                 let security_header = h_flex()
                     .items_center()
                     .justify_between()
@@ -2161,18 +2162,61 @@ impl super::Chamber {
                     .text_xs()
                     .font_weight(gpui::FontWeight::BOLD)
                     .text_color(theme::text())
-                    .child("Security Warnings (CodeQL & Dependabot)")
                     .child(
                         div()
-                            .text_color(if alert_count > 0 {
-                                theme::error()
-                            } else {
-                                theme::success()
-                            })
-                            .child(if alert_count > 0 {
-                                format!("{alert_count} open")
-                            } else {
-                                "0 open".to_string()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child("Security Warnings (CodeQL & Dependabot)"),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_color(if alert_count > 0 {
+                                        theme::error()
+                                    } else {
+                                        theme::success()
+                                    })
+                                    .child(if alert_count > 0 {
+                                        format!("{alert_count} open")
+                                    } else {
+                                        "0 open".to_string()
+                                    }),
+                            )
+                            .when(alert_count > 0, |actions| {
+                                let alerts_for_all = alerts.to_vec();
+                                let btn_label = if alert_count > 1 {
+                                    "Dispatch Fix All"
+                                } else {
+                                    "Dispatch Fix"
+                                };
+                                actions.child(
+                                    div()
+                                        .id("gh-sec-alerts-dispatch-all")
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::accent_soft())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .cursor_pointer()
+                                        .hover(|s| s.opacity(0.85))
+                                        .child(btn_label)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.chat_tab = ChatTab::Chat;
+                                            this.post_chat_message(
+                                                Actor::Human,
+                                                crate::vcs::format_security_alerts_remediation_message(&alerts_for_all),
+                                                cx,
+                                            );
+                                        })),
+                                )
                             }),
                     );
                 card = card.child(security_header);
@@ -2199,12 +2243,7 @@ impl super::Chamber {
                                 "[{}] {}: {}{}",
                                 alert.source, alert.rule_id, alert.summary, loc_suffix
                             );
-                            let fix_source = alert.source.clone();
-                            let fix_num = alert.number;
-                            let fix_rule = alert.rule_id.clone();
-                            let fix_sum = alert.summary.clone();
-                            let fix_loc = alert.location.clone().unwrap_or_else(|| "repository".to_string());
-                            let fix_url = alert.url.clone();
+                            let alert_for_fix = alert.clone();
 
                             let row = h_flex()
                                 .id(("gh-sec-alert-row", ix))
@@ -2258,9 +2297,7 @@ impl super::Chamber {
                                             this.chat_tab = ChatTab::Chat;
                                             this.post_chat_message(
                                                 Actor::Human,
-                                                format!(
-                                                    "@orchestrator Remediate {fix_source} security alert #{fix_num} (`{fix_rule}`: {fix_sum}) at `{fix_loc}` ({fix_url})."
-                                                ),
+                                                alert_for_fix.remediation_prompt(),
                                                 cx,
                                             );
                                         })),

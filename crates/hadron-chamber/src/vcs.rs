@@ -1127,6 +1127,44 @@ pub struct GitHubSecurityAlertInfo {
     pub created_at: String,
 }
 
+impl GitHubSecurityAlertInfo {
+    /// Formats an individual remediation prompt for this security alert.
+    pub fn remediation_prompt(&self) -> String {
+        let loc = self.location.as_deref().unwrap_or("repository");
+        format!(
+            "@orchestrator Remediate {} security alert #{} (`{}`: {}) at `{}` ({}).",
+            self.source, self.number, self.rule_id, self.summary, loc, self.url
+        )
+    }
+
+    /// Formats a bullet-item line for multi-alert remediation.
+    pub fn remediation_item(&self) -> String {
+        let loc = self.location.as_deref().unwrap_or("repository");
+        format!(
+            "- {} security alert #{} (`{}`: {}) at `{}` ({})",
+            self.source, self.number, self.rule_id, self.summary, loc, self.url
+        )
+    }
+}
+
+/// Formats a single chat message dispatching remediation for all provided security alerts.
+/// When given 1 alert, returns a direct single-line remediation prompt.
+/// When given multiple alerts, packs them into a single structured list message.
+pub fn format_security_alerts_remediation_message(alerts: &[GitHubSecurityAlertInfo]) -> String {
+    match alerts.len() {
+        0 => "@orchestrator Check and remediate open security alerts.".to_string(),
+        1 => alerts[0].remediation_prompt(),
+        n => {
+            let mut msg = format!("@orchestrator Remediate the following {n} security alerts:\n");
+            for alert in alerts {
+                msg.push_str(&alert.remediation_item());
+                msg.push('\n');
+            }
+            msg.trim_end().to_string()
+        }
+    }
+}
+
 /// Extracts repository slug (owner/repo) from an HTTP, SSH, or git remote URL.
 pub fn parse_repo_slug_from_url(url: &str) -> Option<String> {
     let trimmed = url.trim();
@@ -2284,6 +2322,73 @@ index a1b2c3d..e4f5g6h 100644
         assert_eq!(dep_alerts[0].source, "Dependabot");
         assert_eq!(dep_alerts[0].rule_id, "CVE-2026-39863");
         assert_eq!(dep_alerts[0].location.as_deref(), Some("Cargo.lock"));
+    }
+
+    #[test]
+    fn test_format_security_alerts_remediation_message() {
+        let alert1 = GitHubSecurityAlertInfo {
+            number: 1,
+            source: "CodeQL".to_string(),
+            rule_id: "rust/cleartext-logging".to_string(),
+            severity: "high".to_string(),
+            summary: "Cleartext logging of sensitive information".to_string(),
+            location: Some("crates/hadron-gluon/examples/acp_probe.rs:69".to_string()),
+            state: "open".to_string(),
+            url: "https://github.com/s0lda/hadron/security/code-scanning/1".to_string(),
+            created_at: "2026-04-21T20:43:39Z".to_string(),
+        };
+
+        let alert2 = GitHubSecurityAlertInfo {
+            number: 2,
+            source: "Dependabot".to_string(),
+            rule_id: "CVE-2026-39863".to_string(),
+            severity: "medium".to_string(),
+            summary: "URI name constraint validation bypass".to_string(),
+            location: Some("Cargo.lock".to_string()),
+            state: "open".to_string(),
+            url: "https://github.com/s0lda/hadron/security/dependabot/2".to_string(),
+            created_at: "2026-10-25T10:00:00Z".to_string(),
+        };
+
+        let alert_no_loc = GitHubSecurityAlertInfo {
+            number: 3,
+            source: "Dependabot".to_string(),
+            rule_id: "GHSA-1234".to_string(),
+            severity: "critical".to_string(),
+            summary: "Remote code execution".to_string(),
+            location: None,
+            state: "open".to_string(),
+            url: "https://github.com/s0lda/hadron/security/dependabot/3".to_string(),
+            created_at: "2026-10-26T10:00:00Z".to_string(),
+        };
+
+        // Empty alerts fallback
+        assert_eq!(
+            format_security_alerts_remediation_message(&[]),
+            "@orchestrator Check and remediate open security alerts."
+        );
+
+        // Single alert formatting with location
+        assert_eq!(
+            format_security_alerts_remediation_message(&[alert1.clone()]),
+            "@orchestrator Remediate CodeQL security alert #1 (`rust/cleartext-logging`: Cleartext logging of sensitive information) at `crates/hadron-gluon/examples/acp_probe.rs:69` (https://github.com/s0lda/hadron/security/code-scanning/1)."
+        );
+
+        // Single alert formatting without location (defaults to "repository")
+        assert_eq!(
+            format_security_alerts_remediation_message(&[alert_no_loc.clone()]),
+            "@orchestrator Remediate Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3)."
+        );
+
+        // Multiple alerts formatting packed into a single message
+        let packed = format_security_alerts_remediation_message(&[alert1, alert2, alert_no_loc]);
+        assert_eq!(
+            packed,
+            "@orchestrator Remediate the following 3 security alerts:\n\
+            - CodeQL security alert #1 (`rust/cleartext-logging`: Cleartext logging of sensitive information) at `crates/hadron-gluon/examples/acp_probe.rs:69` (https://github.com/s0lda/hadron/security/code-scanning/1)\n\
+            - Dependabot security alert #2 (`CVE-2026-39863`: URI name constraint validation bypass) at `Cargo.lock` (https://github.com/s0lda/hadron/security/dependabot/2)\n\
+            - Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3)"
+        );
     }
 }
 
