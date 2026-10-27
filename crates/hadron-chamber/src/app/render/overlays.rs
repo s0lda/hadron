@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.15",
+        date: Some("2026-10-27"),
+        added: &[
+            "Parallel Swarm Self-Delegation (@self), Mid-Turn Live Dispatch & Concurrent Worktree Provisioning: Added @self and parallel @orchestrator self-delegation, immediate mid-turn worker dispatch on tool start, and concurrent spawn_blocking worktree provisioning",
+            "Recurring & One-Shot Schedules Engine, /schedule Commands & Watchdog/Git Settings: Added .hadron/schedules.toml persistence, 30s schedule ticker, /schedule commands, overdue schedule banners, and Watchdog/Git settings controls",
+            "Composer Markdown Preview, Mid-Sentence Word Suggestions & Wave DAG Scroll Isolation: Added live composer Markdown preview, mid-sentence word completions, and isolated scroll handling in the Mission Plan Wave DAG",
+        ],
+        changed: &[],
+        fixed: &[
+            "Merge-Gate Semaphore Serialization, AST Rebase Healing on Land & Bounded /learn Nudges: Queued concurrent merge gates via gate_semaphore to prevent .cargo-lock stampedes and timeout drift, wired AST rebase healing into merge::land, and bounded /learn nudges",
+        ],
+    },
+    Release {
         version: "0.33.14",
         date: Some("2026-10-26"),
         added: &[

@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.15] - 2026-10-27
+
+### Added
+- **Parallel Swarm Self-Delegation (`@self`), Mid-Turn Live Dispatch & Concurrent Worktree Provisioning (`hadron-gluon`)**:
+  - Added `@self` and parallel `@orchestrator` self-delegation (`router/mod.rs`, `engine/routing.rs`, `adapter/prompt/mod.rs`) so the orchestrator can fan out worker tasks and schedule its own `Work`-lane slice simultaneously.
+  - Added mid-turn live delegation from `activity.full` when an in-flight orchestrator transitions to `Doing::Working` (`engine/run.rs`, `adapter/cli.rs`, `adapter/cli_stream.rs`) and `neutralize_dispatched_mentions` (`router/mod.rs`, `engine/turn.rs`) so workers dispatched mid-turn are marked `✓ @worker` rather than re-dispatched at turn completion.
+  - Parallelized batch worktree provisioning across `spawn_blocking` workers (`engine/run.rs`) with process-wide `WORKTREE_ADMIN_LOCK` serialization around `git worktree add` (`worktree.rs`).
+- **Recurring & One-Shot Schedules Engine, `/schedule` Commands & Watchdog/Git Settings (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added `.hadron/schedules.toml` schedule persistence and cron/interval evaluation (`hadron-lattice::schedules`, `hadron-gluon::schedules`), a 30s background schedule ticker (`app/mod.rs`, `cli.rs`), `/schedule` slash commands (`actions.rs`, `text.rs`), overdue schedule banners (`render/chat.rs`), and Watchdog/Git controls in Settings (`settings/providers.rs`, `config.rs`).
+- **Composer Markdown Preview, Mid-Sentence Word Suggestions & Wave DAG Scroll Isolation (`hadron-chamber`)**:
+  - Added live composer Markdown preview toggling and rendering (`render/chat.rs`, `app/mod.rs`), mid-sentence word/phrase completion suggestions (`text.rs`, `input.rs`), and isolated scroll handling in the Mission Plan Wave DAG (`render/dag_visualizer.rs`).
+
+### Fixed
+- **Merge-Gate Semaphore Serialization, AST Rebase Healing on Land & Bounded `/learn` Nudges (`hadron-gluon`)**:
+  - Serialized active `run_pre_gate` (`sync` + `runner.tests`) through `merge_gate_body` (`land`) via `gate_semaphore` (`engine.rs`, `engine/merge.rs`, `engine/run.rs`) so concurrent finishing branches queue without `.cargo-lock` contention, `GATE_TEST_DEADLINE` only measures active test execution, and each branch rebases onto the latest `base` immediately before testing.
+  - Wired `ast_healer::heal_rebase_conflicts` into `merge::land` and `land_squash` (`merge.rs`) and bounded debugging-pass `/learn` lookback at the most recent `DEBUGGING_PASS_NUDGE_MARKER` (`engine/merge.rs`).
+
 ## [0.33.14] - 2026-10-26
 
 ### Added
