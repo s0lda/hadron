@@ -503,7 +503,9 @@ impl super::Engine {
                 )
                 .await?;
                 let _ = crate::worktree::detach_at_base(&t.wt, &t.base);
-                let _ = crate::worktree::prune_merged_branches(root, &t.base);
+                if self.git_auto_prune_worktrees {
+                    let _ = crate::worktree::prune_merged_branches(root, &t.base);
+                }
                 return Ok(false);
             }
             PreGateOutcome::Ready {
@@ -703,16 +705,18 @@ impl super::Engine {
                         &format!("detaching worktree after land failed (non-fatal): {e:#}"),
                     );
                 }
-                if strategy == hadron_lattice::MergeStrategy::Squash {
-                    if let Err(e) = crate::worktree::archive_and_prune_branch(root, &t.wt.branch) {
-                        term::warn(
-                            Source::Gluon,
-                            &format!("squash branch archive-prune after land failed (non-fatal): {e:#}"),
-                        );
+                if self.git_auto_prune_worktrees {
+                    if strategy == hadron_lattice::MergeStrategy::Squash {
+                        if let Err(e) = crate::worktree::archive_and_prune_branch(root, &t.wt.branch) {
+                            term::warn(
+                                Source::Gluon,
+                                &format!("squash branch archive-prune after land failed (non-fatal): {e:#}"),
+                            );
+                        }
                     }
-                }
-                if let Err(e) = crate::worktree::prune_merged_branches(root, &t.base) {
-                    term::warn(Source::Gluon, &format!("branch prune after land failed (non-fatal): {e:#}"));
+                    if let Err(e) = crate::worktree::prune_merged_branches(root, &t.base) {
+                        term::warn(Source::Gluon, &format!("branch prune after land failed (non-fatal): {e:#}"));
+                    }
                 }
 
                 Ok(false) // landed → the quark grounds normally

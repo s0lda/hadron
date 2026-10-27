@@ -402,7 +402,9 @@ pub async fn run() {
     //
     // Skipped entirely on an empty roster: `load_resolved_team` degrades a missing or
     // malformed team.json to empty, and that must not read as "no quark is seated".
-    if team.quarks.is_empty() {
+    if !team.git_auto_prune_worktrees() {
+        term::info(Source::Gluon, "git_auto_prune_worktrees is disabled — skipping initial worktree reap and branch prune");
+    } else if team.quarks.is_empty() {
         term::info(Source::Gluon, "roster is empty — skipping the idle-worktree reap");
     } else {
         let keep: Vec<_> =
@@ -436,12 +438,14 @@ pub async fn run() {
             Err(e) => term::warn(Source::Gluon, &format!("idle-worktree reap failed (non-fatal): {e:#}")),
         }
     }
-    match crate::worktree::prune_merged_branches(&repo_root, &base) {
-        Ok(pruned) if !pruned.is_empty() => {
-            term::info(Source::Gluon, &format!("pruned {} merged quark branches", pruned.len()));
+    if team.git_auto_prune_worktrees() {
+        match crate::worktree::prune_merged_branches(&repo_root, &base) {
+            Ok(pruned) if !pruned.is_empty() => {
+                term::info(Source::Gluon, &format!("pruned {} merged quark branches", pruned.len()));
+            }
+            Ok(_) => {}
+            Err(e) => term::warn(Source::Gluon, &format!("branch prune failed (non-fatal): {e:#}")),
         }
-        Ok(_) => {}
-        Err(e) => term::warn(Source::Gluon, &format!("branch prune failed (non-fatal): {e:#}")),
     }
     // The shared build dir (`worktree::shared_build_env`) is a landfill: nothing has
     // ever swept it, and cargo has no target-dir GC of its own. Measured on this box
@@ -477,6 +481,10 @@ pub async fn run() {
     let engine = Engine::new(args.field_path.clone(), quarks, max_exchanges)
         .with_git(repo_root.clone())
         .with_merge_gate(std::sync::Arc::new(crate::merge::CargoMergeRunner))
+        .with_turn_deadline(std::time::Duration::from_secs(team.turn_deadline_secs()))
+        .with_max_turn_wall_clock(std::time::Duration::from_secs(team.max_turn_wall_clock_secs()))
+        .with_git_author(team.git_author_name.clone(), team.git_author_email.clone())
+        .with_git_auto_prune_worktrees(team.git_auto_prune_worktrees())
         .with_nucleus_index_budget_bytes(crate::nucleus_status::resolve_budget_bytes(&team))
         .with_nucleus(crate::engine::build_nucleus_digest(&repo_root))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
@@ -593,6 +601,10 @@ pub async fn run() {
         tokio::signal::ctrl_c().await.ok();
     });
 
+    let mut last_schedule_check = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(crate::schedules::SCHEDULE_CHECK_INTERVAL_SECS))
+        .unwrap_or_else(std::time::Instant::now);
+
     loop {
         if shutdown_signal.is_finished() {
             break;
@@ -694,6 +706,10 @@ pub async fn run() {
                     } else {
                         let max_exchanges = desired.max_exchanges.unwrap_or(12);
                         engine.set_max_exchanges(max_exchanges);
+                        engine.set_turn_deadline(std::time::Duration::from_secs(desired.turn_deadline_secs()));
+                        engine.set_max_turn_wall_clock(std::time::Duration::from_secs(desired.max_turn_wall_clock_secs()));
+                        engine.set_git_author(desired.git_author_name.clone(), desired.git_author_email.clone());
+                        engine.set_git_auto_prune_worktrees(desired.git_auto_prune_worktrees());
                         engine.set_nucleus_index_budget_bytes(
                             crate::nucleus_status::resolve_budget_bytes(&desired),
                         );
@@ -709,7 +725,8 @@ pub async fn run() {
             }
         }
 
-        if (after > before || repo_changed.is_some() || global_changed.is_some())
+        if running_team.git_auto_prune_worktrees()
+            && (after > before || repo_changed.is_some() || global_changed.is_some())
             && !running_team.quarks.is_empty()
         {
             let keep: Vec<_> = running_team
@@ -742,6 +759,15 @@ pub async fn run() {
                         &format!("pruned {} merged quark branch(es) at safe point", pruned.len()),
                     );
                 }
+            }
+        }
+
+        if last_schedule_check.elapsed()
+            >= std::time::Duration::from_secs(crate::schedules::SCHEDULE_CHECK_INTERVAL_SECS)
+        {
+            last_schedule_check = std::time::Instant::now();
+            if let Err(e) = crate::schedules::check_schedules(&repo_root, &engine).await {
+                term::warn(Source::Gluon, &format!("scheduled tasks check failed: {e:#}"));
             }
         }
 

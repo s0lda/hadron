@@ -1871,4 +1871,27 @@ pub(crate) mod tests {
         let log_msg = git(&wt.path, &["log", "-1", "--pretty=%s"]).unwrap();
         assert_eq!(log_msg.trim(), "chore(cli-agy): checkpoint — Step 1 verified");
     }
+
+    #[test]
+    fn commit_turn_with_author_applies_overrides() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("opus"), "01AUTHOR").unwrap();
+        std::fs::write(wt.path.join("custom_author.txt"), "hello\n").unwrap();
+
+        let sha = commit_turn_with_author(
+            &wt,
+            "custom author commit",
+            Some("Custom Swarm Agent"),
+            Some("swarm-agent@hadron.dev"),
+        )
+        .unwrap()
+        .expect("must produce commit");
+
+        assert_eq!(Some(sha), head(&wt.path));
+        let author_str = git(&wt.path, &["log", "-1", "--pretty=format:%an <%ae>"]).unwrap();
+        assert_eq!(author_str.trim(), "Custom Swarm Agent <swarm-agent@hadron.dev>");
+
+        let committer_str = git(&wt.path, &["log", "-1", "--pretty=format:%cn <%ce>"]).unwrap();
+        assert_eq!(committer_str.trim(), "Custom Swarm Agent <swarm-agent@hadron.dev>");
+    }
 }

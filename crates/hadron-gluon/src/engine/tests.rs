@@ -7174,3 +7174,19 @@ async fn a_landed_turn_detaches_its_worktree_and_prunes_its_branch_immediately()
         "landed quark/w/* branch must be detached and pruned on the same turn, got: {remaining_branches}"
     );
 }
+
+#[test]
+fn engine_git_auto_prune_worktrees_wiring() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    let engine = Engine::new(field.clone(), Vec::new(), 8)
+        .with_git_auto_prune_worktrees(false);
+    assert!(!engine.git_auto_prune_worktrees());
+
+    let mut engine = Engine::new(field, Vec::new(), 8)
+        .with_git_auto_prune_worktrees(true);
+    assert!(engine.git_auto_prune_worktrees());
+
+    engine.set_git_auto_prune_worktrees(false);
+    assert!(!engine.git_auto_prune_worktrees());
+}

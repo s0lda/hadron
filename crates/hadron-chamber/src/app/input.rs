@@ -815,6 +815,7 @@ mod tests {
             "clear",
             "goal",
             "loop",
+            "schedule",
             "team-brainstorm",
             "brainstorm",
             "debate",

@@ -481,6 +481,7 @@ impl super::Chamber {
                     .when(self.completion.is_some(), |el| {
                         el.child(self.completion_card_overlay(cx))
                     })
+                    .children(self.overdue_schedule_banners(cx))
                     .when_some(draft_card, |el, card| el.child(card))
                     .when_some(live_card, |el, card| el.child(card))
                     .child({
@@ -739,6 +740,115 @@ impl super::Chamber {
             // single pane of glass floating on it. A second fill would stack with the
             // card's translucent glass and hide the field; the p_2 gutter shows it.
             .child(card)
+    }
+
+    /// Renders actionable banner pills for overdue scheduled tasks requiring confirmation (`MissedPolicy::Ask`).
+    pub(super) fn overdue_schedule_banners(&self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let reg = match hadron_lattice::ScheduleRegistry::load(&repo_root) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        let now = chrono::Utc::now();
+        let evaluations = reg.evaluate_due_jobs(&repo_root, now, 3600);
+        let mut banners = Vec::new();
+
+        for (idx, status) in evaluations {
+            if let hadron_lattice::DueStatus::OverdueAsk { due_at } = status {
+                let job = &reg.jobs[idx];
+                let job_id = job.id.clone();
+                let job_name = job.name.clone();
+                let job_task = job.task_id.clone();
+                let due_formatted = due_at.format("%Y-%m-%d %H:%M").to_string();
+
+                let run_id = job_id.clone();
+                let run_root = repo_root.clone();
+                let skip_id = job_id.clone();
+                let skip_root = repo_root.clone();
+
+                let banner = h_flex()
+                    .id(format!("overdue-schedule-banner-{}", job_id))
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_3()
+                    .py_2()
+                    .mb_2()
+                    .rounded_xl()
+                    .bg(theme::bg_elevated())
+                    .border_1()
+                    .border_color(theme::warning().opacity(0.35))
+                    .shadow_sm()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .xsmall()
+                                    .text_color(theme::warning()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text())
+                                    .child(format!(
+                                        "Scheduled task '{}' (`{}`) is overdue (due {} UTC)",
+                                        job_name, job_task, due_formatted
+                                    )),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .flex_shrink_0()
+                            .child(
+                                h_flex()
+                                    .id(format!("run-scheduled-btn-{}", job_id))
+                                    .items_center()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(theme::accent())
+                                    .text_xs()
+                                    .text_color(theme::text())
+                                    .hover(|s| s.opacity(0.85))
+                                    .cursor_pointer()
+                                    .child("Run Now")
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.run_scheduled_job(&run_id, &run_root, cx);
+                                    })),
+                            )
+                            .child(
+                                h_flex()
+                                    .id(format!("skip-scheduled-btn-{}", job_id))
+                                    .items_center()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(theme::glass_card())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                    .cursor_pointer()
+                                    .child("Skip")
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.skip_scheduled_job(&skip_id, &skip_root, cx);
+                                    })),
+                            ),
+                    );
+
+                banners.push(banner);
+            }
+        }
+
+        banners
     }
 
     /// The Chat tab: the conversation only (message events), styled like a chat

@@ -107,9 +107,12 @@ pub struct ChamberPrefs {
     /// Audio & haptics telemetry configuration.
     #[serde(default)]
     pub audio: crate::app::audio::AudioConfig,
-    /// Turn watchdog silence limit in seconds (default 1800s / 30m).
+    /// Turn watchdog silence limit in seconds (default 900s / 15m).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_deadline_secs: Option<u64>,
+    /// Max turn wall-clock safety ceiling in seconds (default 14400s / 4h).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turn_wall_clock_secs: Option<u64>,
     /// Live activity stale threshold in seconds (default 120s).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_after_secs: Option<i64>,
@@ -1171,6 +1174,7 @@ impl Default for ChamberPrefs {
             custom_theme: None,
             audio: crate::app::audio::AudioConfig::default(),
             turn_deadline_secs: None,
+            max_turn_wall_clock_secs: None,
             stale_after_secs: None,
             terminal_shell: None,
             terminal_cursor_style: TerminalCursorStyle::default(),

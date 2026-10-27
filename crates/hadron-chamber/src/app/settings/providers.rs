@@ -982,14 +982,14 @@ impl super::Chamber {
             v_flex()
                 .gap_3()
                 .child(settings_field(
-                    "Turn silence limit (TURN_DEADLINE)",
-                    Some("Maximum allowable duration a quark can spend on a single turn before the watchdog triggers an alert."),
+                    "Liveness silence limit (stall timeout)",
+                    Some("Maximum silence allowed from a quark (CLI stdout or ACP stream inactivity) before the watchdog reaps the turn."),
                     self.turn_deadline_select(window, cx),
                 ))
                 .child(settings_field(
-                    "Live activity timeout (STALE_AFTER_SECS)",
-                    Some("Threshold in seconds after which an inactive quark is marked as stale in the swarm monitor."),
-                    self.stale_timeout_select(window, cx),
+                    "Max turn wall-clock ceiling",
+                    Some("Maximum total elapsed wall-clock duration permitted for a single turn before automatic reaping."),
+                    self.max_turn_wall_clock_select(window, cx),
                 )),
         );
 
@@ -1040,6 +1040,11 @@ impl super::Chamber {
                             cx.notify();
                         }))
                         .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Monitor check interval",
+                    Some("Frequency of periodic background health diagnostics and repository integrity checks."),
+                    self.repo_monitor_interval_select(window, cx),
                 )),
         );
 
@@ -1736,14 +1741,15 @@ impl super::Chamber {
         if self.turn_deadline_select_key != Some(current_secs) {
             self.turn_deadline_select_key = Some(current_secs);
             let choices: Vec<String> = vec![
-                "15 minutes".to_string(),
-                "30 minutes (Default)".to_string(),
+                "5 minutes".to_string(),
+                "15 minutes (Default)".to_string(),
+                "30 minutes".to_string(),
                 "45 minutes".to_string(),
                 "60 minutes".to_string(),
             ];
             let mins = current_secs / 60;
-            let current_label = if mins == 30 {
-                "30 minutes (Default)".to_string()
+            let current_label = if mins == 15 {
+                "15 minutes (Default)".to_string()
             } else {
                 format!("{mins} minutes")
             };
@@ -1756,35 +1762,71 @@ impl super::Chamber {
         Select::new(&self.turn_deadline_select_state)
             .w_full()
             .min_w(px(220.0))
-            .placeholder("Select turn deadline...")
+            .placeholder("Select liveness silence limit...")
             .into_any_element()
     }
 
-    /// The live activity stale threshold picker using native Select dropdown component.
-    pub(super) fn stale_timeout_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let current_secs = self.team.stale_after_secs();
-        if self.stale_timeout_select_key != Some(current_secs) {
-            self.stale_timeout_select_key = Some(current_secs);
+    /// The max turn wall-clock safety ceiling picker using native Select dropdown component.
+    pub(super) fn max_turn_wall_clock_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_secs = self.team.max_turn_wall_clock_secs();
+        if self.max_turn_wall_clock_select_key != Some(current_secs) {
+            self.max_turn_wall_clock_select_key = Some(current_secs);
             let choices: Vec<String> = vec![
-                "60 seconds".to_string(),
-                "120 seconds (Default)".to_string(),
-                "300 seconds".to_string(),
+                "1 hour".to_string(),
+                "2 hours".to_string(),
+                "4 hours (Default)".to_string(),
+                "8 hours".to_string(),
             ];
-            let current_label = if current_secs == 120 {
-                "120 seconds (Default)".to_string()
+            let hours = current_secs / 3600;
+            let current_label = if hours == 4 {
+                "4 hours (Default)".to_string()
+            } else if hours == 1 {
+                "1 hour".to_string()
             } else {
-                format!("{current_secs} seconds")
+                format!("{hours} hours")
             };
             let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
-            self.stale_timeout_select_state.update(cx, |s, cx| {
+            self.max_turn_wall_clock_select_state.update(cx, |s, cx| {
                 s.set_items(delegate, window, cx);
                 s.set_selected_value(&current_label.into(), window, cx);
             });
         }
-        Select::new(&self.stale_timeout_select_state)
+        Select::new(&self.max_turn_wall_clock_select_state)
             .w_full()
             .min_w(px(220.0))
-            .placeholder("Select stale timeout...")
+            .placeholder("Select wall-clock ceiling...")
+            .into_any_element()
+    }
+
+    /// The periodic repository diagnostics check interval picker.
+    pub(super) fn repo_monitor_interval_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let current_secs = self.prefs.repo_monitor_interval_secs;
+        if self.repo_monitor_interval_select_key != Some(current_secs) {
+            self.repo_monitor_interval_select_key = Some(current_secs);
+            let choices: Vec<String> = vec![
+                "1 minute".to_string(),
+                "5 minutes (Default)".to_string(),
+                "15 minutes".to_string(),
+                "30 minutes".to_string(),
+            ];
+            let mins = current_secs / 60;
+            let current_label = if mins == 5 {
+                "5 minutes (Default)".to_string()
+            } else if mins == 1 {
+                "1 minute".to_string()
+            } else {
+                format!("{mins} minutes")
+            };
+            let delegate = create_model_delegate(&current_label, &choices, Some(&current_label));
+            self.repo_monitor_interval_select_state.update(cx, |s, cx| {
+                s.set_items(delegate, window, cx);
+                s.set_selected_value(&current_label.into(), window, cx);
+            });
+        }
+        Select::new(&self.repo_monitor_interval_select_state)
+            .w_full()
+            .min_w(px(220.0))
+            .placeholder("Select check interval...")
             .into_any_element()
     }
 

@@ -464,6 +464,11 @@ impl Chamber {
                 );
                 true
             }
+            "schedule" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                self.handle_schedule_command(args, &repo_root, cx);
+                true
+            }
             "goal" => {
                 let trimmed = args.trim();
                 if trimmed.is_empty() {
@@ -2111,6 +2116,220 @@ impl Chamber {
                 false
             }
         }
+    }
+
+    /// Manage scheduled tasks defined in `.hadron/schedules/schedules.json`.
+    pub(super) fn handle_schedule_command(
+        &mut self,
+        args: &str,
+        repo_root: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let parts: Vec<&str> = args.split_whitespace().collect();
+        let sub = parts.first().copied().unwrap_or("list");
+        match sub {
+            "list" => {
+                match hadron_lattice::ScheduleRegistry::load(repo_root) {
+                    Ok(reg) if reg.jobs.is_empty() => {
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            "No scheduled tasks defined in `.hadron/schedules/schedules.json`.".to_string(),
+                            cx,
+                        );
+                    }
+                    Ok(reg) => {
+                        let mut lines = vec![
+                            "### Scheduled Tasks (`.hadron/schedules/schedules.json`)".to_string(),
+                            "".to_string(),
+                            "| ID | Name | Task ID | Cron | Target | Status | Missed | Last Run |".to_string(),
+                            "|---|---|---|---|---|---|---|---|".to_string(),
+                        ];
+                        for job in &reg.jobs {
+                            let status = if job.enabled { "🟢 Enabled" } else { "⚪ Disabled" };
+                            let policy = match job.missed_policy {
+                                hadron_lattice::MissedPolicy::Ask => "Ask",
+                                hadron_lattice::MissedPolicy::Run => "Run",
+                                hadron_lattice::MissedPolicy::Skip => "Skip",
+                            };
+                            let last_run = job
+                                .last_run_at
+                                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                                .unwrap_or_else(|| "Never".to_string());
+                            lines.push(format!(
+                                "| `{}` | {} | `{}` | `{}` | `{}` | {} | {} | {} |",
+                                job.id, job.name, job.task_id, job.cron, job.target, status, policy, last_run
+                            ));
+                        }
+                        self.post_chat_message(Actor::Gluon, lines.join("\n"), cx);
+                    }
+                    Err(e) => {
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Failed to load schedules: {e:#}"),
+                            cx,
+                        );
+                    }
+                }
+            }
+            "run" => {
+                let id = match parts.get(1) {
+                    Some(id) => *id,
+                    None => {
+                        self.post_chat_message(Actor::Gluon, "Usage: `/schedule run <id>`".to_string(), cx);
+                        return;
+                    }
+                };
+                self.run_scheduled_job(id, repo_root, cx);
+            }
+            "skip" => {
+                let id = match parts.get(1) {
+                    Some(id) => *id,
+                    None => {
+                        self.post_chat_message(Actor::Gluon, "Usage: `/schedule skip <id>`".to_string(), cx);
+                        return;
+                    }
+                };
+                self.skip_scheduled_job(id, repo_root, cx);
+            }
+            "enable" => {
+                let id = match parts.get(1) {
+                    Some(id) => *id,
+                    None => {
+                        self.post_chat_message(Actor::Gluon, "Usage: `/schedule enable <id>`".to_string(), cx);
+                        return;
+                    }
+                };
+                match hadron_lattice::ScheduleRegistry::load(repo_root) {
+                    Ok(mut reg) => {
+                        if let Some(job) = reg.get_mut(id) {
+                            job.enabled = true;
+                            if let Err(e) = reg.save(repo_root) {
+                                self.post_chat_message(Actor::Gluon, format!("Failed to save schedule: {e:#}"), cx);
+                            } else {
+                                self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` enabled."), cx);
+                            }
+                        } else {
+                            self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` not found."), cx);
+                        }
+                    }
+                    Err(e) => {
+                        self.post_chat_message(Actor::Gluon, format!("Failed to load schedules: {e:#}"), cx);
+                    }
+                }
+            }
+            "disable" => {
+                let id = match parts.get(1) {
+                    Some(id) => *id,
+                    None => {
+                        self.post_chat_message(Actor::Gluon, "Usage: `/schedule disable <id>`".to_string(), cx);
+                        return;
+                    }
+                };
+                match hadron_lattice::ScheduleRegistry::load(repo_root) {
+                    Ok(mut reg) => {
+                        if let Some(job) = reg.get_mut(id) {
+                            job.enabled = false;
+                            if let Err(e) = reg.save(repo_root) {
+                                self.post_chat_message(Actor::Gluon, format!("Failed to save schedule: {e:#}"), cx);
+                            } else {
+                                self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` disabled."), cx);
+                            }
+                        } else {
+                            self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` not found."), cx);
+                        }
+                    }
+                    Err(e) => {
+                        self.post_chat_message(Actor::Gluon, format!("Failed to load schedules: {e:#}"), cx);
+                    }
+                }
+            }
+            _ => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    "Usage: `/schedule [list | run <id> | skip <id> | enable <id> | disable <id>]`".to_string(),
+                    cx,
+                );
+            }
+        }
+    }
+
+    /// Run a scheduled job immediately by ID.
+    pub(super) fn run_scheduled_job(&mut self, id: &str, repo_root: &std::path::Path, cx: &mut Context<Self>) {
+        let mut reg = match hadron_lattice::ScheduleRegistry::load(repo_root) {
+            Ok(r) => r,
+            Err(e) => {
+                self.post_chat_message(Actor::Gluon, format!("Failed to load schedules: {e:#}"), cx);
+                return;
+            }
+        };
+
+        let Some(job) = reg.get_mut(id) else {
+            self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` not found."), cx);
+            return;
+        };
+
+        let prompt = match hadron_lattice::ScheduleRegistry::load_task_markdown(repo_root, &job.task_id) {
+            Ok(p) => p,
+            Err(e) => {
+                self.post_chat_message(
+                    Actor::Gluon,
+                    format!("Failed to load prompt for `{id}` (task `{}`): {e:#}", job.task_id),
+                    cx,
+                );
+                return;
+            }
+        };
+
+        let target = if job.target.trim().is_empty() {
+            "@orchestrator".to_string()
+        } else if job.target.starts_with('@') {
+            job.target.clone()
+        } else {
+            format!("@{}", job.target)
+        };
+
+        let task_dir_rel = format!(".hadron/schedules/tasks/{}/", job.task_id);
+        let body = format!(
+            "[Scheduled Task: {} (`{}`)]\nSchedule: `{}` | Task Dir: `{}`\n{} {}",
+            job.id,
+            job.task_id,
+            job.cron,
+            task_dir_rel,
+            target,
+            prompt.trim()
+        );
+
+        job.last_run_at = Some(chrono::Utc::now());
+        job.overdue_warned_at = None;
+        let _ = reg.save(repo_root);
+
+        self.post_chat_message(Actor::Gluon, body, cx);
+    }
+
+    /// Skip an overdue scheduled job for the current window.
+    pub(super) fn skip_scheduled_job(&mut self, id: &str, repo_root: &std::path::Path, cx: &mut Context<Self>) {
+        let mut reg = match hadron_lattice::ScheduleRegistry::load(repo_root) {
+            Ok(r) => r,
+            Err(e) => {
+                self.post_chat_message(Actor::Gluon, format!("Failed to load schedules: {e:#}"), cx);
+                return;
+            }
+        };
+
+        let Some(job) = reg.get_mut(id) else {
+            self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` not found."), cx);
+            return;
+        };
+
+        job.last_skipped_at = Some(chrono::Utc::now());
+        job.overdue_warned_at = None;
+        let _ = reg.save(repo_root);
+
+        self.post_chat_message(
+            Actor::Gluon,
+            format!("Scheduled task `{id}` skipped for current window."),
+            cx,
+        );
     }
 
     /// Cycle the chat column's tab (Chat/Log/Stats) by `delta`, wrapping.

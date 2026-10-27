@@ -574,9 +574,12 @@ struct Chamber {
     /// Native SelectState dropdown for Turn Silence Deadline.
     turn_deadline_select_state: Entity<SelectState<ModelSelectDelegate>>,
     turn_deadline_select_key: Option<u64>,
-    /// Native SelectState dropdown for Live Activity Stale Threshold.
-    stale_timeout_select_state: Entity<SelectState<ModelSelectDelegate>>,
-    stale_timeout_select_key: Option<i64>,
+    /// Native SelectState dropdown for Max Turn Wall-Clock Ceiling.
+    max_turn_wall_clock_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    max_turn_wall_clock_select_key: Option<u64>,
+    /// Native SelectState dropdown for Periodic Repository Diagnostics Interval.
+    repo_monitor_interval_select_state: Entity<SelectState<ModelSelectDelegate>>,
+    repo_monitor_interval_select_key: Option<u64>,
     /// Native SelectState dropdown for Sandbox Confinement Mode.
     sandbox_mode_select_state: Entity<SelectState<ModelSelectDelegate>>,
     sandbox_mode_select_key: Option<SandboxMode>,
@@ -846,10 +849,13 @@ impl Chamber {
             SelectState::new(create_model_delegate("Classic (Harmonic Chimes)", &["Synth (Electronic FM Blips)".into(), "Minimal (Soft Clicks & Pops)".into(), "Retro 8-Bit (Arcade Bleeps)".into()], None), None, window, cx).searchable(false)
         });
         let turn_deadline_select_state = cx.new(|cx| {
-            SelectState::new(create_model_delegate("30 minutes (Default)", &["15 minutes".into(), "45 minutes".into(), "60 minutes".into()], None), None, window, cx).searchable(false)
+            SelectState::new(create_model_delegate("15 minutes (Default)", &["5 minutes".into(), "30 minutes".into(), "45 minutes".into(), "60 minutes".into()], None), None, window, cx).searchable(false)
         });
-        let stale_timeout_select_state = cx.new(|cx| {
-            SelectState::new(create_model_delegate("120 seconds (Default)", &["60 seconds".into(), "300 seconds".into()], None), None, window, cx).searchable(false)
+        let max_turn_wall_clock_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("4 hours (Default)", &["1 hour".into(), "2 hours".into(), "8 hours".into()], None), None, window, cx).searchable(false)
+        });
+        let repo_monitor_interval_select_state = cx.new(|cx| {
+            SelectState::new(create_model_delegate("5 minutes (Default)", &["1 minute".into(), "15 minutes".into(), "30 minutes".into()], None), None, window, cx).searchable(false)
         });
         let sandbox_mode_select_state = cx.new(|cx| {
             SelectState::new(create_model_delegate("Worktree Only", &["Strict (Offline)".into(), "Off (Host Direct)".into()], None), None, window, cx).searchable(false)
@@ -1233,7 +1239,7 @@ impl Chamber {
             cx.subscribe_in(&turn_deadline_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
                 let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
-                let mins: u64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(30);
+                let mins: u64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(15);
                 let secs = mins * 60;
                 this.team.turn_deadline_secs = Some(secs);
                 this.prefs.turn_deadline_secs = Some(secs);
@@ -1241,13 +1247,23 @@ impl Chamber {
                 let _ = config::save(&this.prefs);
                 cx.notify();
             }),
-            cx.subscribe_in(&stale_timeout_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+            cx.subscribe_in(&max_turn_wall_clock_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
                 let SelectEvent::Confirm(selected) = event;
                 let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
-                let secs: i64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(120);
-                this.team.stale_after_secs = Some(secs);
-                this.prefs.stale_after_secs = Some(secs);
+                let hours: u64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(4);
+                let secs = hours * 3600;
+                this.team.max_turn_wall_clock_secs = Some(secs);
+                this.prefs.max_turn_wall_clock_secs = Some(secs);
                 this.save_repo_team(cx);
+                let _ = config::save(&this.prefs);
+                cx.notify();
+            }),
+            cx.subscribe_in(&repo_monitor_interval_select_state, window, |this, _, event: &SelectEvent<ModelSelectDelegate>, _window, cx| {
+                let SelectEvent::Confirm(selected) = event;
+                let val = selected.as_ref().map(|v| v.as_ref()).unwrap_or("");
+                let mins: u64 = val.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(5);
+                let secs = mins * 60;
+                this.prefs.repo_monitor_interval_secs = secs;
                 let _ = config::save(&this.prefs);
                 cx.notify();
             }),
@@ -1695,8 +1711,10 @@ impl Chamber {
             sound_theme_select_key: None,
             turn_deadline_select_state,
             turn_deadline_select_key: None,
-            stale_timeout_select_state,
-            stale_timeout_select_key: None,
+            max_turn_wall_clock_select_state,
+            max_turn_wall_clock_select_key: None,
+            repo_monitor_interval_select_state,
+            repo_monitor_interval_select_key: None,
             sandbox_mode_select_state,
             sandbox_mode_select_key: None,
             settings_terminal_shell,
