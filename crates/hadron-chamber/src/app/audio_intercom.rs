@@ -22,7 +22,6 @@ pub struct AudioPacket {
     pub samples: Vec<f32>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone)]
 pub struct AudioIntercomBridge {
     status: IntercomStatus,
@@ -35,7 +34,6 @@ impl Default for IntercomStatus {
     }
 }
 
-#[allow(dead_code)]
 impl AudioIntercomBridge {
     pub fn new() -> Self {
         Self {

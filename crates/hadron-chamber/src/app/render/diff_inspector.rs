@@ -116,10 +116,24 @@ impl Chamber {
 
         let staged_count = self.diff_steering.staged_hunks().len();
         let rejected_count = self.diff_steering.rejected_hunks().len();
+        let primary_file = files_to_check.first().cloned().unwrap_or_default();
+        let default_steer_quark = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator))
+            .or_else(|| self.view.roster.first())
+            .map(|r| r.id.clone())
+            .unwrap_or_else(|| "cli-agy".to_string());
+
         if staged_count > 0 || rejected_count > 0 {
+            let file_for_directive = primary_file.clone();
+            let quark_for_directive = default_steer_quark.clone();
             list = list.child(
                 h_flex()
                     .w_full()
+                    .justify_between()
+                    .items_center()
                     .gap_2()
                     .px_2()
                     .py_1()
@@ -132,7 +146,59 @@ impl Chamber {
                         div()
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_color(theme::accent())
-                            .child(format!("Diff Steering Active: {} staged, {} rejected", staged_count, rejected_count)),
+                            .child(format!(
+                                "Diff Steering Active: {} staged, {} rejected",
+                                staged_count, rejected_count
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(
+                                div()
+                                    .id("diff-steer-dispatch-btn")
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .cursor_pointer()
+                                    .bg(theme::accent())
+                                    .text_color(theme::field_base())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .child("Dispatch Directive")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let directive = this.diff_steering.dispatch_steering_directive(
+                                            &quark_for_directive,
+                                            &file_for_directive,
+                                        );
+                                        let draft_msg = this.diff_steering.draft_commit_message(
+                                            &format!("chore(steer): partial staging for {file_for_directive}"),
+                                        );
+                                        this.post_chat_message(
+                                            Actor::Human,
+                                            format!("{directive}\n{draft_msg}"),
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("diff-steer-clear-btn")
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .cursor_pointer()
+                                    .bg(theme::bg_surface())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .text_color(theme::text_muted())
+                                    .hover(|s| s.text_color(theme::text()))
+                                    .child("Clear")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.diff_steering.clear();
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             );
         }
@@ -153,9 +219,11 @@ impl Chamber {
                 .child(div().w(px(35.0)).text_color(theme::syntax_comment()).child("Line"))
                 .child(div().flex_1().text_color(theme::syntax_comment()).child(format!("Base ({base_ref})")))
                 .child(div().flex_1().text_color(theme::syntax_type()).child("Ours (Worktree)"))
-                .child(div().flex_1().text_color(theme::syntax_literal()).child(format!("Theirs ({theirs_ref})"))),
+                .child(div().flex_1().text_color(theme::syntax_literal()).child(format!("Theirs ({theirs_ref})")))
+                .child(div().w(px(90.0)).text_right().text_color(theme::text_muted()).child("Steer")),
         );
 
+        let mut global_hunk_idx = 0usize;
         for file_path in files_to_check.iter().take(5) {
             let base_content = crate::vcs::show_file_at_ref(repo, base_ref, file_path).unwrap_or_default();
             let ours_content = std::fs::read_to_string(repo.join(file_path)).unwrap_or_default();
@@ -214,6 +282,12 @@ impl Chamber {
             };
 
             for hunk in display_hunks {
+                let hunk_idx = global_hunk_idx;
+                global_hunk_idx += 1;
+                let is_staged = self.diff_steering.is_staged(hunk_idx);
+                let is_rejected = self.diff_steering.is_rejected(hunk_idx);
+                let hunk_comment = self.diff_steering.get_hunk_comment(hunk_idx).cloned();
+
                 let bg_color = match hunk.status {
                     ThreeWayStatus::Same => theme::term_bg(),
                     ThreeWayStatus::OursModified => theme::info().opacity(0.10),
@@ -224,6 +298,84 @@ impl Chamber {
                 let base_str = if hunk.base.is_empty() { " ".to_string() } else { hunk.base };
                 let ours_str = if hunk.ours.is_empty() { " ".to_string() } else { hunk.ours };
                 let theirs_str = if hunk.theirs.is_empty() { " ".to_string() } else { hunk.theirs };
+
+                let steer_controls = h_flex()
+                    .w(px(90.0))
+                    .justify_end()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("steer-stage-{hunk_idx}")))
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .bg(if is_staged {
+                                theme::success().opacity(0.25)
+                            } else {
+                                theme::bg_elevated()
+                            })
+                            .border_1()
+                            .border_color(if is_staged {
+                                theme::success().into()
+                            } else {
+                                theme::glass_highlight()
+                            })
+                            .text_color(if is_staged {
+                                theme::success()
+                            } else {
+                                theme::text_muted()
+                            })
+                            .child("✓")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.diff_steering.is_staged(hunk_idx) {
+                                    this.diff_steering.unstage_hunk(hunk_idx);
+                                } else {
+                                    this.diff_steering.stage_hunk(hunk_idx);
+                                    let _ = this.diff_steering.toggle_hunk(hunk_idx);
+                                    this.diff_steering.stage_hunk(hunk_idx);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("steer-reject-{hunk_idx}")))
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .bg(if is_rejected {
+                                theme::error().opacity(0.25)
+                            } else {
+                                theme::bg_elevated()
+                            })
+                            .border_1()
+                            .border_color(if is_rejected {
+                                theme::error().into()
+                            } else {
+                                theme::glass_highlight()
+                            })
+                            .text_color(if is_rejected {
+                                theme::error()
+                            } else {
+                                theme::text_muted()
+                            })
+                            .child("✕")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.diff_steering.is_rejected(hunk_idx) {
+                                    this.diff_steering.unstage_hunk(hunk_idx);
+                                } else {
+                                    this.diff_steering.reject_hunk(hunk_idx);
+                                    this.diff_steering.set_hunk_comment(
+                                        hunk_idx,
+                                        "Revise or revert this hunk",
+                                    );
+                                }
+                                cx.notify();
+                            })),
+                    );
 
                 hunks_list = hunks_list.child(
                     h_flex()
@@ -261,7 +413,17 @@ impl Chamber {
                                 .truncate()
                                 .text_color(theme::text())
                                 .child(theirs_str),
-                        ),
+                        )
+                        .child(steer_controls)
+                        .when_some(hunk_comment, |row, comment| {
+                            row.child(
+                                div()
+                                    .max_w(px(120.0))
+                                    .truncate()
+                                    .text_color(theme::warning())
+                                    .child(comment),
+                            )
+                        }),
                 );
             }
 

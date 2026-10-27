@@ -610,6 +610,10 @@ impl Chamber {
                 true
             }
             "canvas" => {
+                for row in self.view.roster.iter().filter(|r| r.enabled && r.adopted) {
+                    self.split_canvas.add_quark(&row.id);
+                }
+                self.split_canvas.cycle_focus();
                 let columns = self.split_canvas.calculate_columns();
                 if self.interactive_canvas.elements.is_empty() {
                     self.interactive_canvas.add_element(render::canvas::CanvasElement::new(
@@ -622,11 +626,14 @@ impl Chamber {
                         "chat", 240.0, 60.0, 560.0, 540.0, "Field Chat", "#1b1d24",
                     ));
                 }
+                self.right_rail_tab = RightRailTab::Visualizer;
+                self.prefs.inspector_collapsed = false;
                 self.post_chat_message(
                     Actor::Gluon,
                     format!(
-                        "Interactive Canvas & Split Grid: Active elements: {}, Split columns: {}, Viewport: 800x600.",
+                        "Interactive Canvas & Split Grid: Active elements: {}, Active tiles: {}, Split columns: {}, Viewport: 800x600.",
                         self.interactive_canvas.elements.len(),
+                        self.split_canvas.active_tiles().len(),
                         columns
                     ),
                     cx,
@@ -637,17 +644,38 @@ impl Chamber {
                 let next_status = match self.audio_intercom.status() {
                     audio_intercom::IntercomStatus::Idle => audio_intercom::IntercomStatus::Listening,
                     audio_intercom::IntercomStatus::Listening => {
-                        audio_intercom::IntercomStatus::Speaking("operator".to_string())
+                        let speaker = args
+                            .trim()
+                            .split_whitespace()
+                            .next()
+                            .map(|t| t.trim_start_matches('@').to_string())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "operator".to_string());
+                        self.audio_intercom.enqueue_audio(audio_intercom::AudioPacket {
+                            quark_id: speaker.clone(),
+                            timestamp_ms: chrono::Utc::now().timestamp_millis().max(0) as u64,
+                            sample_rate: 16_000,
+                            samples: vec![0.12, -0.08, 0.24, -0.15],
+                        });
+                        audio_intercom::IntercomStatus::Speaking(speaker)
                     }
-                    audio_intercom::IntercomStatus::Speaking(_) => audio_intercom::IntercomStatus::Muted,
-                    audio_intercom::IntercomStatus::Muted => audio_intercom::IntercomStatus::Idle,
+                    audio_intercom::IntercomStatus::Speaking(_) => {
+                        let _ = self.audio_intercom.pop_audio();
+                        audio_intercom::IntercomStatus::Muted
+                    }
+                    audio_intercom::IntercomStatus::Muted => {
+                        self.audio_intercom.clear_queue();
+                        audio_intercom::IntercomStatus::Idle
+                    }
                 };
                 self.audio_intercom.set_status(next_status.clone());
+                let speaking_flag = self.audio_intercom.is_speaking();
                 self.post_chat_message(
                     Actor::Gluon,
                     format!(
-                        "Audio Intercom Bridge: Status transitioned to `{:?}` (Audio queue depth: {} packets).",
+                        "Audio Intercom Bridge: Status transitioned to `{:?}` (Speaking: {}, Audio queue depth: {} packets).",
                         next_status,
+                        speaking_flag,
                         self.audio_intercom.queue_len()
                     ),
                     cx,

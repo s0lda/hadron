@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 
-#[allow(dead_code)]
 pub struct DiffSteeringState {
     hunk_staged: HashMap<usize, bool>,
     hunk_rejected: HashMap<usize, bool>,
     hunk_comments: HashMap<usize, String>,
 }
 
-#[allow(dead_code)]
 impl DiffSteeringState {
     pub fn new() -> Self {
         Self {
@@ -15,6 +13,14 @@ impl DiffSteeringState {
             hunk_rejected: HashMap::new(),
             hunk_comments: HashMap::new(),
         }
+    }
+
+    pub fn is_staged(&self, hunk_idx: usize) -> bool {
+        self.hunk_staged.get(&hunk_idx).copied().unwrap_or(false)
+    }
+
+    pub fn is_rejected(&self, hunk_idx: usize) -> bool {
+        self.hunk_rejected.get(&hunk_idx).copied().unwrap_or(false)
     }
 
     pub fn register_hunk(&mut self, hunk_idx: usize, staged: bool) {
@@ -31,6 +37,7 @@ impl DiffSteeringState {
 
     pub fn unstage_hunk(&mut self, hunk_idx: usize) {
         self.hunk_staged.insert(hunk_idx, false);
+        self.hunk_rejected.insert(hunk_idx, false);
     }
 
     pub fn toggle_hunk(&mut self, hunk_idx: usize) -> bool {
@@ -43,6 +50,12 @@ impl DiffSteeringState {
     pub fn reject_hunk(&mut self, hunk_idx: usize) {
         self.hunk_staged.insert(hunk_idx, false);
         self.hunk_rejected.insert(hunk_idx, true);
+    }
+
+    pub fn clear(&mut self) {
+        self.hunk_staged.clear();
+        self.hunk_rejected.clear();
+        self.hunk_comments.clear();
     }
 
     pub fn staged_hunks(&self) -> Vec<usize> {

@@ -138,20 +138,25 @@ impl GitSubtab {
 }
 
 /// The sub-views inside [`RightRailTab::Mission`]: implementation plan & wave DAG,
-/// live swarm task feed, and shared Nucleus memory index/features.
+/// live swarm task feed, shared Nucleus memory index/features, time-travel scrubber,
+/// and shared Artifact Bus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum MissionSubtab {
     #[default]
     Plan,
     Tasks,
     Nucleus,
+    TimeTravel,
+    Artifacts,
 }
 
 impl MissionSubtab {
-    pub(super) const ALL: [MissionSubtab; 3] = [
+    pub(super) const ALL: [MissionSubtab; 5] = [
         MissionSubtab::Plan,
         MissionSubtab::Tasks,
         MissionSubtab::Nucleus,
+        MissionSubtab::TimeTravel,
+        MissionSubtab::Artifacts,
     ];
 
     pub(super) fn index(self) -> usize {
@@ -159,6 +164,8 @@ impl MissionSubtab {
             MissionSubtab::Plan => 0,
             MissionSubtab::Tasks => 1,
             MissionSubtab::Nucleus => 2,
+            MissionSubtab::TimeTravel => 3,
+            MissionSubtab::Artifacts => 4,
         }
     }
 
@@ -171,6 +178,8 @@ impl MissionSubtab {
             MissionSubtab::Plan => "Plan & Waves",
             MissionSubtab::Tasks => "Swarm Tasks",
             MissionSubtab::Nucleus => "Nucleus Memory",
+            MissionSubtab::TimeTravel => "Time Travel",
+            MissionSubtab::Artifacts => "Artifacts",
         }
     }
 }
@@ -289,10 +298,15 @@ mod tests {
         assert_eq!(RightRailTab::from_index(3), RightRailTab::Mission);
         assert_eq!(RightRailTab::from_index(4), RightRailTab::Visualizer);
         assert_eq!(RightRailTab::Mission.label(), "Mission");
+        assert_eq!(MissionSubtab::ALL.len(), 5);
         assert_eq!(MissionSubtab::default(), MissionSubtab::Plan);
         assert_eq!(MissionSubtab::from_index(0), MissionSubtab::Plan);
         assert_eq!(MissionSubtab::from_index(1), MissionSubtab::Tasks);
         assert_eq!(MissionSubtab::from_index(2), MissionSubtab::Nucleus);
+        assert_eq!(MissionSubtab::from_index(3), MissionSubtab::TimeTravel);
+        assert_eq!(MissionSubtab::from_index(4), MissionSubtab::Artifacts);
+        assert_eq!(MissionSubtab::TimeTravel.label(), "Time Travel");
+        assert_eq!(MissionSubtab::Artifacts.label(), "Artifacts");
         assert_eq!(GitSubtab::from_index(2), GitSubtab::Changes);
     }
 }

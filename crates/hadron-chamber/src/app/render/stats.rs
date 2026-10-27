@@ -603,10 +603,9 @@ impl super::Chamber {
             )
     }
 
-    /// The Timeline tab: a vertical [`Stepper`] over the run's milestones — the
+    /// The Timeline section: a vertical [`Stepper`] over the run's milestones — the
     /// non-message activity (status changes, edits, commands, snapshots), most
     /// recent marked as the current step.
-    #[allow(dead_code)] // built but not wired into the stats tab
     pub(super) fn timeline_view(&self) -> impl IntoElement {
         let steps: Vec<&MessageRow> = self
             .view
@@ -1092,6 +1091,21 @@ impl super::Chamber {
             }
             col = col.child(block);
         }
+
+        // Run Milestone Timeline Stepper
+        col = col.child(
+            session_card()
+                .gap_3()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::text())
+                        .child("Milestone Timeline"),
+                )
+                .child(self.timeline_view()),
+        );
+
         col
     }
 }

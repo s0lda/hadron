@@ -4,7 +4,6 @@ use hadron_lattice::artifacts::{list_artifacts, ArtifactMeta};
 
 impl Chamber {
     /// Renders the Artifact Bus drawer in the Chamber UI.
-    #[allow(dead_code)]
     pub(super) fn render_artifacts_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let repo_root = crate::vcs::repo_root_of(&self.path);
         let artifacts = list_artifacts(repo_root).unwrap_or_default();
@@ -54,7 +53,6 @@ impl Chamber {
             )
     }
 
-    #[allow(dead_code)]
     fn render_artifact_card(&self, artifact: &ArtifactMeta, cx: &Context<Self>) -> impl IntoElement {
         let icon = match artifact.kind.as_str() {
             "mermaid" => "📊",

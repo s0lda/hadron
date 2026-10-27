@@ -1680,6 +1680,8 @@ impl super::Chamber {
                             )
                             .into_any_element()
                     }
+                    MissionSubtab::TimeTravel => self.time_travel_inspector(cx).into_any_element(),
+                    MissionSubtab::Artifacts => self.render_artifacts_rail(cx).into_any_element(),
                 };
 
                 v_flex()

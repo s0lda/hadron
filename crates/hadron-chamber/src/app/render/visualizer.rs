@@ -1493,6 +1493,7 @@ impl super::Chamber {
             .children(activity_dock)
             .child(canvas_container)
             .children(selected_hud)
+            .child(self.render_split_canvas_section(cx))
     }
 }
 
