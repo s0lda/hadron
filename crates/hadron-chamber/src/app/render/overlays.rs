@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.16",
+        date: Some("2026-10-27"),
+        added: &[
+            "Batch Security Alerts Remediation (Dispatch Fix All): Added a header-level Dispatch Fix All action in Git -> Remote & Issues -> Security Warnings to pack all open CodeQL and Dependabot alerts into a single @orchestrator remediation turn",
+        ],
+        changed: &[],
+        fixed: &[
+            "Dependabot Alert #5 (rustls GHSA-vp88-798v-h67f) Remediation: Bumped rustls from 0.23.45 to 0.23.46 in Cargo.lock to prevent ECH rejection from exposing buffered application data before the ech_required alert",
+        ],
+    },
+    Release {
         version: "0.33.15",
         date: Some("2026-10-27"),
         added: &[

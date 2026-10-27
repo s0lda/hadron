@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.16] - 2026-10-27
+
+### Added
+- **Batch Security Alerts Remediation (`Dispatch Fix All`) (`hadron-chamber`)**:
+  - Added a header-level `Dispatch Fix All` (or `Dispatch Fix` for a single alert) button in `Git -> Remote & Issues -> Security Warnings (CodeQL & Dependabot)` (`render/git.rs`) that packs all open security alerts into a single structured `@orchestrator` remediation message via `format_security_alerts_remediation_message` (`vcs.rs`), alongside the per-alert `Dispatch Fix` action.
+
+### Fixed
+- **Dependabot Alert #5 (`rustls` `GHSA-vp88-798v-h67f`) Remediation (`Cargo.lock`)**:
+  - Updated `rustls` from `0.23.45` to `0.23.46` (`Cargo.lock`) to prevent Encrypted Client Hello (ECH) rejection from exposing buffered application data to an authenticated outer server prior to the `ech_required` alert.
+
 ## [0.33.15] - 2026-10-27
 
 ### Added
