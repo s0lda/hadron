@@ -220,6 +220,10 @@ impl super::Engine {
             anyhow::Result<super::merge::PreGateOutcome>,
         )> = JoinSet::new();
         let mut in_gate: HashSet<(QuarkId, Lane)> = HashSet::new();
+        // Tracks workers already dispatched mid-turn from an in-flight orchestrator's
+        // live draft stream so `finish_turn_with_gate` does not re-dispatch them when
+        // the orchestrator's turn eventually completes.
+        let mut mid_turn_dispatched: HashMap<QuarkId, HashSet<QuarkId>> = HashMap::new();
         // The first turn error wins; siblings still run to completion (and still get
         // their terminal status) so a single failure can't strand the rest as
         // forever-Excited in the field.
@@ -253,11 +257,69 @@ impl super::Engine {
                     dispatched_at_len.remove(&(target.clone(), Lane::Chat));
                     dispatched_assignment.remove(&(target.clone(), Lane::Work));
                     dispatched_assignment.remove(&(target.clone(), Lane::Chat));
+                    mid_turn_dispatched.remove(target);
                     // A force-restart is a deliberate human reset of this quark; an
                     // interrupted task queued up before it must not silently resurface
                     // on some unrelated later turn.
                     interrupted_task.remove(target);
                 }
+
+                // Mid-turn live delegation: if an in-flight orchestrator streamed
+                // line-leading `@<worker>` delegations in `activity.full` and has now
+                // transitioned to tool execution (`Doing::Working`) without ending its
+                // turn first, dispatch those workers immediately so they execute in
+                // parallel rather than waiting out the orchestrator's tool steps.
+                if let Some(orch_id) = self.orchestrator_id() {
+                    if in_flight.iter().any(|(id, _)| id == &orch_id) {
+                        let live_dir = hadron_lattice::live::live_dir(&self.field_path);
+                        if let Some(activity) =
+                            hadron_lattice::live::read(&live_dir, &orch_id, chrono::Utc::now())
+                        {
+                            if activity.doing == hadron_lattice::live::Doing::Working {
+                                if let Some(draft) = activity.full.as_deref() {
+                                    let preons = self.loaded_preons();
+                                    let mentioned = crate::router::parse_all_addressees(
+                                        draft,
+                                        &self.roster,
+                                        Some(&orch_id),
+                                        &preons,
+                                    );
+                                    let mut newly_delegated = false;
+                                    for worker_id in mentioned {
+                                        if worker_id == orch_id {
+                                            continue;
+                                        }
+                                        let already = mid_turn_dispatched
+                                            .entry(orch_id.clone())
+                                            .or_default();
+                                        if already.insert(worker_id.clone()) {
+                                            self.append(Event::new(
+                                                Actor::Quark(orch_id.clone()),
+                                                Some(worker_id),
+                                                Kind::Message {
+                                                    body: draft.to_string(),
+                                                },
+                                            ))
+                                            .await?;
+                                            newly_delegated = true;
+                                        }
+                                    }
+                                    if newly_delegated {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                struct ReadyCandidate {
+                    target: QuarkId,
+                    lane: Lane,
+                    quark: SharedQuark,
+                    driver: Option<Driver>,
+                }
+                let mut ready_candidates: Vec<ReadyCandidate> = Vec::new();
 
                 for (target, fallback_task) in self.pending_targets(&events) {
                     // Resolved once, up front, so the in_flight check below and the
@@ -435,7 +497,9 @@ impl super::Engine {
                     // free pass on the exchange backstop either.
                     let turn_mode =
                         hadron_gatekeeper::effective_mode(&events, &target, self.no_human, self.is_orchestrator(&target));
-                    if turn_mode != Mode::Bypass && exchanges >= self.max_exchanges {
+                    if turn_mode != Mode::Bypass
+                        && exchanges + ready_candidates.len() >= self.max_exchanges
+                    {
                         backstop = true;
                         break;
                     }
@@ -532,8 +596,6 @@ impl super::Engine {
 
                     // Worktree discipline (on iff `with_git`): the quark works in its
                     // own checkout, on its own branch, and never in the human's tree.
-                    let mut tree: Option<TurnTree> = None;
-                    let mut git_diff = String::new();
                     if let Some(root) = self.repo_root.clone() {
                         // No task-bearing driver ⇒ no assignment ⇒ no branch to cut.
                         // Refuse rather than commit a quark's work to an unnamed branch.
@@ -574,17 +636,6 @@ impl super::Engine {
                                             assignment: old_assignment,
                                         };
                                         if self.merge.is_some() {
-                                            // Say so BEFORE the gate runs. This is the
-                                            // first thing on the dispatch path that can
-                                            // take minutes (it rebases and runs the target
-                                            // project's whole test suite), and it sits
-                                            // ahead of `ensure`, the snapshot and
-                                            // `Status{Excited}` — so without this line a
-                                            // slow or hung gate leaves the field completely
-                                            // empty and the human has nothing to look at
-                                            // while the whole daemon waits on it.
-                                            // `Actor::Gluon`, `to: None`, no leading `@`:
-                                            // it prints and wakes nobody.
                                             self.append(Event::new(
                                                 Actor::Gluon,
                                                 None,
@@ -598,22 +649,6 @@ impl super::Engine {
                                             ))
                                             .await?;
                                             if self.merge_gate(&target, &old_turn_tree).await? {
-                                                // The gate PARKED the quark, and parking may
-                                                // have written new pending work to the field —
-                                                // a merge-gate hand-back is a `Message`
-                                                // addressed right back to this quark. Unlike
-                                                // the gate's other call site (in `finish_turn`,
-                                                // after a join, where the loop goes around
-                                                // anyway), this one runs while nothing else is
-                                                // in flight, so the quiesce check below would
-                                                // fire on the SAME pass and return with that
-                                                // hand-back unserved — the repair turn silently
-                                                // deferred to whenever the daemon next happened
-                                                // to wake. Force one more pass to re-read
-                                                // instead. Costs a single extra read when the
-                                                // park created nothing (the parked quark's own
-                                                // terminal status suppresses re-selection, so
-                                                // this cannot spin).
                                                 spawned_any = true;
                                                 continue;
                                             }
@@ -622,68 +657,134 @@ impl super::Engine {
                                 }
                             }
                         }
+                    }
 
+                    ready_candidates.push(ReadyCandidate {
+                        target,
+                        lane,
+                        quark,
+                        driver,
+                    });
+                }
+
+                // Provision worktrees for all ready candidates in the batch. When
+                // multiple quarks fan out simultaneously (e.g. `@team` across 50+
+                // seats, or orchestrator + workers in parallel), provisioning runs
+                // concurrently across `spawn_blocking` workers while results are
+                // harvested in deterministic candidate order.
+                type ProvisionedTree = (
+                    TurnTree,
+                    hadron_lattice::SnapshotRef,
+                    String,
+                );
+                let mut provisioned: Vec<(ReadyCandidate, Option<anyhow::Result<ProvisionedTree>>)> =
+                    Vec::with_capacity(ready_candidates.len());
+
+                if let Some(root) = self.repo_root.clone() {
+                    if !ready_candidates.is_empty() {
                         let live_dir = hadron_lattice::live::live_dir(&self.field_path);
-                        let _ = hadron_lattice::live::publish(
-                            &live_dir,
-                            &hadron_lattice::Activity::new(
-                                QuarkId::new("gluon"),
-                                hadron_lattice::live::Doing::Working,
-                                &format!("provisioning worktree for @{}", target.as_str()),
-                            ),
-                        );
-
-                        let wt = match crate::worktree::ensure(
-                            &root,
-                            &target,
-                            &driver.assignment.to_string(),
-                        ) {
-                            Ok(wt) => wt,
-                            Err(e) => {
-                                let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
-                                self.reroute_blocked_with_severity(
-                                    &target,
-                                    &format!(
-                                        "refusing to excite {}: its worktree is not usable — {e:#}",
-                                        target.as_str()
-                                    ),
-                                    hadron_lattice::Severity::Error,
-                                )
-                                .await?;
-                                continue;
-                            }
+                        let provision_one = |root: PathBuf,
+                                             live_dir: PathBuf,
+                                             target: QuarkId,
+                                             assignment: ulid::Ulid|
+                         -> anyhow::Result<ProvisionedTree> {
+                            let _ = hadron_lattice::live::publish(
+                                &live_dir,
+                                &hadron_lattice::Activity::new(
+                                    target.clone(),
+                                    hadron_lattice::live::Doing::Working,
+                                    "provisioning worktree…",
+                                ),
+                            );
+                            let wt = crate::worktree::ensure(
+                                &root,
+                                &target,
+                                &assignment.to_string(),
+                            )?;
+                            let snap = crate::snapshot::create(
+                                &wt.path,
+                                &format!("before {}", target.as_str()),
+                            )?;
+                            let base = crate::worktree::default_branch(&root);
+                            let git_diff = crate::worktree::branch_diff(&wt, &base)?;
+                            let head_before = crate::worktree::head(&wt.path);
+                            let _ = hadron_lattice::live::clear(&live_dir, &target);
+                            Ok((
+                                TurnTree {
+                                    head_before,
+                                    wt,
+                                    base,
+                                    assignment,
+                                },
+                                snap,
+                                git_diff,
+                            ))
                         };
 
-                        // The snapshot is the pre-turn escape hatch (undo). It now points
-                        // at the QUARK'S tree, so "before <quark>" means what it says.
-                        let snap = crate::snapshot::create(
-                            &wt.path,
-                            &format!("before {}", target.as_str()),
-                        )?;
-                        let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
-                        self.append(Event::new(
-                            Actor::Gluon,
-                            None,
-                            Kind::Snapshot { git: snap.commit.clone(), label: snap.label.clone() },
-                        ))
-                        .await?;
+                        if ready_candidates.len() == 1 {
+                            let cand = ready_candidates.into_iter().next().expect("len == 1");
+                            let assignment = cand
+                                .driver
+                                .as_ref()
+                                .expect("checked driver above")
+                                .assignment;
+                            let _ = hadron_lattice::live::publish(
+                                &live_dir,
+                                &hadron_lattice::Activity::new(
+                                    QuarkId::new("gluon"),
+                                    hadron_lattice::live::Doing::Working,
+                                    &format!("provisioning worktree for @{}", cand.target.as_str()),
+                                ),
+                            );
+                            let res = provision_one(
+                                root.clone(),
+                                live_dir.clone(),
+                                cand.target.clone(),
+                                assignment,
+                            );
+                            let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
+                            provisioned.push((cand, Some(res)));
+                        } else {
+                            let _ = hadron_lattice::live::publish(
+                                &live_dir,
+                                &hadron_lattice::Activity::new(
+                                    QuarkId::new("gluon"),
+                                    hadron_lattice::live::Doing::Working,
+                                    &format!(
+                                        "provisioning {} worktrees in parallel…",
+                                        ready_candidates.len()
+                                    ),
+                                ),
+                            );
+                            let mut handles = Vec::with_capacity(ready_candidates.len());
+                            for cand in &ready_candidates {
+                                let root_c = root.clone();
+                                let live_c = live_dir.clone();
+                                let target_c = cand.target.clone();
+                                let assignment = cand
+                                    .driver
+                                    .as_ref()
+                                    .expect("checked driver above")
+                                    .assignment;
+                                handles.push(tokio::task::spawn_blocking(move || {
+                                    provision_one(root_c, live_c, target_c, assignment)
+                                }));
+                            }
+                            for (cand, handle) in ready_candidates.into_iter().zip(handles) {
+                                let res = handle
+                                    .await
+                                    .unwrap_or_else(|e| Err(anyhow::anyhow!("worktree provisioning task panicked: {e}")));
+                                provisioned.push((cand, Some(res)));
+                            }
+                            let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
+                        }
 
-                        // Attribution comes from the BRANCH, not the working diff: once a
-                        // turn ends on a commit, `git diff HEAD` is empty by construction.
-                        // `<base>...HEAD` is "everything you have done on this assignment",
-                        // and under concurrency it cannot show a sibling's edits.
-                        let base = crate::worktree::default_branch(&root);
-                        git_diff = crate::worktree::branch_diff(&wt, &base)?;
-                        tree = Some(TurnTree {
-                            head_before: crate::worktree::head(&wt.path),
-                            wt,
-                            base,
-                            assignment: driver.assignment,
-                        });
-
-                        // Pre-turn peer conflict and intent lease radar
+                        // Pre-turn peer conflict and intent lease radar (run once per
+                        // dispatch batch rather than O(N^2) per candidate).
                         let root_obj = hadron_forge::file::Root::new(root.clone());
-                        if let Ok(conflicts) = hadron_forge::peers::detect_cross_worktree_conflicts(&root_obj) {
+                        if let Ok(conflicts) =
+                            hadron_forge::peers::detect_cross_worktree_conflicts(&root_obj)
+                        {
                             if conflicts.conflicts_detected > 0 {
                                 term::info(
                                     Source::Gluon,
@@ -696,13 +797,63 @@ impl super::Engine {
                         }
                         let locks_path = root.join(".hadron").join("locks.json");
                         if locks_path.exists() {
-                            let lock_table = hadron_lattice::locks::IntentLockTable::load_from_file(&locks_path);
+                            let lock_table =
+                                hadron_lattice::locks::IntentLockTable::load_from_file(&locks_path);
                             let active = lock_table.active_leases();
                             if !active.is_empty() {
                                 term::info(
                                     Source::Gluon,
-                                    &format!("pre-turn lease radar: {} active intent leases held", active.len()),
+                                    &format!(
+                                        "pre-turn lease radar: {} active intent leases held",
+                                        active.len()
+                                    ),
                                 );
+                            }
+                        }
+                    }
+                } else {
+                    for cand in ready_candidates {
+                        provisioned.push((cand, None));
+                    }
+                }
+
+                for (cand, prov) in provisioned {
+                    let ReadyCandidate {
+                        target,
+                        lane,
+                        quark,
+                        driver,
+                    } = cand;
+                    let mut tree: Option<TurnTree> = None;
+                    let mut git_diff = String::new();
+                    if let Some(prov_res) = prov {
+                        match prov_res {
+                            Ok((turn_tree, snap, diff)) => {
+                                self.append(Event::new(
+                                    Actor::Gluon,
+                                    None,
+                                    Kind::Snapshot {
+                                        git: snap.commit.clone(),
+                                        label: snap.label.clone(),
+                                    },
+                                ))
+                                .await?;
+                                git_diff = diff;
+                                tree = Some(turn_tree);
+                            }
+                            Err(e) => {
+                                let live_dir = hadron_lattice::live::live_dir(&self.field_path);
+                                let _ = hadron_lattice::live::clear(&live_dir, &target);
+                                self.reroute_blocked_with_severity(
+                                    &target,
+                                    &format!(
+                                        "refusing to excite {}: its worktree is not usable — {e:#}",
+                                        target.as_str()
+                                    ),
+                                    hadron_lattice::Severity::Error,
+                                )
+                                .await?;
+                                continue;
                             }
                         }
                     }
@@ -922,9 +1073,16 @@ impl super::Engine {
                                 let key = (target.clone(), lane);
                                 in_gate.insert(key.clone());
                                 let shadow_gate = Arc::clone(&self.shadow_gate);
+                                let gate_semaphore = Arc::clone(&self.gate_semaphore);
                                 let gate_abort = gates.spawn(async move {
-                                    let pre_res =
-                                        Self::run_pre_gate(runner, &t, &heartbeat, &shadow_gate).await;
+                                    let pre_res = Self::run_pre_gate(
+                                        runner,
+                                        &t,
+                                        &heartbeat,
+                                        &shadow_gate,
+                                        &gate_semaphore,
+                                    )
+                                    .await;
                                     (
                                         target,
                                         lane,
@@ -940,9 +1098,20 @@ impl super::Engine {
                             }
                             Ok(None) => {
                                 in_flight.remove(&(target.clone(), lane));
+                                let already_dispatched =
+                                    mid_turn_dispatched.remove(&target).unwrap_or_default();
                                 let rotate_session = should_rotate_session(&outcome.usage);
-                                if let Err(err) =
-                                    self.finish_turn(&target, outcome, tree.as_ref(), assignment).await
+                                if let Err(err) = self
+                                    .finish_turn_with_gate(
+                                        &target,
+                                        outcome,
+                                        tree.as_ref(),
+                                        assignment,
+                                        None,
+                                        None,
+                                        &already_dispatched,
+                                    )
+                                    .await
                                 {
                                     if first_err.is_none() {
                                         first_err = Some(err);
@@ -965,6 +1134,7 @@ impl super::Engine {
                             }
                             Err(err) => {
                                 in_flight.remove(&(target.clone(), lane));
+                                mid_turn_dispatched.remove(&target);
                                 if first_err.is_none() {
                                     first_err = Some(err);
                                 }
@@ -980,6 +1150,7 @@ impl super::Engine {
                         cancel_requested.remove(&(target.clone(), lane));
                         dispatched_at_len.remove(&(target.clone(), lane));
                         dispatched_assignment.remove(&(target.clone(), lane));
+                        mid_turn_dispatched.remove(&target);
                         if let Some(t) = tree.as_ref() {
                             let _ = crate::worktree::checkpoint_atomic_step(
                                 &t.wt.path,
@@ -1060,6 +1231,8 @@ impl super::Engine {
                         in_flight.remove(&key);
                         in_gate.remove(&key);
                         abort_handles.remove(&key);
+                        let already_dispatched =
+                            mid_turn_dispatched.remove(&target).unwrap_or_default();
                         let rotate_session = should_rotate_session(&outcome.usage);
                         match pre_res {
                             Ok(pre_outcome) => {
@@ -1071,6 +1244,7 @@ impl super::Engine {
                                         assignment,
                                         Some(edit_info),
                                         Some((pre_outcome, heartbeat)),
+                                        &already_dispatched,
                                     )
                                     .await
                                 {

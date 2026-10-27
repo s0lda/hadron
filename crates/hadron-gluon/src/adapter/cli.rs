@@ -470,17 +470,17 @@ impl<R: CliRunner> CliQuark<R> {
                 }
                 return;
             }
-            // Status transitions (while draft is empty) arrive in bursts (e.g.
-            // `agent_response` followed <1ms later by `tool_name: run_command`) and
-            // must never be dropped by the text delta throttle.
-            let is_status_only = acc.draft().is_empty();
-            let due = is_status_only
+            // Status transitions arrive in bursts (e.g. `agent_response` followed <1ms
+            // later by `tool_name: run_command`) and must never be dropped by the text
+            // delta throttle, even after an earlier step has already appended to `draft`.
+            let is_status_update = acc.is_status_update() || acc.draft().is_empty();
+            let due = is_status_update
                 || last_publish.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE);
             if due {
                 let now = Instant::now();
                 last_publish = Some(now);
                 last_heartbeat = Some(now);
-                let mut activity = if is_status_only {
+                let mut activity = if is_status_update {
                     let status = acc.status();
                     let doing = if status == "thinking"
                         || status.starts_with("thinking:")
@@ -490,7 +490,11 @@ impl<R: CliRunner> CliQuark<R> {
                     } else {
                         Doing::Working
                     };
-                    Activity::new(quark_id.clone(), doing, status)
+                    let mut a = Activity::new(quark_id.clone(), doing, status);
+                    if !acc.draft().is_empty() {
+                        a.full = Some(acc.draft().to_string());
+                    }
+                    a
                 } else {
                     Activity::speaking(quark_id.clone(), acc.draft())
                 };

@@ -809,3 +809,61 @@ fn multiple_addressed_steers_quiesce_once_the_newest_is_answered() {
     assert_eq!(next_pending(&events), None);
 }
 
+#[test]
+fn orchestrator_parallel_self_dispatch_with_peers_and_self_alias() {
+    let r = roster();
+    let orch = QuarkId::new("orch");
+
+    // A lone `@orchestrator` from the orchestrator itself is still excluded so it
+    // never accidentally loops on a single-target reply.
+    assert_eq!(
+        parse_all_addressees("@orchestrator thinking aloud", &r, Some(&orch), &[]),
+        Vec::<QuarkId>::new()
+    );
+
+    // When the orchestrator fans out to a peer worker AND assigns a slice to itself
+    // via `@orchestrator` or `@self`, both the worker and the orchestrator are returned.
+    assert_eq!(
+        parse_all_addressees(
+            "@worker implement task 1\n@orchestrator implement task 2",
+            &r,
+            Some(&orch),
+            &[],
+        ),
+        vec![QuarkId::new("worker"), QuarkId::new("orch")]
+    );
+    assert_eq!(
+        parse_all_addressees(
+            "@worker implement task 1\n@self implement task 2",
+            &r,
+            Some(&orch),
+            &[],
+        ),
+        vec![QuarkId::new("worker"), QuarkId::new("orch")]
+    );
+    assert_eq!(
+        parse_all_addressees("@self continue wave 2", &r, Some(&orch), &[]),
+        vec![QuarkId::new("orch")]
+    );
+
+    // `neutralize_dispatched_mentions` prefixes `✓ ` only on lines targeting already-dispatched peers.
+    let mut dispatched = std::collections::HashSet::new();
+    dispatched.insert(QuarkId::new("worker"));
+    let neutralized = neutralize_dispatched_mentions(
+        "@worker implement task 1\n@self implement task 2",
+        &r,
+        Some(&orch),
+        &[],
+        &dispatched,
+    );
+    assert_eq!(
+        neutralized,
+        "✓ @worker implement task 1\n@self implement task 2"
+    );
+    assert_eq!(
+        parse_all_addressees(&neutralized, &r, Some(&orch), &[]),
+        vec![QuarkId::new("orch")]
+    );
+}
+
+

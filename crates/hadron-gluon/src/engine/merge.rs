@@ -26,6 +26,13 @@ pub(super) fn looks_like_a_debugging_turn(text: &str) -> bool {
 /// enough that yesterday's red suite does not nag forever.
 const NUDGE_LOOKBACK: usize = 20;
 
+/// Opening sentence of the debugging-pass `/learn` nudge emitted upon landing a
+/// branch whose turn history showed a red test / compiler error / panic. Used to
+/// bound lookback so a single debugging pass never triggers repeat nudges on later
+/// green merges or re-triggers itself on the distillation turn.
+pub(super) const DEBUGGING_PASS_NUDGE_MARKER: &str =
+    "This turn's transcript shows a debugging pass.";
+
 /// The sentence every merge-gate hand-back opens with. Two jobs: it tells the quark what
 /// happened, and it is what `is_gate_handback` matches to bound the retries. A
 /// visible sentence rather than a hidden token on purpose — the quark reads this body as
@@ -59,6 +66,7 @@ pub(super) enum PreGateOutcome {
         state: hadron_gatekeeper::BranchState,
         passed: bool,
         tail: String,
+        permit: Option<tokio::sync::OwnedSemaphorePermit>,
     },
 }
 
@@ -381,13 +389,31 @@ impl super::Engine {
     /// Execute the slow pre-landing gate stages (`sync` + `runner.tests`) inside a
     /// concurrent `gates` task so `run_until_quiesce` can continue polling the field
     /// and dispatching sibling quarks while `cargo test` runs on `t.wt`.
+    ///
+    /// Acquires `gate_semaphore` before `sync` + `tests` and holds the permit in
+    /// [`PreGateOutcome::Ready`] until `merge_gate_body` finishes landing onto `base`.
+    /// That guarantees 50+ concurrent finishing branches queue cleanly without
+    /// stampeding `.cargo-lock`, `GATE_TEST_DEADLINE` only measures active test
+    /// execution (never queue wait), and each branch rebases onto the true latest
+    /// `base` (including earlier siblings that just landed) right before testing.
     pub(super) async fn run_pre_gate(
         runner: Arc<dyn crate::merge::MergeRunner>,
         t: &TurnTree,
         heartbeat: &GateHeartbeat,
         shadow_gate: &tokio::sync::Mutex<crate::engine::shadow_gate::ShadowGate>,
+        gate_semaphore: &Arc<tokio::sync::Semaphore>,
     ) -> anyhow::Result<PreGateOutcome> {
         use hadron_gatekeeper::BranchState;
+        let initial_commits = crate::worktree::commits_ahead(&t.wt, &t.base)?;
+        if initial_commits == 0 {
+            return Ok(PreGateOutcome::NoCommits);
+        }
+
+        if gate_semaphore.available_permits() == 0 {
+            heartbeat.set_stage("queued for merge gate");
+        }
+        let permit = gate_semaphore.clone().acquire_owned().await.ok();
+
         let state = BranchState {
             commits: crate::worktree::commits_ahead(&t.wt, &t.base)?,
             dirty: crate::worktree::is_dirty(&t.wt.path)?,
@@ -437,6 +463,7 @@ impl super::Engine {
             state,
             passed,
             tail,
+            permit,
         })
     }
 
@@ -464,10 +491,19 @@ impl super::Engine {
 
         let outcome = match pre_gate {
             Some(pre) => pre,
-            None => Self::run_pre_gate(Arc::clone(runner), t, heartbeat, &self.shadow_gate).await?,
+            None => {
+                Self::run_pre_gate(
+                    Arc::clone(runner),
+                    t,
+                    heartbeat,
+                    &self.shadow_gate,
+                    &self.gate_semaphore,
+                )
+                .await?
+            }
         };
 
-        let (state, tests_passed, tail) = match outcome {
+        let (state, tests_passed, tail, _gate_permit) = match outcome {
             // Nothing to land (a pure-conversation turn): quiesce normally, silently.
             PreGateOutcome::NoCommits => return Ok(false),
             PreGateOutcome::Conflicted(err) => {
@@ -512,7 +548,8 @@ impl super::Engine {
                 state,
                 passed,
                 tail,
-            } => (state, passed, tail),
+                permit,
+            } => (state, passed, tail, permit),
         };
 
         let events = read_events(&self.field_path)?;
@@ -649,19 +686,43 @@ impl super::Engine {
                 )
                 .await?;
 
+                // Release the gate semaphore as soon as `base` has been updated so the
+                // next queued branch can immediately start `sync` + `tests` against the
+                // newly-landed `base`.
+                drop(_gate_permit);
+
                 // A turn that visibly debugged something is the turn most likely to have
                 // learned something, and the moment it lands is the last moment anyone is
-                // still holding the context. So: a reminder, never a gate — blocking here
-                // is the shape that produced `a-failed-merge-land-hot-loops-via-the-audit-grant`.
-                // `Actor::Gluon` + `to: None` + no line starting with `@` is the one way to
-                // print without waking a seat (see the "Printing Without Waking the Swarm"
-                // invariant); an `@orchestrator` here would silently bill a turn per land.
-                if events
-                    .iter()
-                    .rev()
-                    .take(NUDGE_LOOKBACK)
-                    .any(|e| matches!(&e.kind, Kind::Message { body } if looks_like_a_debugging_turn(body)))
-                {
+                // still holding the context.
+                //
+                // Look back at most `NUDGE_LOOKBACK` events, stopping at the most recent
+                // `DEBUGGING_PASS_NUDGE_MARKER` so an earlier debugging pass that was
+                // already nudged cannot re-trigger on subsequent green merges, and never
+                // fire if this assignment itself was driven by a debugging-pass nudge.
+                let is_nudge_turn = events.iter().any(|e| {
+                    (e.id == t.assignment || e.answers == Some(t.assignment))
+                        && matches!(
+                            &e.kind,
+                            Kind::Message { body } | Kind::Assign { task: body, .. }
+                                if body.contains(DEBUGGING_PASS_NUDGE_MARKER)
+                        )
+                });
+                let saw_debugging_pass = !is_nudge_turn
+                    && (looks_like_a_debugging_turn(&tail)
+                        || events
+                            .iter()
+                            .rev()
+                            .take(NUDGE_LOOKBACK)
+                            .take_while(|e| {
+                                !matches!(
+                                    &e.kind,
+                                    Kind::Message { body } if body.contains(DEBUGGING_PASS_NUDGE_MARKER)
+                                )
+                            })
+                            .any(|e| {
+                                matches!(&e.kind, Kind::Message { body } if looks_like_a_debugging_turn(body))
+                            }));
+                if saw_debugging_pass {
                     if let Ok(diff_str) = crate::snapshot::git(&t.wt.path, &["diff", &format!("{}...{}", t.base, t.wt.branch)]) {
                         if !diff_str.is_empty() {
                             if let Some((lesson, path)) = hadron_gatekeeper::distill_failure_recovery_lesson(root, &tail, &diff_str) {
@@ -680,15 +741,53 @@ impl super::Engine {
                         }
                     }
 
+                    // When an orchestrator is seated and operating in Auto or Bypass mode
+                    // (or No-Human-Mode), an unaddressed `to: None` message is ignored by
+                    // the swarm and the lesson is lost. Route the nudge to `@orchestrator`
+                    // so it evaluates and distills any non-obvious lesson into
+                    // `.hadron/nucleus/`; otherwise emit the passive human `/learn` hint.
+                    let auto_orch = self.orchestrator_id().filter(|orch_id| {
+                        self.is_enabled(orch_id)
+                            && (self.no_human
+                                || matches!(
+                                    hadron_gatekeeper::effective_mode(
+                                        &events,
+                                        orch_id,
+                                        self.no_human,
+                                        true,
+                                    ),
+                                    hadron_gatekeeper::Mode::Auto
+                                        | hadron_gatekeeper::Mode::Bypass
+                                ))
+                    });
+                    let (nudge_to, nudge_body) = match auto_orch {
+                        Some(orch_id) => (
+                            Some(orch_id),
+                            format!(
+                                "@{} {DEBUGGING_PASS_NUDGE_MARKER} If `{}`'s debugging pass \
+                                 taught a non-obvious lesson the swarm should not pay for twice, \
+                                 distill it directly into `.hadron/nucleus/notes/<slug>.md` and \
+                                 `.hadron/nucleus/index.md` (or use `/learn <lesson>`) and end \
+                                 your turn with no `@mention`; if nothing non-obvious was \
+                                 learned, reply briefly with no `@mention`.",
+                                crate::router::ORCHESTRATOR_ALIAS,
+                                target.as_str(),
+                            ),
+                        ),
+                        None => (
+                            None,
+                            format!(
+                                "{DEBUGGING_PASS_NUDGE_MARKER} If it taught something the swarm \
+                                 should not pay for twice, `/learn <lesson>` writes it to the \
+                                 nucleus without spending a turn."
+                            ),
+                        ),
+                    };
+
                     self.append(Event::new(
                         Actor::Gluon,
-                        None,
-                        Kind::Message {
-                            body: "This turn's transcript shows a debugging pass. If it taught \
-                                   something the swarm should not pay for twice, `/learn <lesson>` \
-                                   writes it to the nucleus without spending a turn."
-                                .to_string(),
-                        },
+                        nudge_to,
+                        Kind::Message { body: nudge_body },
                     ))
                     .await?;
                 }

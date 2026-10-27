@@ -87,10 +87,16 @@ impl super::Engine {
             return Ok(None);
         };
         let preons = self.loaded_preons();
+        let addressees = outcome
+            .message
+            .as_deref()
+            .map(|body| parse_all_addressees(body, &self.roster, Some(target), &preons))
+            .unwrap_or_default();
         let addressee = outcome
             .message
             .as_deref()
             .and_then(|body| parse_addressee(body, &self.roster, Some(target), &preons))
+            .or_else(|| addressees.first().cloned())
             .or_else(|| {
                 if !self.is_orchestrator(target) && outcome.message.is_some() {
                     self.orchestrator_id()
@@ -134,6 +140,7 @@ impl super::Engine {
         )))
     }
 
+    #[cfg(test)]
     pub(super) async fn finish_turn(
         &self,
         target: &QuarkId,
@@ -141,7 +148,8 @@ impl super::Engine {
         tree: Option<&TurnTree>,
         assignment: Option<ulid::Ulid>,
     ) -> anyhow::Result<()> {
-        self.finish_turn_with_gate(target, outcome, tree, assignment, None, None)
+        let empty = std::collections::HashSet::new();
+        self.finish_turn_with_gate(target, outcome, tree, assignment, None, None, &empty)
             .await
     }
 
@@ -156,6 +164,7 @@ impl super::Engine {
         assignment: Option<ulid::Ulid>,
         pre_committed_edit: Option<Option<(Vec<String>, String)>>,
         pre_gate: Option<(super::merge::PreGateOutcome, super::merge::GateHeartbeat)>,
+        already_dispatched: &std::collections::HashSet<QuarkId>,
     ) -> anyhow::Result<()> {
         // ONE id for everything this turn emits. The reply and the energy report are
         // separate events, and turns run in parallel — so without this a reader trying
@@ -189,10 +198,16 @@ impl super::Engine {
         // If a worker emits a message without an explicit line-leading `@mention`,
         // fall back to addressing `@orchestrator` so the worker's reply does not drop
         // unaddressed in the field.
+        let initial_addressees = outcome
+            .message
+            .as_deref()
+            .map(|body| parse_all_addressees(body, &self.roster, Some(target), &preons))
+            .unwrap_or_default();
         let addressee = outcome
             .message
             .as_deref()
             .and_then(|body| parse_addressee(body, &self.roster, Some(target), &preons))
+            .or_else(|| initial_addressees.first().cloned())
             .or_else(|| {
                 if !self.is_orchestrator(target) && outcome.message.is_some() {
                     self.orchestrator_id()
@@ -277,7 +292,7 @@ impl super::Engine {
             }
         }
 
-        if let Some(body) = outcome.message {
+        if let Some(raw_body) = outcome.message {
             // The reply enters the field whole — the engine does NOT trim it. Brevity is
             // asked for in the prompt and explained, never enforced by cutting bytes: a
             // truncated report can hide the one line the human needed (a reported-but-
@@ -286,6 +301,13 @@ impl super::Engine {
             // If a worker turn was dispatched by `@orchestrator` and the worker's reply
             // omitted an explicit `@mention`, route `to` back to `@orchestrator` so
             // orchestration never stalls silently.
+            let body = crate::router::neutralize_dispatched_mentions(
+                &raw_body,
+                &self.roster,
+                Some(target),
+                &preons,
+                already_dispatched,
+            );
             let addressees = parse_all_addressees(&body, &self.roster, Some(target), &preons);
             let to = if addressees.len() == 1 {
                 Some(addressees[0].clone())

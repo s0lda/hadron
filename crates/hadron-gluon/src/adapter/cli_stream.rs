@@ -50,6 +50,7 @@ pub struct StreamAccumulator {
     format: StreamFormat,
     draft: String,
     status: String,
+    last_change_was_status: bool,
     final_text: Option<String>,
     spend: TokenSpend,
     model: Option<String>,
@@ -64,6 +65,7 @@ impl StreamAccumulator {
             format,
             draft: String::new(),
             status: String::new(),
+            last_change_was_status: false,
             final_text: None,
             spend: TokenSpend::default(),
             model: None,
@@ -106,6 +108,7 @@ impl StreamAccumulator {
                     if let Some(d) = path_as_str(&value, p) {
                         if !d.is_empty() {
                             self.draft.push_str(d);
+                            self.last_change_was_status = false;
                             changed = true;
                         }
                     }
@@ -157,6 +160,7 @@ impl StreamAccumulator {
                 if let Some(delta) = path_as_str(value, "step_update.text_delta") {
                     if !delta.is_empty() {
                         self.draft.push_str(delta);
+                        self.last_change_was_status = false;
                         return true;
                     }
                 }
@@ -187,6 +191,7 @@ impl StreamAccumulator {
                     return false; // the same step going ACTIVE → DONE says nothing new
                 }
                 self.status = label;
+                self.last_change_was_status = true;
                 true
             }
             Some("result") => {
@@ -224,6 +229,12 @@ impl StreamAccumulator {
     /// draft is still empty. Empty until a step names one.
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Whether the most recent `on_line` change was a status/tool transition rather
+    /// than a text delta.
+    pub fn is_status_update(&self) -> bool {
+        self.last_change_was_status
     }
 
     /// Consume the accumulator into a full [`StreamResult`] carrying message, spend,

@@ -427,9 +427,12 @@ pub fn land(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Lande
 
     // `base` moved under us. Rebase the quark's branch onto it, in the quark's tree.
     if let Err(e) = git(&wt.path, &["rebase", base]) {
-        // Leave no half-rebase behind for the next turn to trip over.
-        let _ = git(&wt.path, &["rebase", "--abort"]);
-        return Ok(Landed::Conflicted(format!("{e:#}")));
+        // Attempt AST-aware rebase healing (matching `sync`) before aborting.
+        if !matches!(ast_healer::heal_rebase_conflicts(&wt.path), Ok(true)) {
+            // Leave no half-rebase behind for the next turn to trip over.
+            let _ = git(&wt.path, &["rebase", "--abort"]);
+            return Ok(Landed::Conflicted(format!("{e:#}")));
+        }
     }
 
     ff_only(repo_root, &wt.branch)?;
@@ -455,8 +458,10 @@ fn land_squash(repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<La
         return Ok(Landed::AlreadyLanded);
     }
     if let Err(e) = git(&wt.path, &["rebase", base]) {
-        let _ = git(&wt.path, &["rebase", "--abort"]);
-        return Ok(Landed::Conflicted(format!("{e:#}")));
+        if !matches!(ast_healer::heal_rebase_conflicts(&wt.path), Ok(true)) {
+            let _ = git(&wt.path, &["rebase", "--abort"]);
+            return Ok(Landed::Conflicted(format!("{e:#}")));
+        }
     }
     let commit_msg = format!("squash: merge branch '{}' into '{}'", wt.branch, base);
     git(repo_root, &["merge", "--squash", &wt.branch])?;

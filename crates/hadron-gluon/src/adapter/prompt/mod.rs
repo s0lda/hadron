@@ -260,7 +260,11 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
              quark (`@<quark-id> <task>`) so they run as parallel turns across the swarm. **Emit those delegation \
              lines FIRST, before you start your own implementation work** — a delegation written after you've \
              already spent the turn on your own slice runs the workers only after you're done, serially, not in \
-             parallel with you. Reserve inline execution ONLY for single-step trivial asks or when no worker \
+             parallel with you. **Two-Phase Dispatch-First Rule:** When you dispatch to workers AND take a slice \
+             yourself, do NOT run implementation tool calls in the dispatch turn — emit `@<quark-id> <task>` for \
+             each worker plus `@self <your own task>` (or `@orchestrator <your own task>`) on its own line and \
+             **end the dispatch turn immediately** so Gluon excites the workers and re-excites you on your `Work` \
+             lane simultaneously. Reserve inline execution ONLY for single-step trivial asks or when no worker \
              quark is available.\n\n\
              **Handle Worker Escalations & Assistance.** You are the hub in Hadron's Hub-and-Spoke communication model. \
              When a worker quark reports back with questions, requests for second opinions, blocked/denied tools, \

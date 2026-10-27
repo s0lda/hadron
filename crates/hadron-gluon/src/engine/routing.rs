@@ -372,12 +372,17 @@ impl super::Engine {
         //    event was paused by `Status{Waiting}`). Skip non-task events like a
         //    PermissionGrant — otherwise a resumed quark would get an empty task, and
         //    a branch named for the grant rather than the assignment.
-        let unanswered_trigger = events.iter().enumerate().rev().find_map(|(idx, e)| {
-            (e.to.as_ref() == Some(target)
-                && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
-                && !crate::router::is_request_answered(&events[idx + 1..], e, target))
-            .then_some(e)
-        });
+        let unanswered_triggers: Vec<&Event> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, e)| {
+                (e.to.as_ref() == Some(target)
+                    && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
+                    && !crate::router::is_request_answered(&events[idx + 1..], e, target))
+                .then_some(e)
+            })
+            .collect();
+        let unanswered_trigger = unanswered_triggers.last().copied();
         let latest_trigger = events.iter().rev().find(|e| {
             e.to.as_ref() == Some(target)
                 && matches!(e.kind, Kind::Assign { .. } | Kind::Message { .. })
@@ -403,7 +408,30 @@ impl super::Engine {
                             _ => None,
                         })
                         .unwrap_or_default();
-                    Driver { assignment, task: body.clone(), invariants }
+                    // Coalesce multiple unanswered `Kind::Message` events that have not
+                    // yet been dispatched (i.e. have no `Kind::Assign` dispatch record
+                    // in `events`), such as a worker's completion report followed
+                    // immediately by a Gluon debugging-pass `/learn` nudge.
+                    let undispatched_messages: Vec<&str> = unanswered_triggers
+                        .iter()
+                        .filter_map(|e| match &e.kind {
+                            Kind::Message { body } => {
+                                let already_dispatched = events.iter().any(|a| {
+                                    a.to.as_ref() == Some(target)
+                                        && matches!(a.kind, Kind::Assign { .. })
+                                        && a.answers == Some(e.id)
+                                });
+                                (!already_dispatched).then_some(body.as_str())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let task = if undispatched_messages.len() > 1 {
+                        undispatched_messages.join("\n\n---\n\n")
+                    } else {
+                        body.clone()
+                    };
+                    Driver { assignment, task, invariants }
                 }
                 _ => unreachable!("the find matched Assign | Message"),
             });

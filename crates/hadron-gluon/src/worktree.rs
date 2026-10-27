@@ -142,6 +142,14 @@ fn assert_not_default_branch(path: &Path, repo_root: &Path) -> anyhow::Result<St
     }
 }
 
+/// Serializes `git worktree add` across concurrent threads in the same process so
+/// parallel worktree provisioning on 50+ quarks never contends on `.git/config.lock`
+/// or `.git/worktrees/` admin directory creation. Once `.hadron/trees/<quark>/`
+/// exists, per-worktree operations (`is_dirty`, `checkout`, `snapshot::create`,
+/// `branch_diff`) touch only `.git/worktrees/<quark>/index` and the quark's own
+/// `refs/heads/quark/<quark>/<ulid>` ref and run concurrently.
+static WORKTREE_ADD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Ensure `.hadron/trees/<quark>/` exists as a worktree, checked out on
 /// `quark/<id>/<assignment>` branched from the default branch.
 ///
@@ -158,13 +166,43 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
     let base = default_branch(repo_root);
 
     if !path.exists() {
-        // git may still hold an admin record for a tree someone deleted behind its
-        // back; prune before re-adding, or `worktree add` refuses the path.
-        let _ = git(repo_root, &["worktree", "prune"]);
-        let path_clean = hadron_lattice::sys::paths::simplified(&path);
-        let path_s = path_clean.to_string_lossy().to_string();
-        git(repo_root, &["worktree", "add", "--detach", &path_s, &base])
-            .with_context(|| format!("git worktree add {path_s}"))?;
+        let _guard = WORKTREE_ADD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !path.exists() {
+            let path_clean = hadron_lattice::sys::paths::simplified(&path);
+            let path_s = path_clean.to_string_lossy().to_string();
+            let branch_exists = git_ok(
+                repo_root,
+                &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+            )?
+            .is_some();
+
+            if !branch_exists {
+                // Single-step worktree creation + branch cut from `base`. Only run
+                // `git worktree prune` on retry if `worktree add` refuses a stale
+                // admin record, avoiding an extra git subprocess on every fresh quark.
+                let added = git(repo_root, &["worktree", "add", "-q", "-b", &branch, &path_s, &base])
+                    .or_else(|_| {
+                        let _ = git(repo_root, &["worktree", "prune"]);
+                        git(repo_root, &["worktree", "add", "-q", "-b", &branch, &path_s, &base])
+                    });
+                if added.is_ok() {
+                    drop(_guard);
+                    assert_not_default_branch(&path, repo_root)?;
+                    return Ok(Worktree { quark: quark.clone(), path, branch });
+                }
+            }
+
+            // Fallback when `branch` already existed (or was held elsewhere): add
+            // detached at `base` and let the branch-checkout path below land on it.
+            git(repo_root, &["worktree", "add", "--detach", &path_s, &base])
+                .or_else(|_| {
+                    let _ = git(repo_root, &["worktree", "prune"]);
+                    git(repo_root, &["worktree", "add", "--detach", &path_s, &base])
+                })
+                .with_context(|| format!("git worktree add {path_s}"))?;
+        }
     }
 
     // Already on this assignment's branch → the resume / hand-off case. No-op.

@@ -184,6 +184,12 @@ pub const ORCHESTRATOR_ALIAS: &str = "orchestrator";
 /// wants.
 pub const TEAM_ALIAS: &str = "team";
 
+/// Self-delegation alias (`@self`): allows the orchestrator (or any quark in a
+/// multi-step wave) to schedule a continuation slice for itself on the `Work`
+/// lane immediately after flushing worker delegations, so workers and the
+/// orchestrator execute simultaneously rather than serially.
+pub const SELF_ALIAS: &str = "self";
+
 #[derive(Clone)]
 enum ResolvedMention<'a> {
     Quark(&'a QuarkCard),
@@ -512,7 +518,10 @@ pub fn parse_addressee(
     None
 }
 
-/// Parses all unique line-start mentions in a message body, excluding the sender.
+/// Parses all unique line-start mentions in a message body, excluding the sender
+/// unless the sender explicitly uses `@self` or is the orchestrator self-assigning
+/// a parallel slice alongside at least one peer worker delegation (`@<worker> ...` +
+/// `@orchestrator ...` / `@<orch-id> ...`).
 pub fn parse_all_addressees(
     body: &str,
     roster: &[QuarkCard],
@@ -520,6 +529,8 @@ pub fn parse_all_addressees(
     preons: &[Preon],
 ) -> Vec<QuarkId> {
     let mut out = Vec::new();
+    let mut explicit_self = false;
+    let mut saw_orch_self: Option<QuarkId> = None;
     let clean = strip_markdown_code(body);
     for line in clean.lines() {
         let trimmed = line.trim_start();
@@ -530,6 +541,15 @@ pub fn parse_all_addressees(
         } else {
             continue;
         };
+        if boundary_match(rest, SELF_ALIAS) {
+            if let Some(s) = sender {
+                if roster.iter().any(|c| &c.id == s) {
+                    explicit_self = true;
+                    saw_orch_self = Some(s.clone());
+                }
+            }
+            continue;
+        }
         if let Some((_, resolution)) = match_longest_mention(rest, roster, preons) {
             match resolution {
                 ResolvedMention::Quark(card) => {
@@ -537,6 +557,8 @@ pub fn parse_all_addressees(
                         if !out.contains(&card.id) {
                             out.push(card.id.clone());
                         }
+                    } else if card.flavor == Flavor::Orchestrator {
+                        saw_orch_self = Some(card.id.clone());
                     }
                 }
                 ResolvedMention::Team => {
@@ -550,6 +572,45 @@ pub fn parse_all_addressees(
                 }
             }
         }
+    }
+    if let Some(self_id) = saw_orch_self {
+        let has_peer = out.iter().any(|id| id != &self_id);
+        if (explicit_self || has_peer) && !out.contains(&self_id) {
+            out.push(self_id);
+        }
+    }
+    out
+}
+
+/// Prefix any line starting with a mention that resolves to a quark in
+/// `already_dispatched` with `"✓ "` so a turn whose streaming draft already
+/// triggered a mid-turn worker dispatch does not re-dispatch the same worker
+/// when the final message is recorded at turn completion.
+pub fn neutralize_dispatched_mentions(
+    body: &str,
+    roster: &[QuarkCard],
+    sender: Option<&QuarkId>,
+    preons: &[Preon],
+    already_dispatched: &std::collections::HashSet<QuarkId>,
+) -> String {
+    if already_dispatched.is_empty() {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len() + 16);
+    for (idx, line) in body.lines().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        let line_targets = parse_all_addressees(line, roster, sender, preons);
+        if line_targets.iter().any(|t| already_dispatched.contains(t)) {
+            out.push_str("✓ ");
+            out.push_str(line);
+        } else {
+            out.push_str(line);
+        }
+    }
+    if body.ends_with('\n') {
+        out.push('\n');
     }
     out
 }

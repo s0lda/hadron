@@ -522,6 +522,11 @@ pub struct Engine {
     cancel_slots: HashMap<(QuarkId, Lane), crate::quark::CancelSlot>,
     /// Speculative merge pre-testing cache and shadow gate execution queue.
     shadow_gate: Arc<AsyncMutex<ShadowGate>>,
+    /// Serializes active merge-gate `sync -> tests -> land` pipelines across
+    /// concurrent quarks so 50+ finishing branches queue cleanly without stampeding
+    /// `.cargo-lock`, ticking `GATE_TEST_DEADLINE` while waiting, or testing against
+    /// a stale `base` before earlier siblings have landed.
+    gate_semaphore: Arc<tokio::sync::Semaphore>,
     /// Fast-path micro-RPC bus between active quarks.
     pub rpc_bus: hadron_lattice::MicroRpcBus,
     /// Ephemeral peer-to-peer subchannel manager.
@@ -627,6 +632,7 @@ impl Engine {
             global_preons_dir: None,
             cancel_slots,
             shadow_gate: Arc::new(AsyncMutex::new(ShadowGate::new("main"))),
+            gate_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             rpc_bus: {
                 let bus = hadron_lattice::MicroRpcBus::new();
                 bus.register_method("gluon", "ping", |_| Ok(serde_json::json!({"status": "pong"})));

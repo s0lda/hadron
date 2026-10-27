@@ -19,7 +19,8 @@ Load plan, review critically, execute all tasks, report when complete.
 
 ### Step 2: Task-by-Task Execution (≤15m Atomic Waves & Checkpointing)
 For each task in the plan:
-1. Decompose work into atomic waves lasting **≤15 minutes** per turn so no single turn accumulates unbounded context or risks silent network stalls.
+1. **Dispatch-First (Swarm Parallelism):** When fan-out tasks exist for worker quarks AND you are also taking a task slice yourself, **never execute your own implementation tool calls before dispatching**. Emit the worker delegations (`@<worker-id> <task>`) plus your own continuation line (`@self <your task>` or `@orchestrator <your task>`) and **end the dispatch turn immediately** so Gluon excites all workers and re-excites you on your `Work` lane simultaneously.
+2. Decompose work into atomic waves lasting **≤15 minutes** per turn so no single turn accumulates unbounded context or risks silent network stalls.
 2. Mark task status as `in_progress`.
 3. Follow bite-sized steps exactly without jumping ahead or skipping code blocks.
 4. Execute required verification commands (`cargo test`, `pytest`, etc.).
