@@ -68,9 +68,12 @@ pub struct Team {
     /// Configured merge strategy for landing quark branches onto base.
     #[serde(default)]
     pub merge_strategy: Option<MergeStrategy>,
-    /// Turn watchdog silence limit in seconds (default 1800s / 30m).
+    /// Turn watchdog silence limit in seconds (default 900s / 15m).
     #[serde(default)]
     pub turn_deadline_secs: Option<u64>,
+    /// Max turn wall-clock safety ceiling in seconds (default 14400s / 4h).
+    #[serde(default)]
+    pub max_turn_wall_clock_secs: Option<u64>,
     /// Live activity stale threshold in seconds (default 120s).
     #[serde(default)]
     pub stale_after_secs: Option<i64>,
@@ -104,9 +107,14 @@ impl Team {
         self.merge_strategy.unwrap_or_default()
     }
 
-    /// The configured turn silence deadline in seconds, defaulting to 1800 (30m).
+    /// The configured turn silence deadline in seconds, defaulting to 900 (15m).
     pub fn turn_deadline_secs(&self) -> u64 {
-        self.turn_deadline_secs.unwrap_or(30 * 60)
+        self.turn_deadline_secs.unwrap_or(15 * 60)
+    }
+
+    /// The configured max turn wall-clock ceiling in seconds, defaulting to 14400 (4h).
+    pub fn max_turn_wall_clock_secs(&self) -> u64 {
+        self.max_turn_wall_clock_secs.unwrap_or(4 * 3600)
     }
 
     /// The configured live activity stale threshold in seconds, defaulting to 120s.
@@ -234,6 +242,7 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         nucleus_index_budget_kb: repo.nucleus_index_budget_kb.or(global.nucleus_index_budget_kb),
         merge_strategy: repo.merge_strategy.or(global.merge_strategy),
         turn_deadline_secs: repo.turn_deadline_secs.or(global.turn_deadline_secs),
+        max_turn_wall_clock_secs: repo.max_turn_wall_clock_secs.or(global.max_turn_wall_clock_secs),
         stale_after_secs: repo.stale_after_secs.or(global.stale_after_secs),
         git_auto_prune_worktrees: repo.git_auto_prune_worktrees.or(global.git_auto_prune_worktrees),
         git_author_name: repo.git_author_name.clone().or_else(|| global.git_author_name.clone()),

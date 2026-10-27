@@ -111,7 +111,12 @@ impl super::Engine {
             .take(72)
             .collect::<String>();
         let message = format!("{}: {headline} [{}]", target.as_str(), t.assignment);
-        crate::worktree::commit_turn(&t.wt, &message)?;
+        crate::worktree::commit_turn_with_author(
+            &t.wt,
+            &message,
+            self.git_author_name.as_deref(),
+            self.git_author_email.as_deref(),
+        )?;
         let head_now = crate::worktree::head(&t.wt.path);
         let edit_info = if head_now.is_some() && head_now != t.head_before {
             let git = head_now.unwrap_or_default();
@@ -435,7 +440,12 @@ impl super::Engine {
                 Some(pre_edit) => pre_edit,
                 None => {
                     let message = format!("{}: {headline} [{}]", target.as_str(), t.assignment);
-                    crate::worktree::commit_turn(&t.wt, &message)?;
+                    crate::worktree::commit_turn_with_author(
+                        &t.wt,
+                        &message,
+                        self.git_author_name.as_deref(),
+                        self.git_author_email.as_deref(),
+                    )?;
 
                     // Compare HEAD; don't assume WE committed. A Bypass-mode CLI may have run
                     // `git commit` itself, leaving a clean tree behind an advanced branch —

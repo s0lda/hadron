@@ -402,7 +402,12 @@ impl super::Engine {
                                                         "{}: WIP snapshot before graceful interrupt",
                                                         target.as_str()
                                                     );
-                                                    if let Err(e) = crate::worktree::commit_turn(&wt, &msg) {
+                                                    if let Err(e) = crate::worktree::commit_turn_with_author(
+                                                        &wt,
+                                                        &msg,
+                                                        self.git_author_name.as_deref(),
+                                                        self.git_author_email.as_deref(),
+                                                    ) {
                                                         term::warn(
                                                             Source::Gluon,
                                                             &format!(

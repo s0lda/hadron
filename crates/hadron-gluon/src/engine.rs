@@ -530,6 +530,9 @@ pub struct Engine {
     pub checkpoints: Arc<AsyncMutex<HashMap<String, crate::checkpoint::CheckpointStore>>>,
     /// Content-addressable storage for build and test artifacts.
     pub cas: Option<crate::cas::SemanticCas>,
+    git_author_name: Option<String>,
+    git_author_email: Option<String>,
+    git_auto_prune_worktrees: bool,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -633,6 +636,9 @@ impl Engine {
             subchannel_manager: Arc::new(AsyncMutex::new(hadron_lattice::SubChannelManager::new())),
             checkpoints: Arc::new(AsyncMutex::new(HashMap::new())),
             cas,
+            git_author_name: None,
+            git_author_email: None,
+            git_auto_prune_worktrees: true,
         }
     }
 
@@ -799,6 +805,42 @@ impl Engine {
         self.nucleus_index_budget_bytes = bytes;
     }
 
+    /// Set the turn silence deadline. Live-reload seam called when `team.json` changes.
+    pub fn set_turn_deadline(&mut self, deadline: std::time::Duration) {
+        self.turn_deadline = deadline;
+    }
+
+    /// Set the maximum turn wall-clock ceiling. Live-reload seam called when `team.json` changes.
+    pub fn set_max_turn_wall_clock(&mut self, ceiling: std::time::Duration) {
+        self.max_turn_wall_clock = ceiling;
+    }
+
+    /// Set custom Git author name and email overrides. Live-reload seam.
+    pub fn set_git_author(&mut self, name: Option<String>, email: Option<String>) {
+        self.git_author_name = name;
+        self.git_author_email = email;
+    }
+
+    /// Set whether git worktrees should be automatically pruned. Live-reload seam.
+    pub fn set_git_auto_prune_worktrees(&mut self, auto_prune: bool) {
+        self.git_auto_prune_worktrees = auto_prune;
+    }
+
+    /// Custom Git author name override for commits.
+    pub fn git_author_name(&self) -> Option<&str> {
+        self.git_author_name.as_deref()
+    }
+
+    /// Custom Git author email override for commits.
+    pub fn git_author_email(&self) -> Option<&str> {
+        self.git_author_email.as_deref()
+    }
+
+    /// Whether git worktrees should be automatically pruned.
+    pub fn git_auto_prune_worktrees(&self) -> bool {
+        self.git_auto_prune_worktrees
+    }
+
     /// Switch a seated quark's **participation** on or off.
     ///
     /// This is NOT [`Engine::unseat`], and the difference is the whole point: the quark
@@ -863,6 +905,19 @@ impl Engine {
     /// production takes the default.
     pub fn with_cancel_deadline(mut self, deadline: std::time::Duration) -> Self {
         self.cancel_deadline = deadline;
+        self
+    }
+
+    /// Set custom Git author name and email overrides for commits.
+    pub fn with_git_author(mut self, name: Option<String>, email: Option<String>) -> Self {
+        self.git_author_name = name;
+        self.git_author_email = email;
+        self
+    }
+
+    /// Set whether git worktrees should be automatically pruned.
+    pub fn with_git_auto_prune_worktrees(mut self, auto_prune: bool) -> Self {
+        self.git_auto_prune_worktrees = auto_prune;
         self
     }
 
