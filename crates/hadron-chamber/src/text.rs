@@ -1825,7 +1825,173 @@ pub fn extract_ghost_completion(
         }
     }
 
+    if let Some(word_completion) = extract_word_completion(text, safe_cursor, history, files) {
+        return Some(word_completion);
+    }
+
     None
+}
+
+pub const COMMON_WORDS: &[&str] = &[
+    "action", "active", "adapter", "address", "algorithm", "allocate", "always",
+    "analysis", "answer", "append", "application", "archive", "argument", "artifact",
+    "assert", "assignment", "asynchronous", "atomic", "attribute", "authenticate",
+    "author", "autonomy", "available", "background", "baseline", "benchmark", "binary",
+    "blocking", "boolean", "boundary", "branch", "broadcast", "buffer", "builder",
+    "cached", "callback", "cancel", "candidate", "capacity", "capture", "ceiling",
+    "chamber", "channel", "cleanup", "client", "closure", "command", "commit",
+    "completion", "component", "compute", "condition", "config", "configuration",
+    "connection", "constant", "constraint", "container", "context", "continue",
+    "controller", "conversion", "current", "daemon", "database", "deadline", "debugging",
+    "decision", "declaration", "default", "deferred", "definition", "delegate", "delete",
+    "delta", "dependency", "deploy", "deprecated", "description", "destination",
+    "detach", "diagnostics", "directory", "dispatch", "display", "document", "documentation",
+    "duration", "element", "endpoint", "engine", "entity", "environment", "error",
+    "escalate", "evaluate", "event", "evidence", "exception", "exclusive", "execute",
+    "execution", "existing", "expanded", "expression", "extract", "factory", "fallback",
+    "feature", "feedback", "filter", "finalize", "fingerprint", "folder", "format",
+    "framework", "function", "gateway", "generator", "global", "gluon", "gradient",
+    "handle", "handler", "hardware", "header", "heartbeat", "hierarchy", "history",
+    "horizontal", "identity", "implement", "implementation", "import", "inbound",
+    "index", "initialize", "inline", "input", "inspect", "inspector", "instance",
+    "instruction", "integer", "integrate", "intercept", "interface", "intermediate",
+    "interval", "invariant", "isolate", "iteration", "lattice", "layout", "leader",
+    "ledger", "length", "lexicon", "lifecycle", "listener", "liveness", "loading",
+    "location", "maintain", "manager", "manifest", "mapping", "markdown", "maximum",
+    "measure", "medium", "member", "memory", "mention", "message", "metadata",
+    "method", "metrics", "middleware", "migrate", "minimum", "mission", "mock",
+    "model", "modifier", "module", "monitor", "mounted", "multiple", "mutation",
+    "namespace", "native", "navigate", "network", "notification", "nullable",
+    "number", "object", "observable", "operation", "operator", "optimizer", "option",
+    "orchestrator", "ordering", "outbound", "output", "overflow", "overlay", "override",
+    "package", "packet", "parameter", "parent", "parser", "payload", "performance",
+    "permission", "pipeline", "platform", "pointer", "policy", "position", "prepaint",
+    "preview", "primary", "priority", "procedure", "process", "profiler", "progress",
+    "project", "projection", "prompt", "property", "protocol", "prototype", "provider",
+    "prune", "public", "publish", "qualification", "quantum", "quark", "query",
+    "queue", "quiesce", "quota", "rasterize", "reactive", "readiness", "receiver",
+    "reconciliation", "record", "recovery", "reference", "register", "registry",
+    "regular", "release", "relevant", "remote", "render", "repository", "request",
+    "required", "requirement", "reserved", "reset", "resident", "resolution", "resolve",
+    "resource", "response", "restore", "result", "retain", "retrieve", "review",
+    "reviewer", "rollback", "roster", "router", "routine", "runner", "runtime",
+    "sandbox", "schedule", "scheduler", "schema", "screen", "screenshot", "script",
+    "scroll", "scrollbar", "section", "secure", "security", "segment", "selection",
+    "selector", "semantic", "sender", "sentence", "sequence", "serial", "session",
+    "setting", "settings", "signature", "silent", "simplify", "single", "snippet",
+    "socket", "software", "source", "spec", "specialization", "specification", "split",
+    "standard", "start", "state", "statement", "static", "status", "storage", "strategy",
+    "stream", "streaming", "string", "struct", "structure", "subagent", "submit",
+    "subprocess", "suffix", "suggestion", "summary", "support", "surface", "suspend",
+    "symbol", "system", "target", "task", "telemetry", "terminal", "test", "testing",
+    "theme", "thread", "threshold", "throttle", "timeout", "timer", "token",
+    "tokenize", "topology", "tracking", "trailing", "trait", "transaction", "transcript",
+    "transfer", "transform", "transition", "translate", "trigger", "truncate", "type",
+    "unbounded", "unified", "uniform", "universal", "unknown", "unlock", "update",
+    "upgrade", "upstream", "usage", "utility", "validate", "validation", "value",
+    "variable", "variant", "vector", "vendor", "version", "vertical", "viewport",
+    "visualizer", "warning", "watchdog", "widget", "window", "worker", "workspace",
+    "wrapper", "writer",
+];
+
+/// Extract a mid-sentence word completion suffix when the cursor is at the end of a word prefix (>= 3 chars).
+///
+/// Sources (in priority order):
+/// 1. Tokenized words from recent prompt `history` (newest first).
+/// 2. Workspace file/module stems from `files`.
+/// 3. Built-in common English & developer lexicon (`COMMON_WORDS`).
+pub fn extract_word_completion(
+    text: &str,
+    cursor: usize,
+    history: &[String],
+    files: &[String],
+) -> Option<String> {
+    let mut safe_cursor = cursor.min(text.len());
+    while safe_cursor > 0 && !text.is_char_boundary(safe_cursor) {
+        safe_cursor -= 1;
+    }
+    if safe_cursor != text.len() || text.is_empty() {
+        return None;
+    }
+
+    let trailing_start = text
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+        .map_or(0, |i| i + text[i..].chars().next().map_or(1, char::len_utf8));
+    let trailing = &text[trailing_start..safe_cursor];
+
+    let trailing_char_count = trailing.chars().count();
+    if trailing_char_count < 3 {
+        return None;
+    }
+    if !trailing.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+
+    let trailing_lower = trailing.to_lowercase();
+    let mut candidate_word: Option<&str> = None;
+
+    // 1. History words (newest first)
+    for entry in history.iter().rev() {
+        for w in entry.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if w.chars().count() > trailing_char_count && w.to_lowercase().starts_with(&trailing_lower) {
+                candidate_word = Some(w);
+                break;
+            }
+        }
+        if candidate_word.is_some() {
+            break;
+        }
+    }
+
+    // 2. Workspace file/module stem tokens
+    if candidate_word.is_none() {
+        for file in files {
+            for part in file.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if part.chars().count() > trailing_char_count && part.to_lowercase().starts_with(&trailing_lower) {
+                    candidate_word = Some(part);
+                    break;
+                }
+            }
+            if candidate_word.is_some() {
+                break;
+            }
+        }
+    }
+
+    // 3. Built-in common words
+    if candidate_word.is_none() {
+        for &w in COMMON_WORDS {
+            if w.chars().count() > trailing_char_count && w.starts_with(&trailing_lower) {
+                candidate_word = Some(w);
+                break;
+            }
+        }
+    }
+
+    let candidate = candidate_word?;
+    let matched_bytes = candidate
+        .char_indices()
+        .nth(trailing_char_count)
+        .map(|(idx, _)| idx)
+        .unwrap_or(candidate.len());
+
+    let raw_suffix = &candidate[matched_bytes..];
+    if raw_suffix.is_empty() {
+        return None;
+    }
+
+    let is_all_upper = trailing.chars().all(char::is_uppercase);
+    let is_all_lower = trailing.chars().all(char::is_lowercase);
+
+    let suffix = if is_all_upper {
+        raw_suffix.to_uppercase()
+    } else if is_all_lower && candidate.chars().all(char::is_uppercase) {
+        raw_suffix.to_lowercase()
+    } else {
+        raw_suffix.to_string()
+    };
+
+    Some(suffix)
 }
 
 /// Scans messages from newest to oldest for the last chat message matching an optional seat target.
@@ -3111,6 +3277,46 @@ mod tests {
             ghost.as_deref(),
             Some(" the full workspace test gate")
         );
+    }
+
+    #[test]
+    fn test_extract_word_completion_sources_and_case() {
+        let history = vec!["Implemented the scheduled tasks engine yesterday".to_string()];
+        let files = vec!["crates/hadron-chamber/src/app/render/dag_visualizer.rs".to_string()];
+
+        // 1. History word matching
+        let comp_hist = extract_word_completion("We have already impl", 20, &history, &files);
+        assert_eq!(comp_hist.as_deref(), Some("emented"));
+
+        // Case preservation (all caps)
+        let comp_caps = extract_word_completion("We have already IMPL", 20, &history, &files);
+        assert_eq!(comp_caps.as_deref(), Some("EMENTED"));
+
+        // 2. Workspace file matching
+        let comp_file = extract_word_completion("Please check visual", 19, &history, &files);
+        assert_eq!(comp_file.as_deref(), Some("izer"));
+
+        // 3. Built-in common words matching
+        let comp_lex = extract_word_completion("Here is a brand new feat", 24, &[], &[]);
+        assert_eq!(comp_lex.as_deref(), Some("ure"));
+
+        // < 3 chars returns None
+        assert_eq!(extract_word_completion("Here is fe", 10, &[], &[]), None);
+
+        // UTF-8 boundary safety
+        let utf8_text = "café task feat";
+        let comp_utf8 = extract_word_completion(utf8_text, utf8_text.len(), &[], &[]);
+        assert_eq!(comp_utf8.as_deref(), Some("ure"));
+
+        // Mid-character boundary safe fallback (doesn't panic)
+        assert_eq!(extract_word_completion(utf8_text, 4, &[], &[]), None);
+    }
+
+    #[test]
+    fn test_extract_ghost_completion_falls_back_to_word_completion() {
+        let quarks = vec![("cli-agy".to_string(), Some("Agy".to_string()))];
+        let ghost = extract_ghost_completion("I want to run a bench", 21, &[], &quarks, &[], None);
+        assert_eq!(ghost.as_deref(), Some("mark"));
     }
 }
 

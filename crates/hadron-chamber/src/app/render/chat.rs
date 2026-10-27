@@ -497,16 +497,38 @@ impl super::Chamber {
                                 theme::glass_highlight()
                             })
                             .shadow_lg()
-                            .child(
+                            .child(if self.composer_preview_mode {
+                                let draft_text = self.input.read(cx).value().to_string();
+                                if draft_text.trim().is_empty() {
+                                    div()
+                                        .id("composer-preview-empty")
+                                        .w_full()
+                                        .p_3()
+                                        .text_xs()
+                                        .italic()
+                                        .text_color(theme::text_muted())
+                                        .child("Nothing to preview — switch to Write to type a message.")
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .id("composer-preview-content")
+                                        .w_full()
+                                        .max_h(px(260.0))
+                                        .overflow_y_scroll()
+                                        .child(self.markdown_body("composer-preview", usize::MAX, &draft_text, &self.view.roster))
+                                        .into_any_element()
+                                }
+                            } else {
                                 Input::new(&self.input)
                                     .appearance(false)
                                     .bordered(false)
-                                    .focus_bordered(false),
-                            )
+                                    .focus_bordered(false)
+                                    .into_any_element()
+                            })
                             .when_some(
                                 self.ghost_completion
                                     .clone()
-                                    .filter(|_| self.completion.is_none()),
+                                    .filter(|_| self.completion.is_none() && !self.composer_preview_mode),
                                 |el, ghost| {
                                     el.child(
                                         h_flex()
@@ -644,6 +666,40 @@ impl super::Chamber {
                                                      .child("/Command")
                                                      .on_click(cx.listener(|this, _, window, cx| {
                                                          this.insert_completion_trigger("/", window, cx);
+                                                     })),
+                                             )
+                                             .child(
+                                                 h_flex()
+                                                     .id("composer-preview-toggle")
+                                                     .items_center()
+                                                     .gap_1()
+                                                     .px_2()
+                                                     .py_0p5()
+                                                     .rounded_md()
+                                                     .bg(if self.composer_preview_mode {
+                                                         theme::glass_highlight()
+                                                     } else {
+                                                         theme::glass_card()
+                                                     })
+                                                     .border_1()
+                                                     .border_color(if self.composer_preview_mode {
+                                                         theme::accent().into()
+                                                     } else {
+                                                         theme::glass_highlight()
+                                                     })
+                                                     .text_xs()
+                                                     .text_color(if self.composer_preview_mode {
+                                                         theme::accent().into()
+                                                     } else {
+                                                         theme::text_muted()
+                                                     })
+                                                     .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                                     .cursor_pointer()
+                                                     .child(Icon::new(if self.composer_preview_mode { IconName::EyeOff } else { IconName::Eye }).xsmall())
+                                                     .child(if self.composer_preview_mode { "Write" } else { "Preview" })
+                                                     .on_click(cx.listener(|this, _, _window, cx| {
+                                                         this.composer_preview_mode = !this.composer_preview_mode;
+                                                         cx.notify();
                                                      })),
                                              ),
                                     )

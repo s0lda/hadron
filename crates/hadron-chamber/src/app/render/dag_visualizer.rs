@@ -1,4 +1,5 @@
 use super::*;
+use gpui::{Point, Pixels};
 use gpui_component::ActiveTheme;
 use hadron_lattice::task_graph::TaskGraph;
 use std::hash::{Hash, Hasher};
@@ -13,6 +14,48 @@ pub(crate) const DAG_HEADER_STATS_MIN_WIDTH: f32 = 580.0;
 
 pub(crate) fn show_dag_inline_stats(inspector_width: f32) -> bool {
     inspector_width >= DAG_HEADER_STATS_MIN_WIDTH
+}
+
+pub trait ScrollbarExt {
+    fn both<H: gpui_component::scroll::ScrollbarHandle + Clone>(scroll_handle: &H) -> Scrollbar;
+}
+
+impl ScrollbarExt for Scrollbar {
+    fn both<H: gpui_component::scroll::ScrollbarHandle + Clone>(scroll_handle: &H) -> Scrollbar {
+        Scrollbar::new(scroll_handle)
+    }
+}
+
+/// Convert a gpui ScrollDelta to a pixel point.
+pub fn scroll_delta_to_pixels(delta: &gpui::ScrollDelta) -> Point<Pixels> {
+    match delta {
+        gpui::ScrollDelta::Lines(d) => gpui::point(px(d.x * 32.0), px(d.y * 32.0)),
+        gpui::ScrollDelta::Pixels(d) => gpui::point(d.x, d.y),
+    }
+}
+
+/// Compute updated scroll offset for the DAG waves container from a scroll wheel event.
+/// If `shift` is held and vertical delta dominates, maps vertical scroll to horizontal scroll.
+/// Clamps the resulting offset within `[-max_offset.x, 0]` and `[-max_offset.y, 0]`.
+pub fn compute_dag_scroll_offset(
+    current_offset: Point<Pixels>,
+    max_offset: Point<Pixels>,
+    delta: Point<Pixels>,
+    shift_pressed: bool,
+) -> Point<Pixels> {
+    let (dx, dy) = if shift_pressed && delta.x.abs() < delta.y.abs() {
+        (delta.y, px(0.0))
+    } else {
+        (delta.x, delta.y)
+    };
+
+    let min_x = -max_offset.x.abs();
+    let min_y = -max_offset.y.abs();
+
+    let new_x = (current_offset.x + dx).clamp(min_x, px(0.0));
+    let new_y = (current_offset.y + dy).clamp(min_y, px(0.0));
+
+    gpui::point(new_x, new_y)
 }
 
 impl Chamber {
@@ -170,7 +213,21 @@ impl Chamber {
             .overflow_y_scroll()
             .pb_1()
             .w_full()
-            .min_w_0();
+            .min_w_0()
+            .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _window, cx| {
+                cx.stop_propagation();
+                let delta_px = scroll_delta_to_pixels(&ev.delta);
+                let current_offset = this.dag_waves_scroll.offset();
+                let max_offset = this.dag_waves_scroll.max_offset();
+                let new_offset = compute_dag_scroll_offset(
+                    current_offset,
+                    max_offset,
+                    delta_px,
+                    ev.modifiers.shift,
+                );
+                this.dag_waves_scroll.set_offset(new_offset);
+                cx.notify();
+            }));
 
         for (wave_idx, wave) in waves.iter().enumerate() {
             let mut col = v_flex()
@@ -317,13 +374,15 @@ impl Chamber {
             .child(header_bar)
             .child(
                 v_flex()
+                    .relative()
                     .p_2()
                     .rounded_lg()
                     .bg(theme::term_bg())
                     .border_1()
                     .border_color(theme::glass_highlight())
                     .w_full()
-                    .child(waves_row),
+                    .child(waves_row)
+                    .child(Scrollbar::both(&self.dag_waves_scroll)),
             )
             .into_any_element()
     }
@@ -364,5 +423,43 @@ mod tests {
         assert!(!show_dag_inline_stats(579.0));
         assert!(show_dag_inline_stats(580.0));
         assert!(show_dag_inline_stats(640.0));
+    }
+
+    #[test]
+    fn test_compute_dag_scroll_offset_regular_vertical() {
+        let current = gpui::point(px(0.0), px(0.0));
+        let max_offset = gpui::point(px(500.0), px(200.0));
+        let delta = gpui::point(px(0.0), px(-50.0));
+        let new_offset = compute_dag_scroll_offset(current, max_offset, delta, false);
+        assert_eq!(new_offset.x, px(0.0));
+        assert_eq!(new_offset.y, px(-50.0));
+    }
+
+    #[test]
+    fn test_compute_dag_scroll_offset_shift_maps_vertical_to_horizontal() {
+        let current = gpui::point(px(0.0), px(0.0));
+        let max_offset = gpui::point(px(500.0), px(200.0));
+        let delta = gpui::point(px(0.0), px(-80.0));
+        let new_offset = compute_dag_scroll_offset(current, max_offset, delta, true);
+        assert_eq!(new_offset.x, px(-80.0));
+        assert_eq!(new_offset.y, px(0.0));
+    }
+
+    #[test]
+    fn test_compute_dag_scroll_offset_clamping() {
+        let current = gpui::point(px(-450.0), px(-180.0));
+        let max_offset = gpui::point(px(500.0), px(200.0));
+
+        // Overscroll down/right
+        let delta_exceed = gpui::point(px(-100.0), px(-50.0));
+        let clamped = compute_dag_scroll_offset(current, max_offset, delta_exceed, false);
+        assert_eq!(clamped.x, px(-500.0));
+        assert_eq!(clamped.y, px(-200.0));
+
+        // Overscroll top/left
+        let delta_pos = gpui::point(px(1000.0), px(1000.0));
+        let clamped_zero = compute_dag_scroll_offset(current, max_offset, delta_pos, false);
+        assert_eq!(clamped_zero.x, px(0.0));
+        assert_eq!(clamped_zero.y, px(0.0));
     }
 }

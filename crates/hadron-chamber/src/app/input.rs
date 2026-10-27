@@ -71,6 +71,7 @@ impl super::Chamber {
         }
         self.history_index = None;
         self.history_draft.clear();
+        self.composer_preview_mode = false;
 
         // A line may begin with chained UI commands, then a normal message, e.g.
         // "/toggle-roster /clear ping the team". `split_leading_commands_in` peels the

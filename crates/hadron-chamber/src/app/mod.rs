@@ -258,6 +258,8 @@ struct Chamber {
     completion: Option<CompletionCard>,
     /// Inline ghost-text completion suffix offered at the end of the chat input.
     pub(super) ghost_completion: Option<String>,
+    /// Whether the composer is currently displaying the live Markdown preview.
+    pub(super) composer_preview_mode: bool,
     /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
@@ -1518,6 +1520,7 @@ impl Chamber {
             history_draft: String::new(),
             completion: None,
             ghost_completion: None,
+            composer_preview_mode: false,
             focus_handle,
             chat_tab: ChatTab::Chat,
             info_tab: InfoTab::Home,
