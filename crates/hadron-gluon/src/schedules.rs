@@ -1,10 +1,10 @@
 use std::path::Path;
 use chrono::Utc;
 use hadron_lattice::{
-    Actor, DueStatus, Event, Kind, MissedPolicy, ScheduleRegistry,
+    Actor, DueStatus, Event, Kind, ScheduleRegistry,
 };
+use hadron_lattice::term::{self, Source};
 use crate::engine::Engine;
-use crate::term::{self, Source};
 
 pub const SCHEDULE_CHECK_INTERVAL_SECS: u64 = 30;
 pub const GRACE_WINDOW_SECS: i64 = 3600; // 1 hour

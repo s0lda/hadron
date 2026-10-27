@@ -318,15 +318,14 @@ pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, St
     }
 
     if let Ok(root) = crate::snapshot::main_repo_root(cwd) {
-        if let Ok(team) = hadron_lattice::load_team_for_repo(&root) {
-            if let Some(name) = team.git_author_name.as_deref().filter(|s| !s.trim().is_empty()) {
-                env.push(("GIT_AUTHOR_NAME".to_string(), name.to_string()));
-                env.push(("GIT_COMMITTER_NAME".to_string(), name.to_string()));
-            }
-            if let Some(email) = team.git_author_email.as_deref().filter(|s| !s.trim().is_empty()) {
-                env.push(("GIT_AUTHOR_EMAIL".to_string(), email.to_string()));
-                env.push(("GIT_COMMITTER_EMAIL".to_string(), email.to_string()));
-            }
+        let team = hadron_lattice::load_team_for_repo(&root);
+        if let Some(name) = team.git_author_name.as_deref().filter(|s| !s.trim().is_empty()) {
+            env.push(("GIT_AUTHOR_NAME".to_string(), name.to_string()));
+            env.push(("GIT_COMMITTER_NAME".to_string(), name.to_string()));
+        }
+        if let Some(email) = team.git_author_email.as_deref().filter(|s| !s.trim().is_empty()) {
+            env.push(("GIT_AUTHOR_EMAIL".to_string(), email.to_string()));
+            env.push(("GIT_COMMITTER_EMAIL".to_string(), email.to_string()));
         }
     }
 
