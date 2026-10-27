@@ -1553,8 +1553,134 @@ pub fn parse_code_scanning_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurit
         .collect())
 }
 
+fn parse_cargo_lock_versions(lock_content: &str, pkg_name: &str) -> Vec<String> {
+    let mut versions = Vec::new();
+    for block in lock_content.split("[[package]]").skip(1) {
+        let mut name = None;
+        let mut version = None;
+        for line in block.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("name = ") {
+                name = Some(rest.trim_matches('"'));
+            } else if let Some(rest) = trimmed.strip_prefix("version = ") {
+                version = Some(rest.trim_matches('"'));
+            }
+            if name.is_some() && version.is_some() {
+                break;
+            }
+        }
+        if name == Some(pkg_name) {
+            if let Some(v) = version {
+                versions.push(v.to_string());
+            }
+        }
+    }
+    versions
+}
+
+fn parse_semver_key(v: &str) -> Option<(u64, u64, u64, bool, &str)> {
+    let trimmed = v
+        .trim()
+        .trim_start_matches('=')
+        .trim()
+        .trim_start_matches('v');
+    let without_build = trimmed.split('+').next().unwrap_or(trimmed);
+    let (core, pre) = match without_build.split_once('-') {
+        Some((c, p)) => (c, p),
+        None => (without_build, ""),
+    };
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?.parse::<u64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch, pre.is_empty(), pre))
+}
+
+fn is_cargo_lock_alert_remediated(
+    repo_root: &Path,
+    manifest_path: &str,
+    pkg_name: &str,
+    version_requirement: Option<&str>,
+    first_patched_version: Option<&str>,
+) -> bool {
+    let rel = Path::new(manifest_path);
+    if rel.is_absolute()
+        || rel.file_name().and_then(|f| f.to_str()) != Some("Cargo.lock")
+        || rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let Ok(lock_content) = std::fs::read_to_string(repo_root.join(rel)) else {
+        return false;
+    };
+    let versions = parse_cargo_lock_versions(&lock_content, pkg_name);
+    if versions.is_empty() {
+        return false;
+    }
+
+    let vuln_ver = version_requirement
+        .map(|r| r.trim().trim_start_matches('=').trim())
+        .filter(|r| !r.is_empty() && !r.contains(['<', '>', ',', '^', '~', '*']));
+    if let Some(vv) = vuln_ver {
+        if versions.iter().any(|v| v == vv) {
+            return false;
+        }
+    }
+
+    if let Some(patched_str) = first_patched_version.map(str::trim).filter(|s| !s.is_empty()) {
+        let Some(patched_sv) = parse_semver_key(patched_str) else {
+            return false;
+        };
+        let parsed_versions: Option<Vec<_>> = versions.iter().map(|v| parse_semver_key(v)).collect();
+        let Some(parsed_versions) = parsed_versions else {
+            return false;
+        };
+        let same_series: Vec<_> = parsed_versions
+            .iter()
+            .copied()
+            .filter(|v| v.0 == patched_sv.0 && (patched_sv.0 > 0 || v.1 == patched_sv.1))
+            .collect();
+        if !same_series.is_empty() {
+            return same_series.iter().all(|v| *v >= patched_sv);
+        }
+        return parsed_versions.iter().all(|v| *v >= patched_sv);
+    }
+
+    if let Some(vv) = vuln_ver {
+        let Some(vuln_sv) = parse_semver_key(vv) else {
+            return false;
+        };
+        let parsed_versions: Option<Vec<_>> = versions.iter().map(|v| parse_semver_key(v)).collect();
+        let Some(parsed_versions) = parsed_versions else {
+            return false;
+        };
+        let same_series: Vec<_> = parsed_versions
+            .iter()
+            .copied()
+            .filter(|v| v.0 == vuln_sv.0 && (vuln_sv.0 > 0 || v.1 == vuln_sv.1))
+            .collect();
+        return !same_series.is_empty() && same_series.iter().all(|v| *v > vuln_sv);
+    }
+
+    false
+}
+
 /// Parse GitHub Dependabot (`dependabot/alerts`) JSON array into [`GitHubSecurityAlertInfo`] rows.
 pub fn parse_dependabot_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAlertInfo>, String> {
+    parse_dependabot_alerts_json_for_repo(bytes, None)
+}
+
+/// Parse GitHub Dependabot (`dependabot/alerts`) JSON array into [`GitHubSecurityAlertInfo`] rows,
+/// filtering out `Cargo.lock` alerts that have already been remediated in `repo_root`.
+pub fn parse_dependabot_alerts_json_for_repo(
+    bytes: &[u8],
+    repo_root: Option<&Path>,
+) -> Result<Vec<GitHubSecurityAlertInfo>, String> {
     #[derive(serde::Deserialize)]
     struct RawPkg {
         name: Option<String>,
@@ -1563,6 +1689,7 @@ pub fn parse_dependabot_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAl
     struct RawDep {
         package: Option<RawPkg>,
         manifest_path: Option<String>,
+        version_requirement: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct RawAdvisory {
@@ -1570,6 +1697,14 @@ pub fn parse_dependabot_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAl
         cve_id: Option<String>,
         summary: Option<String>,
         severity: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawPatchedVersion {
+        identifier: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawVulnerability {
+        first_patched_version: Option<RawPatchedVersion>,
     }
     #[derive(serde::Deserialize)]
     struct RawDepAlert {
@@ -1581,6 +1716,7 @@ pub fn parse_dependabot_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAl
         created_at: Option<String>,
         dependency: Option<RawDep>,
         security_advisory: Option<RawAdvisory>,
+        security_vulnerability: Option<RawVulnerability>,
     }
 
     let raw: Vec<RawDepAlert> = serde_json::from_slice(bytes)
@@ -1589,6 +1725,32 @@ pub fn parse_dependabot_alerts_json(bytes: &[u8]) -> Result<Vec<GitHubSecurityAl
     Ok(raw
         .into_iter()
         .filter(|a| a.state.is_empty() || a.state.eq_ignore_ascii_case("open"))
+        .filter(|a| {
+            let Some(root) = repo_root else {
+                return true;
+            };
+            let Some(dep) = a.dependency.as_ref() else {
+                return true;
+            };
+            let Some(manifest) = dep.manifest_path.as_deref() else {
+                return true;
+            };
+            let Some(pkg) = dep.package.as_ref().and_then(|p| p.name.as_deref()) else {
+                return true;
+            };
+            let first_patched = a
+                .security_vulnerability
+                .as_ref()
+                .and_then(|v| v.first_patched_version.as_ref())
+                .and_then(|p| p.identifier.as_deref());
+            !is_cargo_lock_alert_remediated(
+                root,
+                manifest,
+                pkg,
+                dep.version_requirement.as_deref(),
+                first_patched,
+            )
+        })
         .map(|a| {
             let (pkg_name, manifest) = match a.dependency {
                 Some(d) => (d.package.and_then(|p| p.name), d.manifest_path),
@@ -1668,7 +1830,8 @@ pub fn fetch_github_security_alerts(
         .output()
     {
         if out.status.success() {
-            if let Ok(mut dep) = parse_dependabot_alerts_json(&out.stdout) {
+            if let Ok(mut dep) = parse_dependabot_alerts_json_for_repo(&out.stdout, Some(repo_root))
+            {
                 alerts.append(&mut dep);
             }
         }
@@ -2389,6 +2552,133 @@ index a1b2c3d..e4f5g6h 100644
             - Dependabot security alert #2 (`CVE-2026-39863`: URI name constraint validation bypass) at `Cargo.lock` (https://github.com/s0lda/hadron/security/dependabot/2)\n\
             - Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3)"
         );
+    }
+
+    #[test]
+    fn test_parse_dependabot_alerts_reconciles_local_cargo_lock() {
+        let rustls_alerts_json = br#"[
+            {
+                "number": 5,
+                "state": "open",
+                "html_url": "https://github.com/s0lda/hadron/security/dependabot/5",
+                "created_at": "2026-10-27T20:12:47Z",
+                "dependency": {
+                    "package": { "ecosystem": "rust", "name": "rustls" },
+                    "manifest_path": "Cargo.lock",
+                    "version_requirement": "= 0.23.45"
+                },
+                "security_advisory": {
+                    "ghsa_id": "GHSA-vp88-798v-h67f",
+                    "summary": "rustls: ECH rejection can expose buffered application data to authenticated outer server before `ech_required` alert",
+                    "severity": "low"
+                },
+                "security_vulnerability": {
+                    "vulnerable_version_range": ">= 0.23.44, < 0.23.46",
+                    "first_patched_version": { "identifier": "0.23.46" }
+                }
+            },
+            {
+                "number": 4,
+                "state": "open",
+                "html_url": "https://github.com/s0lda/hadron/security/dependabot/4",
+                "created_at": "2026-10-27T20:12:46Z",
+                "dependency": {
+                    "package": { "ecosystem": "rust", "name": "rustls" },
+                    "manifest_path": "Cargo.lock",
+                    "version_requirement": "= 0.23.45"
+                },
+                "security_advisory": {
+                    "ghsa_id": "GHSA-w44r-93j7-qv28",
+                    "summary": "rustls: An unauthenticated ServerHello poisons the per-name key-exchange record, so later ClientHellos carry only a classical X25519 share",
+                    "severity": "low"
+                },
+                "security_vulnerability": {
+                    "vulnerable_version_range": "< 0.23.46",
+                    "first_patched_version": { "identifier": "0.23.46" }
+                }
+            },
+            {
+                "number": 3,
+                "state": "open",
+                "html_url": "https://github.com/s0lda/hadron/security/dependabot/3",
+                "created_at": "2026-10-27T20:12:46Z",
+                "dependency": {
+                    "package": { "ecosystem": "rust", "name": "rustls" },
+                    "manifest_path": "Cargo.lock",
+                    "version_requirement": "= 0.23.45"
+                },
+                "security_advisory": {
+                    "ghsa_id": "GHSA-c8m5-c952-6cm4",
+                    "summary": "Rustls: Session Debug formatting exposes TLS master secrets and resumption PSKs",
+                    "severity": "medium"
+                },
+                "security_vulnerability": {
+                    "vulnerable_version_range": "< 0.23.46",
+                    "first_patched_version": { "identifier": "0.23.46" }
+                }
+            },
+            {
+                "number": 2,
+                "state": "open",
+                "html_url": "https://github.com/s0lda/hadron/security/dependabot/2",
+                "created_at": "2026-10-27T20:12:46Z",
+                "dependency": {
+                    "package": { "ecosystem": "rust", "name": "rustls" },
+                    "manifest_path": "Cargo.lock",
+                    "version_requirement": "= 0.23.45"
+                },
+                "security_advisory": {
+                    "ghsa_id": "GHSA-h2v8-394m-p7vv",
+                    "summary": "Rustls: Brotli certificate decompression can allocate an attacker-controlled amount of memory up to 1 GiB before authentication.",
+                    "severity": "low"
+                },
+                "security_vulnerability": {
+                    "vulnerable_version_range": "< 0.23.46",
+                    "first_patched_version": { "identifier": "0.23.46" }
+                }
+            }
+        ]"#;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"rustls\"\nversion = \"0.23.45\"\n",
+        )
+        .unwrap();
+        let unpatched =
+            parse_dependabot_alerts_json_for_repo(rustls_alerts_json, Some(tmp.path())).unwrap();
+        assert_eq!(unpatched.len(), 4);
+
+        std::fs::write(
+            tmp.path().join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"rustls\"\nversion = \"0.23.46\"\n",
+        )
+        .unwrap();
+        let patched =
+            parse_dependabot_alerts_json_for_repo(rustls_alerts_json, Some(tmp.path())).unwrap();
+        assert!(patched.is_empty());
+
+        // Verify against the actual workspace Cargo.lock
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap();
+        let workspace_alerts =
+            parse_dependabot_alerts_json_for_repo(rustls_alerts_json, Some(workspace_root))
+                .unwrap();
+        assert!(
+            workspace_alerts.is_empty(),
+            "workspace Cargo.lock must remediate all 4 rustls Dependabot alerts (#2, #3, #4, #5)"
+        );
+
+        // Reject path traversal in manifest_path
+        assert!(!is_cargo_lock_alert_remediated(
+            tmp.path(),
+            "../Cargo.lock",
+            "rustls",
+            Some("= 0.23.45"),
+            Some("0.23.46"),
+        ));
     }
 }
 

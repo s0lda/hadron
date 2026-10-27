@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added a header-level `Dispatch Fix All` (or `Dispatch Fix` for a single alert) button in `Git -> Remote & Issues -> Security Warnings (CodeQL & Dependabot)` (`render/git.rs`) that packs all open security alerts into a single structured `@orchestrator` remediation message via `format_security_alerts_remediation_message` (`vcs.rs`), alongside the per-alert `Dispatch Fix` action.
 
 ### Fixed
-- **Dependabot Alert #5 (`rustls` `GHSA-vp88-798v-h67f`) Remediation (`Cargo.lock`)**:
-  - Updated `rustls` from `0.23.45` to `0.23.46` (`Cargo.lock`) to prevent Encrypted Client Hello (ECH) rejection from exposing buffered application data to an authenticated outer server prior to the `ech_required` alert.
+- **Dependabot Alerts #2, #3, #4 & #5 (`rustls` `GHSA-h2v8-394m-p7vv`, `GHSA-c8m5-c952-6cm4`, `GHSA-w44r-93j7-qv28`, `GHSA-vp88-798v-h67f`) Remediation & Local Lockfile Reconciliation (`Cargo.lock`, `hadron-chamber`)**:
+  - Updated `rustls` from `0.23.45` to `0.23.46` (`Cargo.lock`) to remediate all four `rustls` advisories: Brotli certificate decompression allocation (`GHSA-h2v8-394m-p7vv`), `Session` `Debug` formatting secret exposure (`GHSA-c8m5-c952-6cm4`), unauthenticated `ServerHello` key-exchange poisoning (`GHSA-w44r-93j7-qv28`), and Encrypted Client Hello (ECH) rejection buffered application data exposure (`GHSA-vp88-798v-h67f`).
+  - Reconciled open GitHub Dependabot alerts against the workspace's local `Cargo.lock` in `fetch_github_security_alerts` and `parse_dependabot_alerts_json_for_repo` (`vcs.rs`) so alerts whose vulnerable lockfile version has already been upgraded (`>= first_patched_version`) do not remain falsely listed as open while GitHub's dependency graph snapshot lags behind local commits.
 
 ## [0.33.15] - 2026-10-27
 

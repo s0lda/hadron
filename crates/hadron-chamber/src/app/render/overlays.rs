@@ -27,7 +27,7 @@ const RELEASES: &[Release] = &[
         ],
         changed: &[],
         fixed: &[
-            "Dependabot Alert #5 (rustls GHSA-vp88-798v-h67f) Remediation: Bumped rustls from 0.23.45 to 0.23.46 in Cargo.lock to prevent ECH rejection from exposing buffered application data before the ech_required alert",
+            "Dependabot Alerts #2-#5 (rustls GHSA-h2v8-394m-p7vv, GHSA-c8m5-c952-6cm4, GHSA-w44r-93j7-qv28, GHSA-vp88-798v-h67f) Remediation: Bumped rustls from 0.23.45 to 0.23.46 in Cargo.lock and reconciled open Dependabot alerts against local Cargo.lock versions in vcs.rs",
         ],
     },
     Release {
