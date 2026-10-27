@@ -230,6 +230,8 @@ impl super::Engine {
         let mut first_err: Option<anyhow::Error> = None;
         let mut backstop = false;
 
+        self.sync_dag_scheduler_from_plans().await;
+
         loop {
             let mut spawned_any = false;
 
@@ -922,6 +924,31 @@ impl super::Engine {
                     let turn_id = target.clone();
                     let turn_tree = tree.clone();
                     let assignment = driver.as_ref().map(|d| d.assignment);
+                    if let Some(asgn) = assignment {
+                        let task_id = asgn.to_string();
+                        let title = driver.as_ref().map(|d| d.task.as_str()).unwrap_or("Task");
+                        let branch = tree.as_ref().map(|t| t.wt.branch.as_str()).unwrap_or("");
+                        let mut sched = self.dag_scheduler.lock().await;
+                        let matched_id = sched
+                            .tasks
+                            .iter()
+                            .find_map(|(id, t)| {
+                                if (title.to_lowercase().contains(&id.to_lowercase())
+                                    || id.to_lowercase().contains(&title.to_lowercase()))
+                                    && matches!(t.state, BarrierState::Unblocked | BarrierState::Pending)
+                                {
+                                    Some(id.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(task_id);
+
+                        if !sched.tasks.contains_key(&matched_id) {
+                            let _ = sched.add_task(&matched_id, title, &[]);
+                        }
+                        let _ = sched.dispatch_task(&matched_id, target.clone(), branch);
+                    }
                     let deadline = self.turn_deadline;
                     let max_wall_clock = self.max_turn_wall_clock;
                     let live_dir = hadron_lattice::live::live_dir(&self.field_path);
@@ -1072,6 +1099,22 @@ impl super::Engine {
                             Ok(Some((t, edit_info, runner, heartbeat))) => {
                                 let key = (target.clone(), lane);
                                 in_gate.insert(key.clone());
+                                {
+                                    let mut sched = self.dag_scheduler.lock().await;
+                                    if let Some(asgn) = assignment {
+                                        let _ = sched.hold_at_gate_barrier(&asgn.to_string());
+                                    }
+                                    for task in sched.tasks.values_mut() {
+                                        if let BarrierState::Running { branch, .. } = &task.state {
+                                            if branch == &t.wt.branch {
+                                                task.state = BarrierState::GateHolding {
+                                                    assigned_quark: target.clone(),
+                                                    branch: t.wt.branch.clone(),
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
                                 let shadow_gate = Arc::clone(&self.shadow_gate);
                                 let gate_semaphore = Arc::clone(&self.gate_semaphore);
                                 let gate_abort = gates.spawn(async move {
@@ -1236,6 +1279,46 @@ impl super::Engine {
                         let rotate_session = should_rotate_session(&outcome.usage);
                         match pre_res {
                             Ok(pre_outcome) => {
+                                {
+                                    let mut sched = self.dag_scheduler.lock().await;
+                                    match &pre_outcome {
+                                        super::merge::PreGateOutcome::Ready { passed: true, tail, .. } => {
+                                            if let Some(asgn) = assignment {
+                                                let _ = sched.pass_gate_barrier(&asgn.to_string(), tail);
+                                            }
+                                            let holding_ids: Vec<String> = sched
+                                                .tasks
+                                                .iter()
+                                                .filter_map(|(id, task)| {
+                                                    if matches!(&task.state, BarrierState::GateHolding { branch, .. } if branch == &t.wt.branch) {
+                                                        Some(id.clone())
+                                                    } else {
+                                                        None
+                                                    }
+                                                })
+                                                .collect();
+                                            for id in holding_ids {
+                                                let _ = sched.pass_gate_barrier(&id, tail);
+                                            }
+                                        }
+                                        super::merge::PreGateOutcome::Emptied => {
+                                            if let Some(asgn) = assignment {
+                                                let _ = sched.pass_gate_barrier(&asgn.to_string(), "emptied");
+                                            }
+                                        }
+                                        super::merge::PreGateOutcome::Conflicted(err) => {
+                                            if let Some(asgn) = assignment {
+                                                let _ = sched.fail_gate_barrier(&asgn.to_string(), err);
+                                            }
+                                        }
+                                        super::merge::PreGateOutcome::Ready { passed: false, .. } => {
+                                            if let Some(asgn) = assignment {
+                                                let _ = sched.fail_gate_barrier(&asgn.to_string(), "pre-gate tests failed");
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 if let Err(err) = self
                                     .finish_turn_with_gate(
                                         &target,
@@ -1255,6 +1338,12 @@ impl super::Engine {
                             }
                             Err(err) => {
                                 drop(heartbeat);
+                                {
+                                    let mut sched = self.dag_scheduler.lock().await;
+                                    if let Some(asgn) = assignment {
+                                        let _ = sched.fail_gate_barrier(&asgn.to_string(), &err.to_string());
+                                    }
+                                }
                                 if first_err.is_none() {
                                     first_err = Some(err);
                                 }

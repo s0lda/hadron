@@ -15,14 +15,12 @@ use std::time::Duration;
 
 use crate::adapter::registry;
 use crate::engine::Engine;
-use crate::field::read_events;
 use crate::quark::Quark;
 use crate::reseat;
 use hadron_lattice::secrets::SecretStore;
 use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
-    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Actor, Event, Flavor, Kind,
-    Team,
+    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Flavor, Team,
 };
 
 /// Parsed command line: the field path, poll interval, and optional team path.
@@ -313,7 +311,7 @@ pub async fn run() {
 
     // Seat the team: explicit --team, else a sibling team.json next to the field
     // (the .hadron/ convention), else the config-dir default; refuse to start when none.
-    let mut team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
+    let team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
     match &team_path {
         Some(p) => term::info(Source::Gluon, &format!("team from {}", p.display())),
         None => term::info(Source::Gluon, "no team.json found (looked next to the field, then the config dir)"),
@@ -321,7 +319,7 @@ pub async fn run() {
     // The global catalogue holds the quark *definitions* a repo's role/state overrides
     // resolve against. Skip it when it IS the repo file (a bare ~/.hadron/team.json used
     // directly as the team) — there is nothing to resolve against itself.
-    let mut global_path =
+    let global_path =
         team_config_path().filter(|g| Some(g.as_path()) != team_path.as_deref());
     if let Some(g) = &global_path {
         term::info(Source::Gluon, &format!("catalogue from {}", g.display()));
@@ -586,198 +584,184 @@ pub async fn run() {
     // `team.json`. Change is detected on the *bytes*, not on the mtime: a coarse
     // filesystem clock can hide a fast save, and the file is tiny enough that reading it
     // once per interval costs nothing.
-    let mut running_team = team;
-    let mut last_seen_repo: Option<String> = team_path
+    let running_team = team;
+    let last_seen_repo: Option<String> = team_path
         .as_deref()
         .and_then(|p| std::fs::read_to_string(p).ok());
-    let mut last_seen_global: Option<String> = global_path
+    let last_seen_global: Option<String> = global_path
         .as_deref()
         .and_then(|p| std::fs::read_to_string(p).ok());
 
-    let mut shutdown_signal = tokio::spawn(async move {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
         #[cfg(unix)]
         wait_for_shutdown_signal().await;
         #[cfg(not(unix))]
         tokio::signal::ctrl_c().await.ok();
+        let _ = shutdown_tx.send(true);
     });
 
-    let mut last_schedule_check = std::time::Instant::now()
-        .checked_sub(std::time::Duration::from_secs(crate::schedules::SCHEDULE_CHECK_INTERVAL_SECS))
-        .unwrap_or_else(std::time::Instant::now);
+    struct CliSafePointMaintenance {
+        running_team: Team,
+        team_path: Option<PathBuf>,
+        global_path: Option<PathBuf>,
+        last_seen_repo: Option<String>,
+        last_seen_global: Option<String>,
+        last_schedule_check: std::time::Instant,
+        repo_root: PathBuf,
+        live_dir: PathBuf,
+        secret_store: crate::secrets::KeyringStore,
+        team_arg: Option<PathBuf>,
+        field_path: PathBuf,
+    }
 
-    loop {
-        if shutdown_signal.is_finished() {
-            break;
-        }
-
-        let before = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
-        let excite_res = tokio::select! {
-            _ = &mut shutdown_signal => {
-                term::info(Source::Gluon, "shutting down daemon...");
-                break;
-            }
-            res = engine.run_until_quiesce() => res,
-        };
-
-        if let Err(e) = excite_res {
-            term::error(Source::Gluon, &format!("excite error (continuing): {e:#}"));
-            let events_after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
-            if events_after == before {
-                let orch_exists =
-                    engine.roster().iter().any(|c| c.flavor == Flavor::Orchestrator);
-                let body = if orch_exists {
-                    format!("@{} Gluon excite error: {e:#}", crate::router::ORCHESTRATOR_ALIAS)
-                } else {
-                    format!("Gluon excite error: {e:#}")
-                };
-                let _ = engine
-                    .append(Event::new(Actor::Gluon, None, Kind::Message { body }).with_severity(hadron_lattice::Severity::Error))
-                    .await;
-            }
-        }
-        let after = read_events(&args.field_path).map(|e| e.len()).unwrap_or(0);
-        if after > before {
-            term::info(Source::Gluon, &format!("appended {} event(s) → {after} total", after - before));
-        }
-
-        // ---- THE SAFE POINT ---------------------------------------------------
-        //
-        // `run_until_quiesce` has returned, and it only returns when the field has no
-        // pending work AND its `JoinSet` is empty — every turn it spawned has been
-        // *joined*, not merely abandoned. So right here, and nowhere else, there is
-        // provably no quark mid-turn and no turn task holding a clone of a quark's
-        // `Arc`. Re-seating anywhere else could tear an agent out from under a running
-        // turn; that is why `Engine::seat`/`unseat` take `&mut self`, which the borrow
-        // checker will not hand us while a turn is in flight.
-        // Watch BOTH the repo team.json and the global catalogue: a definition edited
-        // in the catalogue (e.g. a model change for an already-adopted quark) must
-        // reconcile even when the repo file is untouched. Reconcile when EITHER file's
-        // bytes change. `poll_team_file` updates `last_seen` on every change, so an
-        // unchanged file's `last_seen` still holds its current content to parse against.
-        let current_team_path = resolve_team_path(args.team_path.clone(), &args.field_path);
-        let current_global_path =
-            team_config_path().filter(|g| Some(g.as_path()) != current_team_path.as_deref());
-        if current_team_path != team_path || current_global_path != global_path {
-            team_path = current_team_path;
-            global_path = current_global_path;
-            last_seen_repo = None;
-            last_seen_global = None;
-        }
-        let repo_changed = team_path
-            .as_deref()
-            .and_then(|p| poll_team_file(p, &mut last_seen_repo));
-        let global_changed = global_path
-            .as_deref()
-            .and_then(|p| poll_team_file(p, &mut last_seen_global));
-        if repo_changed.is_some() || global_changed.is_some() {
-            let repo_parsed = last_seen_repo.as_deref().map(parse_team).transpose();
-            let global_parsed = last_seen_global.as_deref().map(parse_team).transpose();
-            match (repo_parsed, global_parsed) {
-                // A file caught mid-write parses as garbage on EITHER side. Keep the
-                // swarm exactly as it is — treating an unparseable file as empty would
-                // unseat everybody.
-                (Err(e), _) | (_, Err(e)) => term::warn(
-                    Source::Gluon,
-                    &format!("a team file changed but does not parse — keeping the running roster: {e}"),
-                ),
-                (Ok(repo), Ok(global)) => {
-                    let repo = repo.unwrap_or_default();
-                    let mut global = global.unwrap_or_default();
-                    hadron_lattice::merge_wsl_catalogue(&mut global, &args.field_path);
-                    for id in orphan_overrides(&repo, &global) {
-                        term::warn(
+    impl crate::daemon::DaemonHook for CliSafePointMaintenance {
+        fn on_safe_point<'a>(
+            &'a mut self,
+            engine: &'a mut Engine,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
+            Box::pin(async move {
+                // ---- THE SAFE POINT ---------------------------------------------------
+                //
+                // `run_until_quiesce` has returned, and it only returns when the field has no
+                // pending work AND its `JoinSet` is empty — every turn it spawned has been
+                // *joined*, not merely abandoned. So right here, and nowhere else, there is
+                // provably no quark mid-turn and no turn task holding a clone of a quark's
+                // `Arc`. Re-seating anywhere else could tear an agent out from under a running
+                // turn; that is why `Engine::seat`/`unseat` take `&mut self`, which the borrow
+                // checker will not hand us while a turn is in flight.
+                let current_team_path = resolve_team_path(self.team_arg.clone(), &self.field_path);
+                let current_global_path =
+                    team_config_path().filter(|g| Some(g.as_path()) != current_team_path.as_deref());
+                if current_team_path != self.team_path || current_global_path != self.global_path {
+                    self.team_path = current_team_path;
+                    self.global_path = current_global_path;
+                    self.last_seen_repo = None;
+                    self.last_seen_global = None;
+                }
+                let repo_changed = self.team_path
+                    .as_deref()
+                    .and_then(|p| poll_team_file(p, &mut self.last_seen_repo));
+                let global_changed = self.global_path
+                    .as_deref()
+                    .and_then(|p| poll_team_file(p, &mut self.last_seen_global));
+                if repo_changed.is_some() || global_changed.is_some() {
+                    let repo_parsed = self.last_seen_repo.as_deref().map(parse_team).transpose();
+                    let global_parsed = self.last_seen_global.as_deref().map(parse_team).transpose();
+                    match (repo_parsed, global_parsed) {
+                        (Err(e), _) | (_, Err(e)) => term::warn(
                             Source::Gluon,
-                            &format!("repo override {} names no catalogue seat — ignored", id.as_str()),
-                        );
-                    }
-                    let desired = resolve_team(&repo, &global);
-                    // A team with nobody in it is never applied. It is almost certainly a
-                    // mistake, and obeying it would leave a swarm the human cannot talk to.
-                    // The guard is on the RESOLVED team, so an empty result from a bad
-                    // merge (e.g. all-orphan overrides) is caught too.
-                    if desired.is_empty() {
-                        term::warn(
-                            Source::Gluon,
-                            &format!(
-                                "team now seats nobody — keeping the running roster ({} quark(s))",
-                                engine.seated_count()
-                            ),
-                        );
-                    } else {
-                        let max_exchanges = desired.max_exchanges.unwrap_or(12);
-                        engine.set_max_exchanges(max_exchanges);
-                        engine.set_turn_deadline(std::time::Duration::from_secs(desired.turn_deadline_secs()));
-                        engine.set_max_turn_wall_clock(std::time::Duration::from_secs(desired.max_turn_wall_clock_secs()));
-                        engine.set_git_author(desired.git_author_name.clone(), desired.git_author_email.clone());
-                        engine.set_git_auto_prune_worktrees(desired.git_auto_prune_worktrees());
-                        engine.set_nucleus_index_budget_bytes(
-                            crate::nucleus_status::resolve_budget_bytes(&desired),
-                        );
-                        let plan = reseat::plan(&running_team, &desired);
-                        if !plan.is_empty() {
-                            term::info(Source::Gluon, &format!("team changed — re-seating [{}]", plan.summary()));
-                            running_team =
-                                apply_reseat(&mut engine, &running_team, &plan, &live_dir, &secret_store);
-                            term::info(Source::Gluon, &format!("roster is now {} quark(s)", engine.seated_count()));
+                            &format!("a team file changed but does not parse — keeping the running roster: {e}"),
+                        ),
+                        (Ok(repo), Ok(global)) => {
+                            let repo = repo.unwrap_or_default();
+                            let mut global = global.unwrap_or_default();
+                            hadron_lattice::merge_wsl_catalogue(&mut global, &self.field_path);
+                            for id in orphan_overrides(&repo, &global) {
+                                term::warn(
+                                    Source::Gluon,
+                                    &format!("repo override {} names no catalogue seat — ignored", id.as_str()),
+                                );
+                            }
+                            let desired = resolve_team(&repo, &global);
+                            if desired.is_empty() {
+                                term::warn(
+                                    Source::Gluon,
+                                    &format!(
+                                        "team now seats nobody — keeping the running roster ({} quark(s))",
+                                        engine.seated_count()
+                                    ),
+                                );
+                            } else {
+                                let max_exchanges = desired.max_exchanges.unwrap_or(12);
+                                engine.set_max_exchanges(max_exchanges);
+                                engine.set_turn_deadline(std::time::Duration::from_secs(desired.turn_deadline_secs()));
+                                engine.set_max_turn_wall_clock(std::time::Duration::from_secs(desired.max_turn_wall_clock_secs()));
+                                engine.set_git_author(desired.git_author_name.clone(), desired.git_author_email.clone());
+                                engine.set_git_auto_prune_worktrees(desired.git_auto_prune_worktrees());
+                                engine.set_nucleus_index_budget_bytes(
+                                    crate::nucleus_status::resolve_budget_bytes(&desired),
+                                );
+                                let plan = reseat::plan(&self.running_team, &desired);
+                                if !plan.is_empty() {
+                                    term::info(Source::Gluon, &format!("team changed — re-seating [{}]", plan.summary()));
+                                    self.running_team =
+                                        apply_reseat(engine, &self.running_team, &plan, &self.live_dir, &self.secret_store);
+                                    term::info(Source::Gluon, &format!("roster is now {} quark(s)", engine.seated_count()));
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
 
-        if running_team.git_auto_prune_worktrees()
-            && (after > before || repo_changed.is_some() || global_changed.is_some())
-            && !running_team.quarks.is_empty()
-        {
-            let keep: Vec<_> = running_team
-                .quarks
-                .iter()
-                .filter(|s| s.enabled)
-                .map(|s| s.id.clone())
-                .collect();
-            let current_base = crate::worktree::default_branch(&repo_root);
-            if let Ok(reaped) = crate::worktree::reap_idle_worktrees(&repo_root, &keep, &current_base) {
-                for r in &reaped {
-                    if let crate::worktree::Reap::Removed { quark, preserved, .. } = r {
-                        term::info(
-                            Source::Gluon,
-                            &format!(
-                                "reclaimed {}'s idle worktree at safe point (recreated on its next turn)",
-                                quark.as_str()
-                            ),
-                        );
-                        for note in preserved {
-                            term::info(Source::Gluon, &format!("  {note}"));
+                if self.running_team.git_auto_prune_worktrees()
+                    && (repo_changed.is_some() || global_changed.is_some())
+                    && !self.running_team.quarks.is_empty()
+                {
+                    let keep: Vec<_> = self.running_team
+                        .quarks
+                        .iter()
+                        .filter(|s| s.enabled)
+                        .map(|s| s.id.clone())
+                        .collect();
+                    let current_base = crate::worktree::default_branch(&self.repo_root);
+                    if let Ok(reaped) = crate::worktree::reap_idle_worktrees(&self.repo_root, &keep, &current_base) {
+                        for r in &reaped {
+                            if let crate::worktree::Reap::Removed { quark, preserved, .. } = r {
+                                term::info(
+                                    Source::Gluon,
+                                    &format!(
+                                        "reclaimed {}'s idle worktree at safe point (recreated on its next turn)",
+                                        quark.as_str()
+                                    ),
+                                );
+                                for note in preserved {
+                                    term::info(Source::Gluon, &format!("  {note}"));
+                                }
+                            }
+                        }
+                    }
+                    if let Ok(pruned) = crate::worktree::prune_merged_branches(&self.repo_root, &current_base) {
+                        if !pruned.is_empty() {
+                            term::info(
+                                Source::Gluon,
+                                &format!("pruned {} merged quark branch(es) at safe point", pruned.len()),
+                            );
                         }
                     }
                 }
-            }
-            if let Ok(pruned) = crate::worktree::prune_merged_branches(&repo_root, &current_base) {
-                if !pruned.is_empty() {
-                    term::info(
-                        Source::Gluon,
-                        &format!("pruned {} merged quark branch(es) at safe point", pruned.len()),
-                    );
+
+                if self.last_schedule_check.elapsed()
+                    >= std::time::Duration::from_secs(crate::schedules::SCHEDULE_CHECK_INTERVAL_SECS)
+                {
+                    self.last_schedule_check = std::time::Instant::now();
+                    if let Err(e) = crate::schedules::check_schedules(&self.repo_root, engine).await {
+                        term::warn(Source::Gluon, &format!("scheduled tasks check failed: {e:#}"));
+                    }
                 }
-            }
-        }
 
-        if last_schedule_check.elapsed()
-            >= std::time::Duration::from_secs(crate::schedules::SCHEDULE_CHECK_INTERVAL_SECS)
-        {
-            last_schedule_check = std::time::Instant::now();
-            if let Err(e) = crate::schedules::check_schedules(&repo_root, &engine).await {
-                term::warn(Source::Gluon, &format!("scheduled tasks check failed: {e:#}"));
-            }
+                Ok(())
+            })
         }
+    }
 
-        tokio::select! {
-            _ = &mut shutdown_signal => {
-                term::info(Source::Gluon, "shutting down daemon...");
-                break;
-            }
-            _ = tokio::time::sleep(args.interval) => {}
-        }
+    let last_schedule_check = std::time::Instant::now();
+    let mut maintenance = CliSafePointMaintenance {
+        running_team,
+        team_path,
+        global_path,
+        last_seen_repo,
+        last_seen_global,
+        last_schedule_check,
+        repo_root,
+        live_dir,
+        secret_store,
+        team_arg: args.team_path.clone(),
+        field_path: args.field_path.clone(),
+    };
+
+    if let Err(e) = engine.serve_with_hooks(shutdown_rx, args.interval, &mut maintenance).await {
+        term::error(Source::Gluon, &format!("daemon serve loop error: {e:#}"));
     }
 }
 

@@ -11,7 +11,26 @@ use crate::watch::FieldWatcher;
 
 /// How often the daemon re-checks the field even if notify never fires.
 /// notify (via [`FieldWatcher`]) wakes it sooner; this is the liveness floor.
-const SAFETY_POLL: Duration = Duration::from_millis(500);
+pub const SAFETY_POLL: Duration = Duration::from_millis(500);
+
+/// Safe-point lifecycle maintenance hook executed by [`Engine::serve_with_hooks`]
+/// after every quiescence pass while the swarm holds no active turns.
+pub trait DaemonHook: Send {
+    fn on_safe_point<'a>(
+        &'a mut self,
+        engine: &'a mut Engine,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>>;
+}
+
+struct NoopDaemonHook;
+impl DaemonHook for NoopDaemonHook {
+    fn on_safe_point<'a>(
+        &'a mut self,
+        _engine: &'a mut Engine,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+}
 
 impl Engine {
     /// Run as a persistent daemon: process the field to quiescence, then sleep
@@ -22,7 +41,19 @@ impl Engine {
     /// a latency optimization; the safety-poll arm is the liveness guarantee, so
     /// the daemon still progresses where inotify never fires (WSL2 `/mnt/c`) and
     /// never busy-spins if the watcher bridge dies.
-    pub async fn serve(&mut self, mut shutdown: watch::Receiver<bool>) -> anyhow::Result<()> {
+    pub async fn serve(&mut self, shutdown: watch::Receiver<bool>) -> anyhow::Result<()> {
+        let mut noop = NoopDaemonHook;
+        self.serve_with_hooks(shutdown, SAFETY_POLL, &mut noop).await
+    }
+
+    /// Run as a persistent daemon with a configurable safety-poll interval and safe-point
+    /// maintenance hook executed after each quiescence pass.
+    pub async fn serve_with_hooks<H: DaemonHook + ?Sized>(
+        &mut self,
+        mut shutdown: watch::Receiver<bool>,
+        safety_poll: Duration,
+        hook: &mut H,
+    ) -> anyhow::Result<()> {
         // Bridge the blocking notify watcher into an async change signal. A
         // bounded(1) channel coalesces bursts: one pending "something changed"
         // is all the loop needs.
@@ -48,9 +79,43 @@ impl Engine {
         // spin the loop. The safety-poll keeps the daemon live regardless.
         let mut change_open = true;
         loop {
+            if *shutdown.borrow() {
+                break;
+            }
+
+            let before = crate::field::read_events(self.field_path()).map(|e| e.len()).unwrap_or(0);
             if let Err(e) = self.run_until_quiesce().await {
                 term::error(Source::Gluon, &format!("excite error in daemon (continuing): {e:#}"));
+                let events_after = crate::field::read_events(self.field_path()).map(|ev| ev.len()).unwrap_or(0);
+                if events_after == before {
+                    let orch_exists = self.roster().iter().any(|c| c.flavor == hadron_lattice::Flavor::Orchestrator);
+                    let body = if orch_exists {
+                        format!("@{} Gluon excite error: {e:#}", crate::router::ORCHESTRATOR_ALIAS)
+                    } else {
+                        format!("Gluon excite error: {e:#}")
+                    };
+                    let _ = self
+                        .append(
+                            hadron_lattice::Event::new(
+                                hadron_lattice::Actor::Gluon,
+                                None,
+                                hadron_lattice::Kind::Message { body },
+                            )
+                            .with_severity(hadron_lattice::Severity::Error),
+                        )
+                        .await;
+                }
             }
+            let after = crate::field::read_events(self.field_path()).map(|e| e.len()).unwrap_or(0);
+            if after > before {
+                term::info(Source::Gluon, &format!("appended {} event(s) → {after} total", after - before));
+            }
+
+            // Safe point maintenance hook
+            if let Err(e) = hook.on_safe_point(self).await {
+                term::warn(Source::Gluon, &format!("daemon safe-point maintenance error: {e:#}"));
+            }
+
             tokio::select! {
                 _ = shutdown.changed() => {
                     if *shutdown.borrow() {
@@ -62,7 +127,7 @@ impl Engine {
                         change_open = false;
                     }
                 }
-                _ = tokio::time::sleep(SAFETY_POLL) => {}
+                _ = tokio::time::sleep(safety_poll) => {}
             }
         }
 

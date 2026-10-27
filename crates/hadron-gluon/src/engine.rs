@@ -522,6 +522,8 @@ pub struct Engine {
     cancel_slots: HashMap<(QuarkId, Lane), crate::quark::CancelSlot>,
     /// Speculative merge pre-testing cache and shadow gate execution queue.
     shadow_gate: Arc<AsyncMutex<ShadowGate>>,
+    /// Barrier task scheduler managing dependency DAG wave execution and merge barriers.
+    pub dag_scheduler: Arc<AsyncMutex<DagBarrierScheduler>>,
     /// Serializes active merge-gate `sync -> tests -> land` pipelines across
     /// concurrent quarks so 50+ finishing branches queue cleanly without stampeding
     /// `.cargo-lock`, ticking `GATE_TEST_DEADLINE` while waiting, or testing against
@@ -632,6 +634,7 @@ impl Engine {
             global_preons_dir: None,
             cancel_slots,
             shadow_gate: Arc::new(AsyncMutex::new(ShadowGate::new("main"))),
+            dag_scheduler: Arc::new(AsyncMutex::new(DagBarrierScheduler::new())),
             gate_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
             rpc_bus: {
                 let bus = hadron_lattice::MicroRpcBus::new();
@@ -657,6 +660,57 @@ impl Engine {
     pub fn with_shadow_gate(mut self, gate: Arc<AsyncMutex<ShadowGate>>) -> Self {
         self.shadow_gate = gate;
         self
+    }
+
+    /// Access the DAG barrier task scheduler.
+    pub fn dag_scheduler(&self) -> Arc<AsyncMutex<DagBarrierScheduler>> {
+        self.dag_scheduler.clone()
+    }
+
+    /// Set an explicit DAG barrier scheduler instance.
+    pub fn with_dag_scheduler(mut self, scheduler: Arc<AsyncMutex<DagBarrierScheduler>>) -> Self {
+        self.dag_scheduler = scheduler;
+        self
+    }
+
+    /// Sync active implementation plans from `<repo_root>/.hadron/docs/plans/` into `dag_scheduler`.
+    pub async fn sync_dag_scheduler_from_plans(&self) {
+        let Some(repo_root) = &self.repo_root else { return };
+        let plans_dir = repo_root.join(".hadron").join("docs").join("plans");
+        if !plans_dir.is_dir() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(&plans_dir) else { return };
+        let mut newest_plan: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("md") {
+                if let Ok(meta) = entry.metadata() {
+                    let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    if newest_plan.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+                        newest_plan = Some((mtime, path));
+                    }
+                }
+            }
+        }
+        if let Some((_, plan_path)) = newest_plan {
+            if let Ok(content) = std::fs::read_to_string(&plan_path) {
+                if let Ok(parsed) = DagBarrierScheduler::from_plan_markdown(&content) {
+                    let mut sched = self.dag_scheduler.lock().await;
+                    for (id, task) in parsed.tasks {
+                        if !sched.tasks.contains_key(&id) {
+                            sched.tasks.insert(id, task);
+                        } else if matches!(task.state, BarrierState::GatePassed { .. }) {
+                            if let Some(existing) = sched.tasks.get_mut(&id) {
+                                if !matches!(existing.state, BarrierState::GatePassed { .. }) {
+                                    existing.state = task.state;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Micro-RPC bus for synchronous inter-quark communication.

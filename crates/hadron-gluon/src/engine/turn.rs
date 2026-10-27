@@ -522,7 +522,15 @@ impl super::Engine {
                     None => self.merge_gate(target, t).await?,
                 };
                 if parked {
+                    if let Some(asgn) = assignment {
+                        let mut sched = self.dag_scheduler.lock().await;
+                        let _ = sched.fail_gate_barrier(&asgn.to_string(), "gate parked");
+                    }
                     return Ok(()); // the gate parked the quark (Waiting / Blocked)
+                }
+                if let Some(asgn) = assignment {
+                    let mut sched = self.dag_scheduler.lock().await;
+                    let _ = sched.pass_gate_barrier(&asgn.to_string(), &t.wt.branch);
                 }
             }
         }

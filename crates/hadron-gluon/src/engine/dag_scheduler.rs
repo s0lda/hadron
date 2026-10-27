@@ -290,7 +290,14 @@ impl DagBarrierScheduler {
                 };
                 Ok(())
             }
-            _ => Err(format!("Task '{}' is not running, cannot hold at gate", id)),
+            BarrierState::Unblocked | BarrierState::Pending => {
+                task.state = BarrierState::GateHolding {
+                    assigned_quark: QuarkId::new("worker"),
+                    branch: String::new(),
+                };
+                Ok(())
+            }
+            _ => Err(format!("Task '{}' cannot hold at gate from state {:?}", id, task.state)),
         }
     }
 
