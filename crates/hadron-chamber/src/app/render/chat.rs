@@ -1,6 +1,12 @@
 use super::*;
 use gpui_component::ActiveTheme;
 
+/// Maximum viewport height (in px, ~10 lines of rendered Markdown) for the live
+/// `#composer-preview-content` pane stacked above the active composer input.
+/// Keeps long drafts scrollable without starving the chat history viewport or
+/// pushing the editor input off-screen.
+pub(super) const COMPOSER_PREVIEW_MAX_HEIGHT_PX: f32 = 220.0;
+
 impl super::Chamber {
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
     /// selected view, with the human's message box pinned at the foot. The whole
@@ -498,38 +504,54 @@ impl super::Chamber {
                                 theme::glass_highlight()
                             })
                             .shadow_lg()
-                            .child(if self.composer_preview_mode {
+                            .when(self.composer_preview_mode, |el| {
                                 let draft_text = self.input.read(cx).value().to_string();
                                 if draft_text.trim().is_empty() {
-                                    div()
-                                        .id("composer-preview-empty")
-                                        .w_full()
-                                        .p_3()
-                                        .text_xs()
-                                        .italic()
-                                        .text_color(theme::text_muted())
-                                        .child("Nothing to preview — switch to Write to type a message.")
-                                        .into_any_element()
+                                    el.child(
+                                        div()
+                                            .id("composer-preview-empty")
+                                            .w_full()
+                                            .px_2()
+                                            .py_1p5()
+                                            .mb_1p5()
+                                            .border_b_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .italic()
+                                            .text_color(theme::text_muted())
+                                            .child("Live preview — type below to see rendered Markdown."),
+                                    )
                                 } else {
-                                    div()
-                                        .id("composer-preview-content")
-                                        .w_full()
-                                        .max_h(px(260.0))
-                                        .overflow_y_scroll()
-                                        .child(self.markdown_body("composer-preview", usize::MAX, &draft_text, &self.view.roster))
-                                        .into_any_element()
+                                    el.child(
+                                        div()
+                                            .id("composer-preview-content")
+                                            .w_full()
+                                            .max_h(px(COMPOSER_PREVIEW_MAX_HEIGHT_PX))
+                                            .overflow_y_scroll()
+                                            .px_2()
+                                            .pb_2()
+                                            .mb_1p5()
+                                            .border_b_1()
+                                            .border_color(theme::glass_highlight())
+                                            .child(self.markdown_body(
+                                                "composer-preview",
+                                                usize::MAX,
+                                                &draft_text,
+                                                &self.view.roster,
+                                            )),
+                                    )
                                 }
-                            } else {
+                            })
+                            .child(
                                 Input::new(&self.input)
                                     .appearance(false)
                                     .bordered(false)
-                                    .focus_bordered(false)
-                                    .into_any_element()
-                            })
+                                    .focus_bordered(false),
+                            )
                             .when_some(
                                 self.ghost_completion
                                     .clone()
-                                    .filter(|_| self.completion.is_none() && !self.composer_preview_mode),
+                                    .filter(|_| self.completion.is_none()),
                                 |el, ghost| {
                                     el.child(
                                         h_flex()
@@ -697,9 +719,10 @@ impl super::Chamber {
                                                      .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
                                                      .cursor_pointer()
                                                      .child(Icon::new(if self.composer_preview_mode { IconName::EyeOff } else { IconName::Eye }).xsmall())
-                                                     .child(if self.composer_preview_mode { "Write" } else { "Preview" })
-                                                     .on_click(cx.listener(|this, _, _window, cx| {
+                                                     .child("Preview")
+                                                     .on_click(cx.listener(|this, _, window, cx| {
                                                          this.composer_preview_mode = !this.composer_preview_mode;
+                                                         window.focus(&this.input.focus_handle(cx), cx);
                                                          cx.notify();
                                                      })),
                                              ),
@@ -2179,6 +2202,12 @@ mod milestone_3_tests {
         let (commits, files) = super::extract_turn_artifacts(msg);
         assert_eq!(commits, vec!["a1b2c3d4".to_string()]);
         assert_eq!(files, vec!["roster.rs".to_string(), "agy_acp.py".to_string()]);
+    }
+
+    #[test]
+    fn test_composer_preview_max_height_bounds() {
+        assert_eq!(super::COMPOSER_PREVIEW_MAX_HEIGHT_PX, 220.0);
+        assert!((120.0..=300.0).contains(&super::COMPOSER_PREVIEW_MAX_HEIGHT_PX));
     }
 }
 
