@@ -1132,8 +1132,11 @@ impl super::Chamber {
                 )),
         );
 
-        let lab_enabled = self.team.effective_hadron_lab_enabled();
-        let active_turns_limit = self.team.effective_max_concurrent_turns();
+        let lab_enabled = self.team.hadron_lab_enabled();
+        let active_turns_limit = self
+            .team
+            .effective_max_concurrent_turns()
+            .unwrap_or(if lab_enabled { 64 } else { 16 });
         let active_gates_limit = self.team.effective_max_concurrent_gates();
         let active_batch_size = self.team.effective_gate_batch_size();
         let fast_path_docs = self.team.effective_fast_path_docs_only();

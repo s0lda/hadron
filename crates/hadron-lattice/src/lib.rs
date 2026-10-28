@@ -1,7 +1,7 @@
 mod event;
 pub mod live;
 mod projection;
-mod quark;
+pub mod quark;
 pub mod prompt_cost;
 pub mod quota;
 pub mod secrets;

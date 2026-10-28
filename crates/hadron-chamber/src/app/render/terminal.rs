@@ -447,14 +447,170 @@ impl super::Chamber {
                 } else {
                     use crate::sys::{sorted_children, FileTreeNode};
 
+                    let filter_query = self
+                        .file_tree_filter_input
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .to_lowercase();
+                    let hide_ignored = self.file_tree_hide_ignored;
+                    let has_clipboard = self.file_tree_clipboard.is_some();
+
                     let mut root_node = FileTreeNode::default();
                     for (file, is_ignored) in &self.file_tree_paths {
+                        if hide_ignored && *is_ignored {
+                            continue;
+                        }
+                        if !filter_query.is_empty() && !file.to_lowercase().contains(&filter_query) {
+                            continue;
+                        }
                         root_node.insert(file, *is_ignored, file.ends_with('/'));
                     }
                     root_node.resolve_ignores();
 
                     let repo_root =
                         crate::vcs::repo_root_of(std::path::Path::new(&self.path)).to_path_buf();
+
+                    let toolbar = h_flex()
+                        .id("file-tree-toolbar")
+                        .w_full()
+                        .px_2()
+                        .py_1p5()
+                        .gap_1p5()
+                        .items_center()
+                        .border_b_1()
+                        .border_color(theme::border())
+                        .bg(theme::bg_surface())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(80.0))
+                                .child(Input::new(&self.file_tree_filter_input).xsmall().w_full()),
+                        )
+                        .child(
+                            text_button("file-tree-new-file", "+ File").on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.start_file_tree_pending_op(
+                                        FileTreePendingOp::NewFile {
+                                            parent_dir: String::new(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        )
+                        .child(
+                            text_button("file-tree-new-folder", "+ Folder").on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.start_file_tree_pending_op(
+                                        FileTreePendingOp::NewFolder {
+                                            parent_dir: String::new(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        )
+                        .child(
+                            text_button("file-tree-collapse-all", "Collapse").on_click(cx.listener(
+                                |this, _, _window, cx| {
+                                    this.file_tree_expanded.clear();
+                                    this.refresh_file_tree();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
+                            text_button(
+                                "file-tree-toggle-ignored",
+                                if hide_ignored { "Show Ignored" } else { "Hide Ignored" },
+                            )
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.file_tree_hide_ignored = !this.file_tree_hide_ignored;
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            text_button("file-tree-refresh", "Refresh").on_click(cx.listener(
+                                |this, _, _window, cx| {
+                                    this.refresh_file_tree();
+                                    cx.notify();
+                                },
+                            )),
+                        );
+
+                    let pending_bar = self.file_tree_pending_op.as_ref().map(|op| {
+                        let label = match op {
+                            FileTreePendingOp::NewFile { parent_dir } => {
+                                if parent_dir.is_empty() {
+                                    "New File at root:".to_string()
+                                } else {
+                                    format!("New File in {parent_dir}/:")
+                                }
+                            }
+                            FileTreePendingOp::NewFolder { parent_dir } => {
+                                if parent_dir.is_empty() {
+                                    "New Folder at root:".to_string()
+                                } else {
+                                    format!("New Folder in {parent_dir}/:")
+                                }
+                            }
+                            FileTreePendingOp::Rename { target_path } => {
+                                format!("Rename {target_path}:")
+                            }
+                        };
+                        v_flex()
+                            .id("file-tree-pending-op-bar")
+                            .w_full()
+                            .px_2()
+                            .py_1p5()
+                            .gap_1p5()
+                            .border_b_1()
+                            .border_color(theme::accent())
+                            .bg(theme::bg_surface_raised())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(theme::accent())
+                                    .truncate()
+                                    .child(label),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(100.0))
+                                            .child(Input::new(&self.file_tree_op_input).xsmall().w_full()),
+                                    )
+                                    .child(
+                                        text_button("file-tree-op-save", "Save").on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.commit_file_tree_pending_op(window, cx);
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        text_button("file-tree-op-cancel", "Cancel").on_click(
+                                            cx.listener(|this, _, window, cx| {
+                                                this.file_tree_pending_op = None;
+                                                this.file_tree_op_input.update(cx, |s, cx| {
+                                                    s.set_value(String::new(), window, cx)
+                                                });
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ),
+                            )
+                    });
+
+                    let force_expand_all = !filter_query.is_empty();
 
                     fn render_node(
                         name: &str,
@@ -465,6 +621,8 @@ impl super::Chamber {
                         current_path: String,
                         expanded_set: &std::collections::HashSet<String>,
                         git_statuses: &std::collections::HashMap<String, crate::vcs::GitStatus>,
+                        has_clipboard: bool,
+                        force_expand_all: bool,
                     ) -> gpui::AnyElement {
                         let mut list = v_flex().w_full();
                         // root node has empty name and we don't render it directly
@@ -480,12 +638,14 @@ impl super::Chamber {
                                     child_path,
                                     expanded_set,
                                     git_statuses,
+                                    has_clipboard,
+                                    force_expand_all,
                                 ));
                             }
                             return list.into_any_element();
                         }
 
-                        let is_expanded = expanded_set.contains(&current_path);
+                        let is_expanded = force_expand_all || expanded_set.contains(&current_path);
 
                         let git_status = git_statuses.get(&node.full_path);
 
@@ -603,75 +763,72 @@ impl super::Chamber {
                             );
 
                             let path_clone = file_path.clone();
+                            let parent_dir = std::path::Path::new(&file_path)
+                                .parent()
+                                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                                .unwrap_or_default();
                             let view = cx.entity().clone();
 
                             list = list.child(
                                 row.on_mouse_down(gpui::MouseButton::Left, on_dbl_click)
                                     .context_menu(move |mut menu, _, _| {
-                                        let path1 = path_clone.clone();
-                                        let view1 = view.clone();
-                                        menu = menu.item(PopupMenuItem::new("Open File").on_click(
-                                            move |_, window, cx| {
-                                                view1.update(cx, |this, cx| {
-                                                    this.handle_context_menu_action(
-                                                        ContextMenuAction::OpenFile(path1.clone()),
-                                                        cx,
-                                                    )
-                                                });
-                                                window.refresh();
-                                            },
-                                        ));
-
-                                        let path2 = path_clone.clone();
-                                        let view2 = view.clone();
-                                        menu = menu.item(
-                                            PopupMenuItem::new("Open in Editor").on_click(
+                                        let actions: Vec<(&str, ContextMenuAction)> = vec![
+                                            ("Open File", ContextMenuAction::OpenFile(path_clone.clone())),
+                                            ("Open in Editor", ContextMenuAction::OpenInEditor(path_clone.clone())),
+                                            ("Open in Folder", ContextMenuAction::OpenInFolder(path_clone.clone())),
+                                            ("Mention @path in Chat", ContextMenuAction::InsertFileMention(path_clone.clone())),
+                                            ("Copy Path", ContextMenuAction::CopyPath(path_clone.clone())),
+                                            ("Copy Relative Path", ContextMenuAction::CopyRelativePath(path_clone.clone())),
+                                            ("New File…", ContextMenuAction::NewFileIn(parent_dir.clone())),
+                                            ("New Folder…", ContextMenuAction::NewFolderIn(parent_dir.clone())),
+                                            ("Copy", ContextMenuAction::CopyFileItem(path_clone.clone())),
+                                            ("Cut", ContextMenuAction::CutFileItem(path_clone.clone())),
+                                        ];
+                                        for (label, act) in actions {
+                                            let v = view.clone();
+                                            menu = menu.item(PopupMenuItem::new(label).on_click(
                                                 move |_, window, cx| {
-                                                    view2.update(cx, |this, cx| {
-                                                        this.handle_context_menu_action(
-                                                            ContextMenuAction::OpenInEditor(
-                                                                path2.clone(),
-                                                            ),
-                                                            cx,
-                                                        )
+                                                    let a = act.clone();
+                                                    v.update(cx, |this, cx| {
+                                                        this.handle_file_tree_context_action(a, window, cx);
                                                     });
                                                     window.refresh();
                                                 },
-                                            ),
-                                        );
-
-                                        let path3 = path_clone.clone();
-                                        let view3 = view.clone();
-                                        menu = menu.item(
-                                            PopupMenuItem::new("Open in Folder").on_click(
+                                            ));
+                                        }
+                                        if has_clipboard {
+                                            let v = view.clone();
+                                            let dest = parent_dir.clone();
+                                            menu = menu.item(PopupMenuItem::new("Paste").on_click(
                                                 move |_, window, cx| {
-                                                    view3.update(cx, |this, cx| {
-                                                        this.handle_context_menu_action(
-                                                            ContextMenuAction::OpenInFolder(
-                                                                path3.clone(),
-                                                            ),
+                                                    v.update(cx, |this, cx| {
+                                                        this.handle_file_tree_context_action(
+                                                            ContextMenuAction::PasteFileItem(dest.clone()),
+                                                            window,
                                                             cx,
-                                                        )
+                                                        );
                                                     });
                                                     window.refresh();
                                                 },
-                                            ),
-                                        );
-
-                                        let path4 = path_clone.clone();
-                                        let view4 = view.clone();
-                                        menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
-                                            move |_, window, cx| {
-                                                view4.update(cx, |this, cx| {
-                                                    this.handle_context_menu_action(
-                                                        ContextMenuAction::CopyPath(path4.clone()),
-                                                        cx,
-                                                    )
-                                                });
-                                                window.refresh();
-                                            },
-                                        ));
-
+                                            ));
+                                        }
+                                        let tail_actions: Vec<(&str, ContextMenuAction)> = vec![
+                                            ("Duplicate", ContextMenuAction::DuplicateFileItem(path_clone.clone())),
+                                            ("Rename…", ContextMenuAction::RenameFileItem(path_clone.clone())),
+                                            ("Delete", ContextMenuAction::DeleteFileItem(path_clone.clone())),
+                                        ];
+                                        for (label, act) in tail_actions {
+                                            let v = view.clone();
+                                            menu = menu.item(PopupMenuItem::new(label).on_click(
+                                                move |_, window, cx| {
+                                                    let a = act.clone();
+                                                    v.update(cx, |this, cx| {
+                                                        this.handle_file_tree_context_action(a, window, cx);
+                                                    });
+                                                    window.refresh();
+                                                },
+                                            ));
+                                        }
                                         menu
                                     }),
                             );
@@ -685,9 +842,7 @@ impl super::Chamber {
                                         } else {
                                             this.file_tree_expanded.insert(toggle_path.clone());
                                         }
-                                        let repo_root = crate::vcs::repo_root_of(&this.path);
-                                        this.file_tree_paths = crate::sys::list_workspace_files(repo_root, &this.file_tree_expanded);
-                                        this.git_statuses = crate::vcs::get_git_statuses(repo_root);
+                                        this.refresh_file_tree();
                                         cx.notify();
                                     }
                                 },
@@ -699,56 +854,62 @@ impl super::Chamber {
                             list = list.child(
                                 row.on_mouse_down(gpui::MouseButton::Left, on_click)
                                     .context_menu(move |mut menu, _, _| {
-                                        let path1 = folder_path.clone();
-                                        let view1 = view.clone();
-                                        menu = menu.item(
-                                            PopupMenuItem::new("Open in Editor").on_click(
+                                        let actions: Vec<(&str, ContextMenuAction)> = vec![
+                                            ("New File…", ContextMenuAction::NewFileIn(folder_path.clone())),
+                                            ("New Folder…", ContextMenuAction::NewFolderIn(folder_path.clone())),
+                                            ("Open in Editor", ContextMenuAction::OpenInEditor(folder_path.clone())),
+                                            ("Open in Folder", ContextMenuAction::OpenInFolder(folder_path.clone())),
+                                            ("Mention @path in Chat", ContextMenuAction::InsertFileMention(folder_path.clone())),
+                                            ("Copy Path", ContextMenuAction::CopyPath(folder_path.clone())),
+                                            ("Copy Relative Path", ContextMenuAction::CopyRelativePath(folder_path.clone())),
+                                            ("Copy", ContextMenuAction::CopyFileItem(folder_path.clone())),
+                                            ("Cut", ContextMenuAction::CutFileItem(folder_path.clone())),
+                                        ];
+                                        for (label, act) in actions {
+                                            let v = view.clone();
+                                            menu = menu.item(PopupMenuItem::new(label).on_click(
                                                 move |_, window, cx| {
-                                                    view1.update(cx, |this, cx| {
-                                                        this.handle_context_menu_action(
-                                                            ContextMenuAction::OpenInEditor(
-                                                                path1.clone(),
-                                                            ),
-                                                            cx,
-                                                        )
+                                                    let a = act.clone();
+                                                    v.update(cx, |this, cx| {
+                                                        this.handle_file_tree_context_action(a, window, cx);
                                                     });
                                                     window.refresh();
                                                 },
-                                            ),
-                                        );
-
-                                        let path2 = folder_path.clone();
-                                        let view2 = view.clone();
-                                        menu = menu.item(
-                                            PopupMenuItem::new("Open in Folder").on_click(
+                                            ));
+                                        }
+                                        if has_clipboard {
+                                            let v = view.clone();
+                                            let dest = folder_path.clone();
+                                            menu = menu.item(PopupMenuItem::new("Paste").on_click(
                                                 move |_, window, cx| {
-                                                    view2.update(cx, |this, cx| {
-                                                        this.handle_context_menu_action(
-                                                            ContextMenuAction::OpenInFolder(
-                                                                path2.clone(),
-                                                            ),
+                                                    v.update(cx, |this, cx| {
+                                                        this.handle_file_tree_context_action(
+                                                            ContextMenuAction::PasteFileItem(dest.clone()),
+                                                            window,
                                                             cx,
-                                                        )
+                                                        );
                                                     });
                                                     window.refresh();
                                                 },
-                                            ),
-                                        );
-
-                                        let path3 = folder_path.clone();
-                                        let view3 = view.clone();
-                                        menu = menu.item(PopupMenuItem::new("Copy Path").on_click(
-                                            move |_, window, cx| {
-                                                view3.update(cx, |this, cx| {
-                                                    this.handle_context_menu_action(
-                                                        ContextMenuAction::CopyPath(path3.clone()),
-                                                        cx,
-                                                    )
-                                                });
-                                                window.refresh();
-                                            },
-                                        ));
-
+                                            ));
+                                        }
+                                        let tail_actions: Vec<(&str, ContextMenuAction)> = vec![
+                                            ("Duplicate", ContextMenuAction::DuplicateFileItem(folder_path.clone())),
+                                            ("Rename…", ContextMenuAction::RenameFileItem(folder_path.clone())),
+                                            ("Delete", ContextMenuAction::DeleteFileItem(folder_path.clone())),
+                                        ];
+                                        for (label, act) in tail_actions {
+                                            let v = view.clone();
+                                            menu = menu.item(PopupMenuItem::new(label).on_click(
+                                                move |_, window, cx| {
+                                                    let a = act.clone();
+                                                    v.update(cx, |this, cx| {
+                                                        this.handle_file_tree_context_action(a, window, cx);
+                                                    });
+                                                    window.refresh();
+                                                },
+                                            ));
+                                        }
                                         menu
                                     }),
                             );
@@ -765,6 +926,8 @@ impl super::Chamber {
                                         child_path,
                                         expanded_set,
                                         git_statuses,
+                                        has_clipboard,
+                                        force_expand_all,
                                     ));
                                 }
                             }
@@ -772,35 +935,47 @@ impl super::Chamber {
                         list.into_any_element()
                     }
 
-                    div()
+                    v_flex()
                         .id("file-tree-list")
                         .flex_1()
                         .min_h_0()
-                        .relative()
+                        .min_w_0()
+                        .size_full()
+                        .child(toolbar)
+                        .when_some(pending_bar, |v, bar| v.child(bar))
                         .child(
                             div()
-                                .id("file-tree-scroll-content")
-                                .size_full()
-                                .overflow_y_scroll()
-                                .track_scroll(&self.file_tree_scroll)
-                                .p_2()
-                                .pb_8()
-                                .child(render_node(
-                                    "",
-                                    &root_node,
-                                    0,
-                                    cx,
-                                    &repo_root,
-                                    String::new(),
-                                    &self.file_tree_expanded,
-                                    &self.git_statuses,
-                                )),
-                        )
-                        .child(
-                            div().absolute().top_0().bottom_0().right_0().child(
-                                Scrollbar::vertical(&self.file_tree_scroll)
-                                    .scrollbar_show(ScrollbarShow::Always),
-                            ),
+                                .flex_1()
+                                .min_h_0()
+                                .min_w_0()
+                                .relative()
+                                .child(
+                                    div()
+                                        .id("file-tree-scroll-content")
+                                        .size_full()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.file_tree_scroll)
+                                        .p_2()
+                                        .pb_8()
+                                        .child(render_node(
+                                            "",
+                                            &root_node,
+                                            0,
+                                            cx,
+                                            &repo_root,
+                                            String::new(),
+                                            &self.file_tree_expanded,
+                                            &self.git_statuses,
+                                            has_clipboard,
+                                            force_expand_all,
+                                        )),
+                                )
+                                .child(
+                                    div().absolute().top_0().bottom_0().right_0().child(
+                                        Scrollbar::vertical(&self.file_tree_scroll)
+                                            .scrollbar_show(ScrollbarShow::Always),
+                                    ),
+                                ),
                         )
                         .into_any_element()
                 }
