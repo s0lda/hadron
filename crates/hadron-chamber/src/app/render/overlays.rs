@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.19",
+        date: Some("2026-10-28"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Line-Atomic field.jsonl Event Appends & Concatenated Line Recovery: Replaced two-syscall writeln! with a single locked write_all in io::append_event and added a stream deserializer fallback in io::read_new to recover concatenated JSON events on the same line",
+            "Preamble Context Folding into Prompt-Dispatching Slash Commands: Folded preamble text (such as fenced quotes above /team-debate, /debate, /team-brainstorm, /brainstorm, or /goal) into the command argument so context and prompt dispatch together in one unified message",
+        ],
+    },
+    Release {
         version: "0.33.18",
         date: Some("2026-10-28"),
         added: &[

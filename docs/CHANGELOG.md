@@ -5,6 +5,15 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.19] - 2026-10-28
+
+### Fixed
+- **Line-Atomic `field.jsonl` Event Appends & Concatenated Line Recovery (`hadron-lattice`)**:
+  - Updated `io::append_event` (`crates/hadron-lattice/src/io.rs`) to format the JSON line with its trailing `\n` in memory and write via a single `write_all` call under an in-process mutex (`append_lock`), preventing two-syscall `writeln!` interleaving when background threads append concurrently.
+  - Added a `serde_json::Deserializer::from_str(text).into_iter::<Event>()` fallback in `io::read_new` (`crates/hadron-lattice/src/io.rs`) so any previously concatenated JSON events on a single line are cleanly recovered instead of dropped.
+- **Preamble Context Folding into Prompt-Dispatching Slash Commands (`hadron-chamber`)**:
+  - Added `fold_preamble_into_prompt_commands` in `on_input_submit` (`crates/hadron-chamber/src/app/input.rs`) so preamble text (such as fenced quotes or context paragraphs above `/team-debate`, `/debate`, `/team-brainstorm`, `/brainstorm`, or `/goal`) is folded into the command's argument and posted as a single unified `@team`/`@orchestrator` message instead of splitting into a separate unrouted message.
+
 ## [0.33.18] - 2026-10-28
 
 ### Added
