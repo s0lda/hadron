@@ -18,7 +18,6 @@ mod visualizer;
 mod breadcrumb;
 mod repl_overlay;
 mod dag_visualizer;
-mod attention_hud;
 pub(crate) mod pty_grid;
 mod flamechart;
 mod diff_inspector;

@@ -12,7 +12,6 @@ mod stats;
 pub mod tasks;
 pub mod breadcrumb;
 pub mod repl;
-pub mod attention;
 #[cfg(test)]
 mod tests;
 
