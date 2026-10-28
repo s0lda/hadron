@@ -104,6 +104,7 @@ impl super::Chamber {
             })
             .child(self.settings_nav_row(SettingsTarget::Providers, &target, cx))
             .child(self.settings_nav_row(SettingsTarget::Skills, &target, cx))
+            .child(self.settings_nav_row(SettingsTarget::Schedules, &target, cx))
             .child(
                 div()
                     .px_1()
@@ -236,6 +237,7 @@ impl super::Chamber {
                     SettingsTarget::Environment => "Environment & Defaults".to_string(),
                     SettingsTarget::Providers => "Providers".to_string(),
                     SettingsTarget::Skills => "Skills".to_string(),
+                    SettingsTarget::Schedules => "Scheduled Tasks".to_string(),
                     _ => format!("Editing {}", preview.name),
                 },
             ))
@@ -260,6 +262,7 @@ impl super::Chamber {
             SettingsTarget::Environment => self.environment_settings_view(window, cx).into_any_element(),
             SettingsTarget::Providers => self.providers_view(window, cx).into_any_element(),
             SettingsTarget::Skills => self.skills_settings_view(window, cx).into_any_element(),
+            SettingsTarget::Schedules => self.schedules_settings_view(window, cx).into_any_element(),
             _ => {
                 let is_quark = matches!(target, SettingsTarget::Quark(_));
                 let acp_quark = matches!(&target, SettingsTarget::Quark(id) if self.is_acp_quark(id));
@@ -556,6 +559,7 @@ impl super::Chamber {
                 | SettingsTarget::Environment
                 | SettingsTarget::Providers
                 | SettingsTarget::Skills
+                | SettingsTarget::Schedules
         ) {
             div().into_any_element()
         } else {
@@ -792,6 +796,17 @@ impl super::Chamber {
                     .into_any_element(),
                 None,
             ),
+            SettingsTarget::Schedules => (
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::CircleCheck).small())
+                    .into_any_element(),
+                None,
+            ),
             SettingsTarget::Human => (
                 identity_avatar(&resolved, 24.0).into_any_element(),
                 None,
@@ -846,6 +861,7 @@ impl super::Chamber {
                                 SettingsTarget::Environment => "Environment".to_string(),
                                 SettingsTarget::Providers => "Providers".to_string(),
                                 SettingsTarget::Skills => "Skills".to_string(),
+                                SettingsTarget::Schedules => "Schedules".to_string(),
                                 _ => resolved.name.clone(),
                             }),
                     ),
@@ -1168,6 +1184,469 @@ impl super::Chamber {
             .gap_4()
             .child(standard_section)
             .child(skills_section)
+            .child(create_section)
+    }
+
+    /// Dedicated Scheduled Tasks management view: list configured schedules with frequency, status,
+    /// missed-window policy, last run, inline Run/Enable/Disable/Edit/Remove actions, and Add Schedule form.
+    pub(super) fn schedules_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let registry = hadron_lattice::ScheduleRegistry::load(&repo_root).unwrap_or_default();
+        let now = chrono::Utc::now();
+
+        let mut jobs_list = v_flex().gap_2().w_full();
+        if registry.jobs.is_empty() {
+            jobs_list = jobs_list.child(
+                div()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child("No scheduled tasks configured yet. Add a recurring schedule below or run `/schedule add <id> <cron> <prompt>` in chat."),
+            );
+        } else {
+            for (idx, job) in registry.jobs.iter().enumerate() {
+                let job_id = job.id.clone();
+                let job_name = job.name.clone();
+                let task_id = job.task_id.clone();
+                let cron_str = job.cron.clone();
+                let freq_desc = hadron_lattice::describe_cron(&cron_str);
+                let target_str = job.target.clone();
+                let enabled = job.enabled;
+                let policy = job.missed_policy;
+                let due_status = hadron_lattice::ScheduleRegistry::evaluate_job(job, &repo_root, now, 3600);
+
+                let (status_label, status_color) = if !enabled {
+                    ("Disabled", theme::text_muted())
+                } else {
+                    match &due_status {
+                        hadron_lattice::DueStatus::MissingTask { .. } => ("Missing TASK.md", theme::error()),
+                        hadron_lattice::DueStatus::OverdueAsk { .. } => ("Overdue", theme::warning()),
+                        hadron_lattice::DueStatus::Due { .. } => ("Due Now", theme::accent()),
+                        hadron_lattice::DueStatus::NotDue => ("Enabled", theme::success()),
+                    }
+                };
+
+                let last_run_str = job
+                    .last_run_at
+                    .map(|t| format!("Last run: {} UTC", t.format("%Y-%m-%d %H:%M")))
+                    .unwrap_or_else(|| "Last run: Never".to_string());
+                let last_skip_str = job
+                    .last_skipped_at
+                    .map(|t| format!(" • Last skipped: {} UTC", t.format("%Y-%m-%d %H:%M")))
+                    .unwrap_or_default();
+
+                let id_for_run = job_id.clone();
+                let root_for_run = repo_root.clone();
+                let id_for_toggle = job_id.clone();
+                let root_for_toggle = repo_root.clone();
+                let id_for_policy = job_id.clone();
+                let root_for_policy = repo_root.clone();
+                let id_for_del = job_id.clone();
+                let root_for_del = repo_root.clone();
+                let task_for_edit = task_id.clone();
+                let root_for_edit = repo_root.clone();
+
+                jobs_list = jobs_list.child(
+                    v_flex()
+                        .id(("settings-schedule-row", idx))
+                        .w_full()
+                        .gap_1p5()
+                        .p_3()
+                        .rounded_lg()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::border())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(
+                                            div()
+                                                .px_2()
+                                                .py_0p5()
+                                                .rounded_md()
+                                                .bg(theme::glass_card())
+                                                .border_1()
+                                                .border_color(theme::accent())
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme::accent())
+                                                .child(job_id.clone()),
+                                        )
+                                        .when(job_name != job_id, |row| {
+                                            row.child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(theme::text())
+                                                    .truncate()
+                                                    .child(job_name.clone()),
+                                            )
+                                        })
+                                        .child(
+                                            div()
+                                                .px_1p5()
+                                                .py_0p5()
+                                                .rounded_sm()
+                                                .bg(theme::bg_surface_raised())
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .text_color(status_color)
+                                                .child(status_label),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .items_center()
+                                        .child(
+                                            text_button(
+                                                SharedString::from(format!("run-schedule-{idx}")),
+                                                "Run Now",
+                                            )
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                this.run_scheduled_job(&id_for_run, &root_for_run, cx);
+                                                cx.notify();
+                                            })),
+                                        )
+                                        .child(
+                                            text_button(
+                                                SharedString::from(format!("toggle-schedule-{idx}")),
+                                                if enabled { "Disable" } else { "Enable" },
+                                            )
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                if let Ok(mut reg) = hadron_lattice::ScheduleRegistry::load(&root_for_toggle) {
+                                                    if let Some(j) = reg.get_mut(&id_for_toggle) {
+                                                        j.enabled = !j.enabled;
+                                                        let _ = reg.save(&root_for_toggle);
+                                                    }
+                                                }
+                                                this.settings_schedule_status_msg = None;
+                                                cx.notify();
+                                            })),
+                                        )
+                                        .child(
+                                            text_button(
+                                                SharedString::from(format!("edit-schedule-{idx}")),
+                                                "Edit Prompt",
+                                            )
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                if let Ok(path) = hadron_lattice::ScheduleRegistry::task_markdown_path(&root_for_edit, &task_for_edit) {
+                                                    if !path.is_file() {
+                                                        let _ = hadron_lattice::ScheduleRegistry::save_task_markdown(
+                                                            &root_for_edit,
+                                                            &task_for_edit,
+                                                            &format!("# Scheduled Task: {task_for_edit}\n\nDescribe the recurring instructions here.\n"),
+                                                        );
+                                                    }
+                                                    this.open_in_editor(&path, None);
+                                                }
+                                                cx.notify();
+                                            })),
+                                        )
+                                        .child(
+                                            text_button(
+                                                SharedString::from(format!("del-schedule-{idx}")),
+                                                "Remove",
+                                            )
+                                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                                if let Ok(mut reg) = hadron_lattice::ScheduleRegistry::load(&root_for_del) {
+                                                    reg.remove_job(&id_for_del);
+                                                    let _ = reg.save(&root_for_del);
+                                                    this.settings_schedule_status_msg = Some((
+                                                        true,
+                                                        format!("Removed scheduled task '{id_for_del}'."),
+                                                    ));
+                                                }
+                                                cx.notify();
+                                            })),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .flex_wrap()
+                                .gap_2()
+                                .items_center()
+                                .text_xs()
+                                .child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface_raised())
+                                        .text_color(theme::text())
+                                        .child(format!("Frequency: {freq_desc} ({cron_str})")),
+                                )
+                                .child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface_raised())
+                                        .text_color(theme::text_secondary())
+                                        .child(format!("Target: {target_str}")),
+                                )
+                                .child(
+                                    div()
+                                        .id(("cycle-schedule-policy", idx))
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface_raised())
+                                        .border_1()
+                                        .border_color(theme::border())
+                                        .text_color(theme::text_secondary())
+                                        .cursor_pointer()
+                                        .hover(|s| s.border_color(theme::accent()).text_color(theme::text()))
+                                        .child(format!("Missed: {} (click to cycle)", policy.label()))
+                                        .on_click(cx.listener(move |_, _, _window, cx| {
+                                            if let Ok(mut reg) = hadron_lattice::ScheduleRegistry::load(&root_for_policy) {
+                                                if let Some(j) = reg.get_mut(&id_for_policy) {
+                                                    j.missed_policy = j.missed_policy.next();
+                                                    let _ = reg.save(&root_for_policy);
+                                                }
+                                            }
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(theme::text_muted())
+                                        .child(format!("{last_run_str}{last_skip_str}")),
+                                ),
+                        ),
+                );
+            }
+        }
+
+        let configured_section = settings_card_section(
+            "Configured Scheduled Tasks (.hadron/schedules/schedules.json)",
+            Some(IconName::CircleCheck),
+            jobs_list,
+        );
+
+        // 2. Add / Update Scheduled Task Card
+        let presets = [
+            ("@hourly", "Hourly"),
+            ("@daily", "Daily"),
+            ("@weekly", "Weekly"),
+            ("@monthly", "Monthly"),
+            ("0 9 * * 1-5", "Weekdays 09:00"),
+        ];
+        let current_cron = self.settings_schedule_cron.read(cx).value().trim().to_string();
+        let mut preset_pills = h_flex().gap_1p5().flex_wrap().items_center();
+        for (idx, (cron_expr, label)) in presets.iter().enumerate() {
+            let is_active = current_cron == *cron_expr;
+            let expr_owned = cron_expr.to_string();
+            let cron_input = self.settings_schedule_cron.clone();
+            preset_pills = preset_pills.child(
+                div()
+                    .id(("schedule-preset-pill", idx))
+                    .px_2()
+                    .py_0p5()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(if is_active { theme::accent() } else { theme::border() })
+                    .bg(if is_active { theme::glass_card() } else { theme::bg_surface_raised().into() })
+                    .text_xs()
+                    .text_color(if is_active { theme::accent() } else { theme::text_secondary() })
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(theme::accent()))
+                    .child(format!("{label} ({cron_expr})"))
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        cron_input.update(cx, |s, cx| s.set_value(expr_owned.clone(), window, cx));
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let selected_policy = self.settings_schedule_missed_policy;
+        let policies = [
+            hadron_lattice::MissedPolicy::Ask,
+            hadron_lattice::MissedPolicy::Run,
+            hadron_lattice::MissedPolicy::Skip,
+        ];
+        let mut policy_pills = h_flex().gap_1p5().items_center();
+        for (idx, pol) in policies.iter().copied().enumerate() {
+            let is_sel = selected_policy == pol;
+            policy_pills = policy_pills.child(
+                div()
+                    .id(("schedule-new-policy-pill", idx))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(if is_sel { theme::accent() } else { theme::border() })
+                    .bg(if is_sel { theme::glass_card() } else { theme::bg_surface_raised().into() })
+                    .text_xs()
+                    .font_weight(if is_sel { gpui::FontWeight::BOLD } else { gpui::FontWeight::NORMAL })
+                    .text_color(if is_sel { theme::accent() } else { theme::text_secondary() })
+                    .cursor_pointer()
+                    .child(pol.label())
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.settings_schedule_missed_policy = pol;
+                        cx.notify();
+                    })),
+            );
+        }
+
+        let status_banner = self.settings_schedule_status_msg.as_ref().map(|(ok, msg)| {
+            let color = if *ok { theme::success() } else { theme::error() };
+            div()
+                .w_full()
+                .p_2()
+                .rounded_md()
+                .bg(theme::bg_surface_raised())
+                .border_1()
+                .border_color(color)
+                .text_xs()
+                .text_color(color)
+                .child(msg.clone())
+        });
+
+        let root_for_add = repo_root.clone();
+        let create_content = v_flex()
+            .gap_3()
+            .w_full()
+            .when_some(status_banner, |v, b| v.child(b))
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_3()
+                    .child(
+                        div().flex_1().child(settings_field_stacked(
+                            "Schedule ID (slug)",
+                            Input::new(&self.settings_schedule_id).w_full().into_any_element(),
+                        )),
+                    )
+                    .child(
+                        div().flex_1().child(settings_field_stacked(
+                            "Target Mention",
+                            Input::new(&self.settings_schedule_target).w_full().into_any_element(),
+                        )),
+                    ),
+            )
+            .child(settings_field_stacked(
+                "Frequency (5-field Cron or @hourly / @daily / @weekly / @monthly)",
+                v_flex()
+                    .gap_1p5()
+                    .w_full()
+                    .child(preset_pills)
+                    .child(Input::new(&self.settings_schedule_cron).w_full())
+                    .into_any_element(),
+            ))
+            .child(settings_field(
+                "Missed Window Policy",
+                Some("Behavior when a scheduled window passed while Hadron was closed."),
+                policy_pills.into_any_element(),
+            ))
+            .child(settings_field_stacked(
+                "Task Prompt (.hadron/schedules/tasks/<id>/TASK.md)",
+                Input::new(&self.settings_schedule_prompt).w_full().into_any_element(),
+            ))
+            .child(
+                div()
+                    .id("add-scheduled-task-btn")
+                    .w_full()
+                    .py_2()
+                    .px_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme::accent())
+                    .bg(theme::bg_surface_raised())
+                    .hover(|s| s.bg(theme::glass_card()))
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(Icon::new(IconName::Plus).small().text_color(theme::accent()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::accent())
+                            .child("Save Scheduled Task"),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let raw_id = this.settings_schedule_id.read(cx).value().trim().to_string();
+                        let raw_cron = this.settings_schedule_cron.read(cx).value().trim().to_string();
+                        let raw_target = this.settings_schedule_target.read(cx).value().trim().to_string();
+                        let raw_prompt = this.settings_schedule_prompt.read(cx).value().trim().to_string();
+
+                        if let Err(e) = hadron_lattice::validate_task_id(&raw_id) {
+                            this.settings_schedule_status_msg = Some((false, format!("Invalid schedule ID: {e}")));
+                            cx.notify();
+                            return;
+                        }
+                        if let Err(e) = hadron_lattice::validate_cron(&raw_cron) {
+                            this.settings_schedule_status_msg = Some((false, format!("Invalid cron expression: {e}")));
+                            cx.notify();
+                            return;
+                        }
+
+                        let prompt_body = if raw_prompt.is_empty() {
+                            format!("# Scheduled Task: {raw_id}\n\nExecute recurring task `{raw_id}`.")
+                        } else {
+                            raw_prompt
+                        };
+
+                        if let Err(e) = hadron_lattice::ScheduleRegistry::save_task_markdown(&root_for_add, &raw_id, &prompt_body) {
+                            this.settings_schedule_status_msg = Some((false, format!("Failed to write TASK.md: {e}")));
+                            cx.notify();
+                            return;
+                        }
+
+                        let mut reg = hadron_lattice::ScheduleRegistry::load(&root_for_add).unwrap_or_default();
+                        let mut job = hadron_lattice::ScheduledJob::new(&raw_id, &raw_id, &raw_id, &raw_cron);
+                        job.target = if raw_target.is_empty() {
+                            "@orchestrator".to_string()
+                        } else if raw_target.starts_with('@') {
+                            raw_target
+                        } else {
+                            format!("@{raw_target}")
+                        };
+                        job.missed_policy = this.settings_schedule_missed_policy;
+                        reg.upsert_job(job);
+
+                        match reg.save(&root_for_add) {
+                            Ok(()) => {
+                                this.settings_schedule_id.update(cx, |s, cx| s.set_value("", window, cx));
+                                this.settings_schedule_prompt.update(cx, |s, cx| s.set_value("", window, cx));
+                                this.settings_schedule_status_msg = Some((
+                                    true,
+                                    format!("Saved scheduled task '{raw_id}' ({raw_cron})."),
+                                ));
+                            }
+                            Err(e) => {
+                                this.settings_schedule_status_msg = Some((
+                                    false,
+                                    format!("Failed to save schedules.json: {e}"),
+                                ));
+                            }
+                        }
+                        cx.notify();
+                    })),
+            );
+
+        let create_section = settings_card_section(
+            "Add / Update Scheduled Task",
+            Some(IconName::Plus),
+            create_content,
+        );
+
+        v_flex()
+            .gap_4()
+            .child(configured_section)
             .child(create_section)
     }
 }

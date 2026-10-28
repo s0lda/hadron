@@ -16,6 +16,24 @@ pub enum MissedPolicy {
     Skip,
 }
 
+impl MissedPolicy {
+    pub fn label(self) -> &'static str {
+        match self {
+            MissedPolicy::Ask => "Ask",
+            MissedPolicy::Run => "Run",
+            MissedPolicy::Skip => "Skip",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            MissedPolicy::Ask => MissedPolicy::Run,
+            MissedPolicy::Run => MissedPolicy::Skip,
+            MissedPolicy::Skip => MissedPolicy::Ask,
+        }
+    }
+}
+
 fn default_target() -> String {
     "@orchestrator".to_string()
 }
@@ -146,6 +164,30 @@ impl ScheduleRegistry {
             .map_err(|e| anyhow::anyhow!("could not read {}: {e}", path.display()))
     }
 
+    /// Write the markdown prompt for a given task_id to `.hadron/schedules/tasks/<task_id>/TASK.md`.
+    pub fn save_task_markdown(repo_root: &Path, task_id: &str, content: &str) -> anyhow::Result<PathBuf> {
+        let dir = Self::task_dir(repo_root, task_id)?;
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("TASK.md");
+        std::fs::write(&path, content)?;
+        Ok(path)
+    }
+
+    /// Insert or update a scheduled job by ID.
+    pub fn upsert_job(&mut self, job: ScheduledJob) {
+        if let Some(existing) = self.jobs.iter_mut().find(|j| j.id == job.id) {
+            *existing = job;
+        } else {
+            self.jobs.push(job);
+        }
+    }
+
+    /// Remove a scheduled job by ID, returning the removed job if present.
+    pub fn remove_job(&mut self, id: &str) -> Option<ScheduledJob> {
+        let pos = self.jobs.iter().position(|j| j.id == id)?;
+        Some(self.jobs.remove(pos))
+    }
+
     /// Load the schedule registry from `<repo_root>/.hadron/schedules/schedules.json`.
     pub fn load(repo_root: &Path) -> anyhow::Result<Self> {
         let file = Self::schedules_file(repo_root);
@@ -245,6 +287,59 @@ impl ScheduleRegistry {
         }
         results
     }
+}
+
+/// Validates a 5-field cron expression or standard `@` macro.
+pub fn validate_cron(cron: &str) -> anyhow::Result<()> {
+    let dt = Utc::now();
+    cron_matches(cron, &dt).map(|_| ())
+}
+
+/// Returns a concise human-readable frequency summary for a cron expression or macro.
+pub fn describe_cron(cron: &str) -> String {
+    let trimmed = cron.trim();
+    match trimmed {
+        "@hourly" | "0 * * * *" => return "Hourly".to_string(),
+        "@daily" | "@midnight" | "0 0 * * *" => return "Daily (00:00 UTC)".to_string(),
+        "@weekly" | "0 0 * * 0" | "0 0 * * 7" => return "Weekly (Sun 00:00 UTC)".to_string(),
+        "@monthly" | "0 0 1 * *" => return "Monthly (1st 00:00 UTC)".to_string(),
+        "@yearly" | "@annually" | "0 0 1 1 *" => return "Yearly (Jan 1)".to_string(),
+        "* * * * *" => return "Every minute".to_string(),
+        _ => {}
+    }
+
+    let fields: Vec<&str> = trimmed.split_whitespace().collect();
+    if fields.len() == 5 {
+        if let Some(step) = fields[0].strip_prefix("*/") {
+            if fields[1] == "*" && fields[2] == "*" && fields[3] == "*" && fields[4] == "*" {
+                return format!("Every {step} mins");
+            }
+        }
+        if fields[0] == "0" {
+            if let Some(step) = fields[1].strip_prefix("*/") {
+                if fields[2] == "*" && fields[3] == "*" && fields[4] == "*" {
+                    return format!("Every {step} hours");
+                }
+            }
+        }
+        if let (Ok(min), Ok(hour)) = (fields[0].parse::<u32>(), fields[1].parse::<u32>()) {
+            if fields[2] == "*" && fields[3] == "*" {
+                match fields[4] {
+                    "*" => return format!("Daily ({hour:02}:{min:02} UTC)"),
+                    "1-5" => return format!("Weekdays ({hour:02}:{min:02} UTC)"),
+                    "0" | "7" => return format!("Weekly (Sun {hour:02}:{min:02} UTC)"),
+                    "1" => return format!("Weekly (Mon {hour:02}:{min:02} UTC)"),
+                    "2" => return format!("Weekly (Tue {hour:02}:{min:02} UTC)"),
+                    "3" => return format!("Weekly (Wed {hour:02}:{min:02} UTC)"),
+                    "4" => return format!("Weekly (Thu {hour:02}:{min:02} UTC)"),
+                    "5" => return format!("Weekly (Fri {hour:02}:{min:02} UTC)"),
+                    "6" => return format!("Weekly (Sat {hour:02}:{min:02} UTC)"),
+                    _ => {}
+                }
+            }
+        }
+    }
+    trimmed.to_string()
 }
 
 /// Parses a 5-field cron expression or macro and checks whether it matches a given UTC datetime.
@@ -481,5 +576,39 @@ mod tests {
         job.missed_policy = MissedPolicy::Skip;
         let status_skip = ScheduleRegistry::evaluate_job(&job, repo, now_overdue, 3600);
         assert_eq!(status_skip, DueStatus::NotDue);
+    }
+
+    #[test]
+    fn test_describe_and_validate_cron_and_crud() {
+        assert_eq!(describe_cron("@hourly"), "Hourly");
+        assert_eq!(describe_cron("@daily"), "Daily (00:00 UTC)");
+        assert_eq!(describe_cron("0 9 * * 1-5"), "Weekdays (09:00 UTC)");
+        assert_eq!(describe_cron("30 14 * * *"), "Daily (14:30 UTC)");
+        assert_eq!(describe_cron("*/15 * * * *"), "Every 15 mins");
+        assert!(validate_cron("0 9 * * 1-5").is_ok());
+        assert!(validate_cron("@weekly").is_ok());
+        assert!(validate_cron("invalid cron").is_err());
+
+        assert_eq!(MissedPolicy::Ask.next(), MissedPolicy::Run);
+        assert_eq!(MissedPolicy::Run.next(), MissedPolicy::Skip);
+        assert_eq!(MissedPolicy::Skip.next(), MissedPolicy::Ask);
+
+        let dir = tempdir().unwrap();
+        let repo = dir.path();
+        let task_path = ScheduleRegistry::save_task_markdown(repo, "weekly_audit", "Run security audit.").unwrap();
+        assert!(task_path.is_file());
+        assert_eq!(ScheduleRegistry::load_task_markdown(repo, "weekly_audit").unwrap(), "Run security audit.");
+
+        let mut reg = ScheduleRegistry::default();
+        reg.upsert_job(ScheduledJob::new("weekly-audit", "Weekly Audit", "weekly_audit", "@weekly"));
+        assert_eq!(reg.jobs.len(), 1);
+        reg.upsert_job(ScheduledJob::new("weekly-audit", "Updated Audit", "weekly_audit", "@daily"));
+        assert_eq!(reg.jobs.len(), 1);
+        assert_eq!(reg.jobs[0].name, "Updated Audit");
+        assert_eq!(reg.jobs[0].cron, "@daily");
+
+        let removed = reg.remove_job("weekly-audit");
+        assert!(removed.is_some());
+        assert!(reg.jobs.is_empty());
     }
 }

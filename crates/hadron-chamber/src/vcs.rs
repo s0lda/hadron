@@ -1128,21 +1128,38 @@ pub struct GitHubSecurityAlertInfo {
 }
 
 impl GitHubSecurityAlertInfo {
+    /// Returns the `gh api --method PATCH` command to close/dismiss this alert on GitHub once fixed.
+    pub fn close_gh_command(&self) -> String {
+        if self.source.eq_ignore_ascii_case("Dependabot") {
+            format!(
+                "gh api --method PATCH repos/{{owner}}/{{repo}}/dependabot/alerts/{} -f state=dismissed -f dismissed_reason=fix_started -f dismissed_comment=\"Remediated in repository\"",
+                self.number
+            )
+        } else {
+            format!(
+                "gh api --method PATCH repos/{{owner}}/{{repo}}/code-scanning/alerts/{} -f state=dismissed -f dismissed_reason=\"won't fix\" -f dismissed_comment=\"Remediated in repository\"",
+                self.number
+            )
+        }
+    }
+
     /// Formats an individual remediation prompt for this security alert.
     pub fn remediation_prompt(&self) -> String {
         let loc = self.location.as_deref().unwrap_or("repository");
+        let close_cmd = self.close_gh_command();
         format!(
-            "@orchestrator Remediate {} security alert #{} (`{}`: {}) at `{}` ({}).",
-            self.source, self.number, self.rule_id, self.summary, loc, self.url
+            "@orchestrator Remediate {} security alert #{} (`{}`: {}) at `{}` ({}). Once the fix is implemented and verified, close the alert on GitHub via `{}`.",
+            self.source, self.number, self.rule_id, self.summary, loc, self.url, close_cmd
         )
     }
 
     /// Formats a bullet-item line for multi-alert remediation.
     pub fn remediation_item(&self) -> String {
         let loc = self.location.as_deref().unwrap_or("repository");
+        let close_cmd = self.close_gh_command();
         format!(
-            "- {} security alert #{} (`{}`: {}) at `{}` ({})",
-            self.source, self.number, self.rule_id, self.summary, loc, self.url
+            "- {} security alert #{} (`{}`: {}) at `{}` ({}) — close once fixed via `{}`",
+            self.source, self.number, self.rule_id, self.summary, loc, self.url, close_cmd
         )
     }
 }
@@ -1155,7 +1172,9 @@ pub fn format_security_alerts_remediation_message(alerts: &[GitHubSecurityAlertI
         0 => "@orchestrator Check and remediate open security alerts.".to_string(),
         1 => alerts[0].remediation_prompt(),
         n => {
-            let mut msg = format!("@orchestrator Remediate the following {n} security alerts:\n");
+            let mut msg = format!(
+                "@orchestrator Remediate the following {n} security alerts and close each on GitHub once fixed:\n"
+            );
             for alert in alerts {
                 msg.push_str(&alert.remediation_item());
                 msg.push('\n');
@@ -1800,6 +1819,118 @@ pub fn parse_dependabot_alerts_json_for_repo(
         .collect())
 }
 
+/// Return alert numbers of open Dependabot alerts in `bytes` that have already been remediated in `repo_root`'s `Cargo.lock`.
+pub fn remediated_dependabot_alert_numbers(bytes: &[u8], repo_root: &Path) -> Vec<u64> {
+    #[derive(serde::Deserialize)]
+    struct RawPkg {
+        name: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawDep {
+        package: Option<RawPkg>,
+        manifest_path: Option<String>,
+        version_requirement: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawPatchedVersion {
+        identifier: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawVulnerability {
+        first_patched_version: Option<RawPatchedVersion>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawDepAlert {
+        number: u64,
+        #[serde(default)]
+        state: String,
+        dependency: Option<RawDep>,
+        security_vulnerability: Option<RawVulnerability>,
+    }
+
+    let Ok(raw) = serde_json::from_slice::<Vec<RawDepAlert>>(bytes) else {
+        return Vec::new();
+    };
+
+    raw.into_iter()
+        .filter(|a| a.state.is_empty() || a.state.eq_ignore_ascii_case("open"))
+        .filter(|a| {
+            let Some(dep) = a.dependency.as_ref() else {
+                return false;
+            };
+            let Some(manifest) = dep.manifest_path.as_deref() else {
+                return false;
+            };
+            let Some(pkg) = dep.package.as_ref().and_then(|p| p.name.as_deref()) else {
+                return false;
+            };
+            let first_patched = a
+                .security_vulnerability
+                .as_ref()
+                .and_then(|v| v.first_patched_version.as_ref())
+                .and_then(|p| p.identifier.as_deref());
+            is_cargo_lock_alert_remediated(
+                repo_root,
+                manifest,
+                pkg,
+                dep.version_requirement.as_deref(),
+                first_patched,
+            )
+        })
+        .map(|a| a.number)
+        .collect()
+}
+
+/// Close (dismiss) a security alert on GitHub via `gh api --method PATCH`.
+pub fn close_github_security_alert(
+    repo_root: &Path,
+    repo_slug: Option<&str>,
+    source: &str,
+    alert_number: u64,
+    comment: &str,
+) -> Result<(), String> {
+    let slug = match repo_slug.filter(|s| !s.trim().is_empty()) {
+        Some(s) => s.to_string(),
+        None => get_remote_tracking_info(repo_root)
+            .repo_slug
+            .unwrap_or_else(|| "{owner}/{repo}".to_string()),
+    };
+
+    let (endpoint, reason) = if source.eq_ignore_ascii_case("Dependabot") {
+        (
+            format!("repos/{slug}/dependabot/alerts/{alert_number}"),
+            "fix_started",
+        )
+    } else {
+        (
+            format!("repos/{slug}/code-scanning/alerts/{alert_number}"),
+            "won't fix",
+        )
+    };
+
+    let out = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
+        .args([
+            "api",
+            "--method",
+            "PATCH",
+            &endpoint,
+            "-f",
+            "state=dismissed",
+            "-f",
+            &format!("dismissed_reason={reason}"),
+            "-f",
+            &format!("dismissed_comment={comment}"),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke gh api to close alert #{alert_number}: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(format!("gh api PATCH {endpoint} failed: {stderr}"));
+    }
+    Ok(())
+}
+
 /// Fetch open GitHub security warnings (CodeQL code-scanning + Dependabot alerts) via `gh api`.
 pub fn fetch_github_security_alerts(
     repo_root: &Path,
@@ -1830,6 +1961,15 @@ pub fn fetch_github_security_alerts(
         .output()
     {
         if out.status.success() {
+            for num in remediated_dependabot_alert_numbers(&out.stdout, repo_root) {
+                let _ = close_github_security_alert(
+                    repo_root,
+                    Some(&slug),
+                    "Dependabot",
+                    num,
+                    "Remediated in local Cargo.lock (upgraded to patched version).",
+                );
+            }
             if let Ok(mut dep) = parse_dependabot_alerts_json_for_repo(&out.stdout, Some(repo_root))
             {
                 alerts.append(&mut dep);
@@ -2534,23 +2674,23 @@ index a1b2c3d..e4f5g6h 100644
         // Single alert formatting with location
         assert_eq!(
             format_security_alerts_remediation_message(&[alert1.clone()]),
-            "@orchestrator Remediate CodeQL security alert #1 (`rust/cleartext-logging`: Cleartext logging of sensitive information) at `crates/hadron-gluon/examples/acp_probe.rs:69` (https://github.com/s0lda/hadron/security/code-scanning/1)."
+            "@orchestrator Remediate CodeQL security alert #1 (`rust/cleartext-logging`: Cleartext logging of sensitive information) at `crates/hadron-gluon/examples/acp_probe.rs:69` (https://github.com/s0lda/hadron/security/code-scanning/1). Once the fix is implemented and verified, close the alert on GitHub via `gh api --method PATCH repos/{owner}/{repo}/code-scanning/alerts/1 -f state=dismissed -f dismissed_reason=\"won't fix\" -f dismissed_comment=\"Remediated in repository\"`."
         );
 
         // Single alert formatting without location (defaults to "repository")
         assert_eq!(
             format_security_alerts_remediation_message(&[alert_no_loc.clone()]),
-            "@orchestrator Remediate Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3)."
+            "@orchestrator Remediate Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3). Once the fix is implemented and verified, close the alert on GitHub via `gh api --method PATCH repos/{owner}/{repo}/dependabot/alerts/3 -f state=dismissed -f dismissed_reason=fix_started -f dismissed_comment=\"Remediated in repository\"`."
         );
 
         // Multiple alerts formatting packed into a single message
         let packed = format_security_alerts_remediation_message(&[alert1, alert2, alert_no_loc]);
         assert_eq!(
             packed,
-            "@orchestrator Remediate the following 3 security alerts:\n\
-            - CodeQL security alert #1 (`rust/cleartext-logging`: Cleartext logging of sensitive information) at `crates/hadron-gluon/examples/acp_probe.rs:69` (https://github.com/s0lda/hadron/security/code-scanning/1)\n\
-            - Dependabot security alert #2 (`CVE-2026-39863`: URI name constraint validation bypass) at `Cargo.lock` (https://github.com/s0lda/hadron/security/dependabot/2)\n\
-            - Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3)"
+            "@orchestrator Remediate the following 3 security alerts and close each on GitHub once fixed:\n\
+            - CodeQL security alert #1 (`rust/cleartext-logging`: Cleartext logging of sensitive information) at `crates/hadron-gluon/examples/acp_probe.rs:69` (https://github.com/s0lda/hadron/security/code-scanning/1) — close once fixed via `gh api --method PATCH repos/{owner}/{repo}/code-scanning/alerts/1 -f state=dismissed -f dismissed_reason=\"won't fix\" -f dismissed_comment=\"Remediated in repository\"`\n\
+            - Dependabot security alert #2 (`CVE-2026-39863`: URI name constraint validation bypass) at `Cargo.lock` (https://github.com/s0lda/hadron/security/dependabot/2) — close once fixed via `gh api --method PATCH repos/{owner}/{repo}/dependabot/alerts/2 -f state=dismissed -f dismissed_reason=fix_started -f dismissed_comment=\"Remediated in repository\"`\n\
+            - Dependabot security alert #3 (`GHSA-1234`: Remote code execution) at `repository` (https://github.com/s0lda/hadron/security/dependabot/3) — close once fixed via `gh api --method PATCH repos/{owner}/{repo}/dependabot/alerts/3 -f state=dismissed -f dismissed_reason=fix_started -f dismissed_comment=\"Remediated in repository\"`"
         );
     }
 
@@ -2657,6 +2797,10 @@ index a1b2c3d..e4f5g6h 100644
         let patched =
             parse_dependabot_alerts_json_for_repo(rustls_alerts_json, Some(tmp.path())).unwrap();
         assert!(patched.is_empty());
+        assert_eq!(
+            remediated_dependabot_alert_numbers(rustls_alerts_json, tmp.path()),
+            vec![5, 4, 3, 2]
+        );
 
         // Verify against the actual workspace Cargo.lock
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))

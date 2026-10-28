@@ -2169,23 +2169,20 @@ impl Chamber {
                         let mut lines = vec![
                             "### Scheduled Tasks (`.hadron/schedules/schedules.json`)".to_string(),
                             "".to_string(),
-                            "| ID | Name | Task ID | Cron | Target | Status | Missed | Last Run |".to_string(),
-                            "|---|---|---|---|---|---|---|---|".to_string(),
+                            "| ID | Name | Task ID | Frequency | Cron | Target | Status | Missed | Last Run |".to_string(),
+                            "|---|---|---|---|---|---|---|---|---|".to_string(),
                         ];
                         for job in &reg.jobs {
                             let status = if job.enabled { "🟢 Enabled" } else { "⚪ Disabled" };
-                            let policy = match job.missed_policy {
-                                hadron_lattice::MissedPolicy::Ask => "Ask",
-                                hadron_lattice::MissedPolicy::Run => "Run",
-                                hadron_lattice::MissedPolicy::Skip => "Skip",
-                            };
+                            let freq = hadron_lattice::describe_cron(&job.cron);
+                            let policy = job.missed_policy.label();
                             let last_run = job
                                 .last_run_at
                                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                                 .unwrap_or_else(|| "Never".to_string());
                             lines.push(format!(
-                                "| `{}` | {} | `{}` | `{}` | `{}` | {} | {} | {} |",
-                                job.id, job.name, job.task_id, job.cron, job.target, status, policy, last_run
+                                "| `{}` | {} | `{}` | {} | `{}` | `{}` | {} | {} | {} |",
+                                job.id, job.name, job.task_id, freq, job.cron, job.target, status, policy, last_run
                             ));
                         }
                         self.post_chat_message(Actor::Gluon, lines.join("\n"), cx);
@@ -2198,6 +2195,78 @@ impl Chamber {
                         );
                     }
                 }
+            }
+            "add" => {
+                let after_add = args.trim().strip_prefix("add").unwrap_or("").trim();
+                match parse_schedule_add_args(after_add) {
+                    Ok((id, cron, prompt)) => {
+                        if let Err(e) = hadron_lattice::validate_task_id(&id) {
+                            self.post_chat_message(Actor::Gluon, format!("Invalid schedule ID `{id}`: {e}"), cx);
+                            return;
+                        }
+                        if let Err(e) = hadron_lattice::validate_cron(&cron) {
+                            self.post_chat_message(Actor::Gluon, format!("Invalid cron expression `{cron}`: {e}"), cx);
+                            return;
+                        }
+                        let prompt_body = if prompt.trim().is_empty() {
+                            format!("# Scheduled Task: {id}\n\nExecute recurring task `{id}`.")
+                        } else {
+                            prompt
+                        };
+                        if let Err(e) = hadron_lattice::ScheduleRegistry::save_task_markdown(repo_root, &id, &prompt_body) {
+                            self.post_chat_message(Actor::Gluon, format!("Failed to write TASK.md for `{id}`: {e:#}"), cx);
+                            return;
+                        }
+                        let mut reg = hadron_lattice::ScheduleRegistry::load(repo_root).unwrap_or_default();
+                        reg.upsert_job(hadron_lattice::ScheduledJob::new(&id, &id, &id, &cron));
+                        match reg.save(repo_root) {
+                            Ok(()) => {
+                                let freq = hadron_lattice::describe_cron(&cron);
+                                self.post_chat_message(
+                                    Actor::Gluon,
+                                    format!("Scheduled task `{id}` saved ({freq}, `{cron}`). Task prompt written to `.hadron/schedules/tasks/{id}/TASK.md`."),
+                                    cx,
+                                );
+                            }
+                            Err(e) => {
+                                self.post_chat_message(Actor::Gluon, format!("Failed to save schedule `{id}`: {e:#}"), cx);
+                            }
+                        }
+                    }
+                    Err(usage) => {
+                        self.post_chat_message(Actor::Gluon, usage, cx);
+                    }
+                }
+            }
+            "remove" | "delete" | "rm" => {
+                let id = match parts.get(1) {
+                    Some(id) => *id,
+                    None => {
+                        self.post_chat_message(Actor::Gluon, "Usage: `/schedule remove <id>`".to_string(), cx);
+                        return;
+                    }
+                };
+                match hadron_lattice::ScheduleRegistry::load(repo_root) {
+                    Ok(mut reg) => {
+                        if reg.remove_job(id).is_some() {
+                            if let Err(e) = reg.save(repo_root) {
+                                self.post_chat_message(Actor::Gluon, format!("Failed to save schedules: {e:#}"), cx);
+                            } else {
+                                self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` removed."), cx);
+                            }
+                        } else {
+                            self.post_chat_message(Actor::Gluon, format!("Scheduled task `{id}` not found."), cx);
+                        }
+                    }
+                    Err(e) => {
+                        self.post_chat_message(Actor::Gluon, format!("Failed to load schedules: {e:#}"), cx);
+                    }
+                }
+            }
+            "settings" | "manage" | "ui" => {
+                self.settings_open = true;
+                self.settings_target = crate::app::providers::SettingsTarget::Schedules;
+                cx.notify();
             }
             "run" => {
                 let id = match parts.get(1) {
@@ -2274,7 +2343,7 @@ impl Chamber {
             _ => {
                 self.post_chat_message(
                     Actor::Gluon,
-                    "Usage: `/schedule [list | run <id> | skip <id> | enable <id> | disable <id>]`".to_string(),
+                    "Usage: `/schedule [list | add <id> <cron> <prompt> | remove <id> | run <id> | skip <id> | enable <id> | disable <id> | settings]`".to_string(),
                     cx,
                 );
             }
@@ -3416,6 +3485,57 @@ pub(super) fn toggle_focus_target(active_rail_tab: RightRailTab) -> (FocusTarget
     (FocusTarget::Terminal, active_rail_tab != RightRailTab::Terminal)
 }
 
+/// Parses arguments to `/schedule add <id> <cron> [prompt...]`.
+/// Supports `@hourly`/`@daily`/`@weekly`/`@monthly` macros, quoted cron strings (`"0 9 * * 1-5"`),
+/// or unquoted 5-field cron expressions (`0 9 * * 1-5`).
+pub(super) fn parse_schedule_add_args(rest: &str) -> Result<(String, String, String), String> {
+    let usage = "Usage: `/schedule add <id> <@daily | \"min hour dom mon dow\"> <prompt...>`".to_string();
+    let trimmed = rest.trim();
+    if trimmed.is_empty() {
+        return Err(usage);
+    }
+
+    let Some((id_tok, after_id)) = trimmed.split_once(char::is_whitespace) else {
+        return Err(usage);
+    };
+    let id = id_tok.trim().to_string();
+    let after_id = after_id.trim();
+    if after_id.is_empty() {
+        return Err(usage);
+    }
+
+    if after_id.starts_with('"') || after_id.starts_with('\'') {
+        let quote = after_id.chars().next().unwrap();
+        let inner = &after_id[quote.len_utf8()..];
+        let Some(end_idx) = inner.find(quote) else {
+            return Err(usage);
+        };
+        let cron = inner[..end_idx].trim().to_string();
+        let prompt = inner[end_idx + quote.len_utf8()..].trim().to_string();
+        return Ok((id, cron, prompt));
+    }
+
+    if after_id.starts_with('@') {
+        let (cron, prompt) = match after_id.split_once(char::is_whitespace) {
+            Some((c, p)) => (c.trim().to_string(), p.trim().to_string()),
+            None => (after_id.to_string(), String::new()),
+        };
+        return Ok((id, cron, prompt));
+    }
+
+    let mut tokens = after_id.split_whitespace();
+    let mut cron_fields = Vec::with_capacity(5);
+    for _ in 0..5 {
+        match tokens.next() {
+            Some(tok) => cron_fields.push(tok),
+            None => return Err(usage),
+        }
+    }
+    let cron = cron_fields.join(" ");
+    let prompt: Vec<&str> = tokens.collect();
+    Ok((id, cron, prompt.join(" ")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3888,5 +4008,29 @@ mod tests {
             toggle_or_adopt_quark_in_team(&mut repo, &global, &QuarkId::new("ghost")),
             None
         );
+    }
+
+    #[test]
+    fn test_parse_schedule_add_args_supports_macros_quotes_and_five_fields() {
+        let (id, cron, prompt) =
+            parse_schedule_add_args("daily-sec @daily Run security audit").unwrap();
+        assert_eq!(id, "daily-sec");
+        assert_eq!(cron, "@daily");
+        assert_eq!(prompt, "Run security audit");
+
+        let (id2, cron2, prompt2) =
+            parse_schedule_add_args("weekday-check \"0 9 * * 1-5\" Check open PRs").unwrap();
+        assert_eq!(id2, "weekday-check");
+        assert_eq!(cron2, "0 9 * * 1-5");
+        assert_eq!(prompt2, "Check open PRs");
+
+        let (id3, cron3, prompt3) =
+            parse_schedule_add_args("unquoted-job 30 14 * * * Run afternoon summary").unwrap();
+        assert_eq!(id3, "unquoted-job");
+        assert_eq!(cron3, "30 14 * * *");
+        assert_eq!(prompt3, "Run afternoon summary");
+
+        assert!(parse_schedule_add_args("").is_err());
+        assert!(parse_schedule_add_args("only-id").is_err());
     }
 }

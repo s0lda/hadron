@@ -436,6 +436,13 @@ struct Chamber {
     settings_general_expanded: bool,
     /// Whether the "Standard Swarm Skills" collapsible accordion is expanded in Settings.
     settings_standard_skills_expanded: bool,
+    /// Schedule creation form inputs in `Settings -> Schedules`.
+    settings_schedule_id: Entity<InputState>,
+    settings_schedule_cron: Entity<InputState>,
+    settings_schedule_target: Entity<InputState>,
+    settings_schedule_prompt: Entity<InputState>,
+    settings_schedule_missed_policy: hadron_lattice::MissedPolicy,
+    settings_schedule_status_msg: Option<(bool, String)>,
     /// Live filter for the add-quark preset catalogue (~37 entries): a case-insensitive
     /// substring match on preset name + command, so the list is searchable instead of a
     /// long scroll.
@@ -863,6 +870,18 @@ impl Chamber {
         let settings_terminal_shell = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. /bin/zsh, pwsh (blank = default)"));
         let settings_git_author_name = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. Jane Doe (blank = git config)"));
         let settings_git_author_email = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. jane@example.com (blank = git config)"));
+        let settings_schedule_id = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. weekly-security-audit"));
+        let settings_schedule_cron = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("e.g. @daily or 0 9 * * 1-5");
+            s.set_value("@daily", window, cx);
+            s
+        });
+        let settings_schedule_target = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).placeholder("@orchestrator");
+            s.set_value("@orchestrator", window, cx);
+            s
+        });
+        let settings_schedule_prompt = cx.new(|cx| InputState::new(window, cx).placeholder("Task instructions saved to .hadron/schedules/tasks/<id>/TASK.md..."));
         let custom_cli_model = cx.new(|cx| InputState::new(window, cx).placeholder("model name (optional)"));
         let custom_cli_flag = cx.new(|cx| InputState::new(window, cx).placeholder("e.g. --prompt (blank = positional)"));
         let color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
@@ -1640,6 +1659,12 @@ impl Chamber {
             settings_advanced_expanded: false,
             settings_general_expanded: true,
             settings_standard_skills_expanded: false,
+            settings_schedule_id,
+            settings_schedule_cron,
+            settings_schedule_target,
+            settings_schedule_prompt,
+            settings_schedule_missed_policy: hadron_lattice::MissedPolicy::Ask,
+            settings_schedule_status_msg: None,
             preset_filter,
             custom_cli_vendor,
             custom_cli_program,

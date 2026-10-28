@@ -2244,6 +2244,7 @@ impl super::Chamber {
                                 alert.source, alert.rule_id, alert.summary, loc_suffix
                             );
                             let alert_for_fix = alert.clone();
+                            let alert_for_close = alert.clone();
 
                             let row = h_flex()
                                 .id(("gh-sec-alert-row", ix))
@@ -2300,6 +2301,61 @@ impl super::Chamber {
                                                 alert_for_fix.remediation_prompt(),
                                                 cx,
                                             );
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id(("gh-sec-alert-close", ix))
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface())
+                                        .border_1()
+                                        .border_color(theme::border())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme::text_secondary())
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(theme::text()))
+                                        .child("Close")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                                            let slug = this
+                                                .git_remote_info
+                                                .as_ref()
+                                                .and_then(|r| r.repo_slug.clone());
+                                            let src = alert_for_close.source.clone();
+                                            let num = alert_for_close.number;
+                                            cx.spawn(async move |this, cx| {
+                                                let src_bg = src.clone();
+                                                let res = cx
+                                                    .background_executor()
+                                                    .spawn(async move {
+                                                        crate::vcs::close_github_security_alert(
+                                                            &root,
+                                                            slug.as_deref(),
+                                                            &src_bg,
+                                                            num,
+                                                            "Closed from Hadron Chamber Security Warnings.",
+                                                        )
+                                                    })
+                                                    .await;
+                                                let _ = this.update(cx, |chamber, cx| {
+                                                    if res.is_ok() {
+                                                        if let Some(list) = &mut chamber.github_security_alerts {
+                                                            list.retain(|a| !(a.number == num && a.source == src));
+                                                        }
+                                                        chamber.github_status_msg = Some(
+                                                            format!("Closed {src} security alert #{num} on GitHub."),
+                                                        );
+                                                    } else if let Err(e) = res {
+                                                        chamber.github_status_msg = Some(e);
+                                                    }
+                                                    cx.notify();
+                                                });
+                                            })
+                                            .detach();
                                         })),
                                 );
                             alert_list = alert_list.child(row);

@@ -1551,6 +1551,210 @@ impl super::Chamber {
                     MissionSubtab::Tasks => {
                         let now = chrono::Utc::now();
                         let render_now = now;
+                        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                        let schedule_reg = hadron_lattice::ScheduleRegistry::load(&repo_root).unwrap_or_default();
+                        let enabled_schedules = schedule_reg.jobs.iter().filter(|j| j.enabled).count();
+                        let total_schedules = schedule_reg.jobs.len();
+
+                        let mut schedules_card = v_flex()
+                            .w_full()
+                            .p_2p5()
+                            .gap_2()
+                            .rounded_lg()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(theme::glass_highlight())
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme::text())
+                                                    .child("Scheduled Tasks"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .px_1p5()
+                                                    .py_0p5()
+                                                    .rounded_full()
+                                                    .bg(theme::bg_surface_raised())
+                                                    .text_xs()
+                                                    .text_color(theme::text_muted())
+                                                    .child(format!("{enabled_schedules}/{total_schedules} active")),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("mission-manage-schedules-btn")
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_sm()
+                                            .bg(theme::accent_soft())
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(theme::accent())
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .child(if total_schedules == 0 { "+ Add Schedule" } else { "Manage" })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.settings_open = true;
+                                                this.select_settings_target(
+                                                    crate::app::providers::SettingsTarget::Schedules,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    ),
+                            );
+
+                        if schedule_reg.jobs.is_empty() {
+                            schedules_card = schedules_card.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child("No scheduled tasks configured (.hadron/schedules/schedules.json)."),
+                            );
+                        } else {
+                            let mut sched_rows = v_flex().gap_1p5().w_full();
+                            for (idx, job) in schedule_reg.jobs.iter().enumerate() {
+                                let job_id = job.id.clone();
+                                let freq_str = hadron_lattice::describe_cron(&job.cron);
+                                let cron_str = job.cron.clone();
+                                let target_str = job.target.clone();
+                                let enabled = job.enabled;
+                                let due = hadron_lattice::ScheduleRegistry::evaluate_job(job, &repo_root, now, 3600);
+                                let (status_text, status_color) = if !enabled {
+                                    ("Disabled", theme::text_muted())
+                                } else {
+                                    match due {
+                                        hadron_lattice::DueStatus::MissingTask { .. } => ("Missing TASK.md", theme::error()),
+                                        hadron_lattice::DueStatus::OverdueAsk { .. } => ("Overdue", theme::warning()),
+                                        hadron_lattice::DueStatus::Due { .. } => ("Due Now", theme::accent()),
+                                        hadron_lattice::DueStatus::NotDue => ("Enabled", theme::success()),
+                                    }
+                                };
+                                let last_run = job
+                                    .last_run_at
+                                    .map(|t| format!("Last run: {} UTC", t.format("%Y-%m-%d %H:%M")))
+                                    .unwrap_or_else(|| "Last run: Never".to_string());
+
+                                let run_id = job_id.clone();
+                                let run_root = repo_root.clone();
+                                let tog_id = job_id.clone();
+                                let tog_root = repo_root.clone();
+
+                                sched_rows = sched_rows.child(
+                                    v_flex()
+                                        .id(("mission-schedule-row", idx))
+                                        .w_full()
+                                        .gap_1()
+                                        .p_2()
+                                        .rounded_md()
+                                        .bg(theme::bg_surface_raised())
+                                        .border_1()
+                                        .border_color(theme::border())
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1p5()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .font_weight(gpui::FontWeight::BOLD)
+                                                                .text_color(theme::accent())
+                                                                .truncate()
+                                                                .child(job.name.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .px_1p5()
+                                                                .py_0p5()
+                                                                .rounded_sm()
+                                                                .bg(theme::bg_surface())
+                                                                .text_xs()
+                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                .text_color(status_color)
+                                                                .child(status_text),
+                                                        ),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .id(("mission-sched-run", idx))
+                                                                .px_1p5()
+                                                                .py_0p5()
+                                                                .rounded_sm()
+                                                                .bg(theme::accent_soft())
+                                                                .text_xs()
+                                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                                .text_color(theme::accent())
+                                                                .cursor_pointer()
+                                                                .child("Run Now")
+                                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                                    this.run_scheduled_job(&run_id, &run_root, cx);
+                                                                    cx.notify();
+                                                                })),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id(("mission-sched-toggle", idx))
+                                                                .px_1p5()
+                                                                .py_0p5()
+                                                                .rounded_sm()
+                                                                .bg(theme::bg_surface())
+                                                                .border_1()
+                                                                .border_color(theme::border())
+                                                                .text_xs()
+                                                                .text_color(theme::text_secondary())
+                                                                .cursor_pointer()
+                                                                .child(if enabled { "Disable" } else { "Enable" })
+                                                                .on_click(cx.listener(move |_, _, _, cx| {
+                                                                    if let Ok(mut reg) = hadron_lattice::ScheduleRegistry::load(&tog_root) {
+                                                                        if let Some(j) = reg.get_mut(&tog_id) {
+                                                                            j.enabled = !j.enabled;
+                                                                            let _ = reg.save(&tog_root);
+                                                                        }
+                                                                    }
+                                                                    cx.notify();
+                                                                })),
+                                                        ),
+                                                ),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .flex_wrap()
+                                                .gap_2()
+                                                .items_center()
+                                                .text_xs()
+                                                .text_color(theme::text_muted())
+                                                .child(format!("{freq_str} ({cron_str})"))
+                                                .child(format!("• {target_str}"))
+                                                .child(format!("• {last_run}")),
+                                        ),
+                                );
+                            }
+                            schedules_card = schedules_card.child(sched_rows);
+                        }
 
                         let tasks_to_render: Vec<&crate::model::SwarmTask> =
                             self.view.tasks.iter().collect();
@@ -1558,14 +1762,14 @@ impl super::Chamber {
                         let live_gate_rows: Vec<crate::model::SwarmTask> =
                             model::tasks::live_rows_from_activities(&self.last_gate_activities);
 
-                        let list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
+                        let swarm_list = if tasks_to_render.is_empty() && live_gate_rows.is_empty() {
                             div()
-                                .p_4()
+                                .p_2()
                                 .child(empty_hint("No swarm tasks yet."))
                                 .into_any_element()
                         } else {
                             let mono_font = cx.theme().mono_font_family.clone();
-                            let mut col = v_flex().gap_1().p_2().w_full();
+                            let mut col = v_flex().gap_1().w_full();
                             for t in &live_gate_rows {
                                 let to = self.resolve_identity(&t.to);
                                 let from = self.resolve_identity(&t.from);
@@ -1578,6 +1782,14 @@ impl super::Chamber {
                             }
                             col.into_any_element()
                         };
+
+                        let list = v_flex()
+                            .gap_2()
+                            .p_2()
+                            .w_full()
+                            .child(schedules_card)
+                            .child(swarm_list)
+                            .into_any_element();
 
                         div()
                             .flex_1()

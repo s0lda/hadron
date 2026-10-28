@@ -110,7 +110,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "pr", detail: "Create a GitHub Pull Request for active branch", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "goal", detail: "Launch an autonomous end-to-end swarm mission (e.g. /goal Build user auth with JWT)", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "loop", detail: "Execute an iterative autonomous loop until a condition or count (e.g. /loop 5 fix compiler errors)", arity: Arity::Body, arg: ArgSource::None, listed: true },
-    Command { name: "schedule", detail: "Manage scheduled tasks: /schedule [list|run|skip|enable|disable <id>]", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "schedule", detail: "Manage scheduled tasks: /schedule [list|add|remove|run|skip|enable|disable|settings]", arity: Arity::Line, arg: ArgSource::None, listed: true },
     // The skill commands. Each posts a message carrying the skill's own canonical
     // trigger, so the engine selects the procedure — see `skill_command_body`.
     Command { name: "brainstorm", detail: "Explore a design before any code (e.g. /brainstorm @Quark the new menu)", arity: Arity::Body, arg: ArgSource::Quark, listed: true },

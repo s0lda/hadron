@@ -212,6 +212,7 @@ fn settings_target_keys_and_equality() {
     assert_eq!(SettingsTarget::Environment.key(), "environment");
     assert_eq!(SettingsTarget::Providers.key(), "providers");
     assert_eq!(SettingsTarget::Skills.key(), "skills");
+    assert_eq!(SettingsTarget::Schedules.key(), "schedules");
     assert_eq!(SettingsTarget::Human.key(), "human");
     assert_eq!(SettingsTarget::Quark("acp-agy".to_string()).key(), "acp-agy");
 
@@ -238,6 +239,7 @@ fn general_subtargets_belong_to_general_group() {
     assert!(is_general_subtarget(&SettingsTarget::Environment));
     assert!(!is_general_subtarget(&SettingsTarget::Providers));
     assert!(!is_general_subtarget(&SettingsTarget::Skills));
+    assert!(!is_general_subtarget(&SettingsTarget::Schedules));
     assert!(!is_general_subtarget(&SettingsTarget::Human));
     assert!(!is_general_subtarget(&SettingsTarget::Quark("acp-claude".to_string())));
 }

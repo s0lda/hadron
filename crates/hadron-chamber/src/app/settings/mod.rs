@@ -53,7 +53,8 @@ impl Chamber {
             | SettingsTarget::Execution
             | SettingsTarget::Environment
             | SettingsTarget::Providers
-            | SettingsTarget::Skills => None,
+            | SettingsTarget::Skills
+            | SettingsTarget::Schedules => None,
         }
     }
 
@@ -98,6 +99,7 @@ impl Chamber {
                 || key == "environment"
                 || key == "providers"
                 || key == "skills"
+                || key == "schedules"
             {
                 None
             } else {
@@ -319,6 +321,7 @@ impl Chamber {
             && key != "execution"
             && key != "environment"
             && key != "skills"
+            && key != "schedules"
         {
             let qid = QuarkId::new(key);
             // The definition knobs (model/effort/mode/display name) are **per-repo**. How
@@ -468,7 +471,8 @@ impl Chamber {
             | SettingsTarget::Execution
             | SettingsTarget::Environment
             | SettingsTarget::Providers
-            | SettingsTarget::Skills => {}
+            | SettingsTarget::Skills
+            | SettingsTarget::Schedules => {}
         }
         self.load_settings_inputs(window, cx);
         let _ = config::save(&self.prefs);

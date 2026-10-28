@@ -278,6 +278,7 @@ pub(super) enum SettingsTarget {
     Environment,
     Providers,
     Skills,
+    Schedules,
     Human,
     Quark(String),
 }
@@ -292,6 +293,7 @@ impl SettingsTarget {
             SettingsTarget::Environment => "environment",
             SettingsTarget::Providers => "providers",
             SettingsTarget::Skills => "skills",
+            SettingsTarget::Schedules => "schedules",
             SettingsTarget::Human => "human",
             SettingsTarget::Quark(id) => id,
         }
