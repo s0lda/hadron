@@ -1404,7 +1404,10 @@ impl super::Chamber {
                                         .flex_1()
                                         .min_w_0()
                                         .text_color(theme::text())
-                                        .child(c.clone()),
+                                        .child(crate::syntax::highlight_code_line_element(
+                                            c,
+                                            Some(&file.path),
+                                        )),
                                 ),
                             crate::vcs::DiffLine::Added(a) => h_flex()
                                 .w_full()
@@ -1423,8 +1426,11 @@ impl super::Chamber {
                                     div()
                                         .flex_1()
                                         .min_w_0()
-                                        .text_color(gpui::rgb(ADD_COLOR))
-                                        .child(a.clone()),
+                                        .text_color(theme::text())
+                                        .child(crate::syntax::highlight_code_line_element(
+                                            a,
+                                            Some(&file.path),
+                                        )),
                                 ),
                             crate::vcs::DiffLine::Removed(r) => h_flex()
                                 .w_full()
@@ -1443,8 +1449,11 @@ impl super::Chamber {
                                     div()
                                         .flex_1()
                                         .min_w_0()
-                                        .text_color(gpui::rgb(DEL_COLOR))
-                                        .child(r.clone()),
+                                        .text_color(theme::text())
+                                        .child(crate::syntax::highlight_code_line_element(
+                                            r,
+                                            Some(&file.path),
+                                        )),
                                 ),
                         });
                     }

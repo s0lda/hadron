@@ -35,6 +35,14 @@ impl super::Chamber {
         // overlay, not the fork's LSP menu, so we drive it from the edit stream.
         if let InputEvent::Change = event {
             self.recompute_completion(cx);
+            if self.composer_preview_mode {
+                cx.on_next_frame(window, move |this, _window, cx: &mut Context<Self>| {
+                    let max_offset = this.composer_preview_scroll.max_offset();
+                    this.composer_preview_scroll
+                        .set_offset(gpui::point(px(0.0), -max_offset.y.abs()));
+                    cx.notify();
+                });
+            }
             cx.notify();
             return;
         }

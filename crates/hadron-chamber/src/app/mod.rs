@@ -260,6 +260,8 @@ struct Chamber {
     pub(super) ghost_completion: Option<String>,
     /// Whether the composer is currently displaying the live Markdown preview.
     pub(super) composer_preview_mode: bool,
+    /// Scroll handle for the live Markdown composer preview pane (`#composer-preview-content`).
+    pub(super) composer_preview_scroll: ScrollHandle,
     /// Root focus target, so Ctrl+Shift+P dispatches regardless of what's focused.
     focus_handle: FocusHandle,
     /// Which view the chat column's segmented tabs are showing.
@@ -1556,6 +1558,7 @@ impl Chamber {
             completion: None,
             ghost_completion: None,
             composer_preview_mode: false,
+            composer_preview_scroll: ScrollHandle::new(),
             focus_handle,
             chat_tab: ChatTab::Chat,
             info_tab: InfoTab::Home,

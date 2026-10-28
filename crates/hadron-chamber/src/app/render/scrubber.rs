@@ -488,7 +488,12 @@ impl Chamber {
                         .text_xs()
                         .font_family(cx.theme().mono_font_family.clone())
                         .text_color(theme::text())
-                        .child(m.body.clone()),
+                        .child(self.markdown_body(
+                            "scrubber-event",
+                            active_ix,
+                            &m.body,
+                            &self.view.roster,
+                        )),
                 )
                 .into_any_element()
         } else {

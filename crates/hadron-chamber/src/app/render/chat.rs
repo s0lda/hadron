@@ -525,21 +525,33 @@ impl super::Chamber {
                                 } else {
                                     el.child(
                                         div()
-                                            .id("composer-preview-content")
+                                            .id("composer-preview-container")
                                             .w_full()
-                                            .max_h(px(COMPOSER_PREVIEW_MAX_HEIGHT_PX))
-                                            .overflow_y_scroll()
-                                            .px_2()
-                                            .pb_2()
+                                            .relative()
                                             .mb_1p5()
                                             .border_b_1()
                                             .border_color(theme::glass_highlight())
-                                            .child(self.markdown_body(
-                                                "composer-preview",
-                                                usize::MAX,
-                                                &draft_text,
-                                                &self.view.roster,
-                                            )),
+                                            .child(
+                                                div()
+                                                    .id("composer-preview-content")
+                                                    .w_full()
+                                                    .max_h(px(COMPOSER_PREVIEW_MAX_HEIGHT_PX))
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&self.composer_preview_scroll)
+                                                    .px_2()
+                                                    .pb_2()
+                                                    .child(self.markdown_body(
+                                                        "composer-preview",
+                                                        usize::MAX,
+                                                        &draft_text,
+                                                        &self.view.roster,
+                                                    )),
+                                            )
+                                            .child(
+                                                div().absolute().top_0().bottom_0().right_0().child(
+                                                    Scrollbar::vertical(&self.composer_preview_scroll),
+                                                ),
+                                            ),
                                     )
                                 }
                             })
@@ -723,6 +735,14 @@ impl super::Chamber {
                                                      .child("Preview")
                                                      .on_click(cx.listener(|this, _, window, cx| {
                                                          this.composer_preview_mode = !this.composer_preview_mode;
+                                                         if this.composer_preview_mode {
+                                                             cx.on_next_frame(window, move |this, _window, cx: &mut Context<Self>| {
+                                                                 let max_offset = this.composer_preview_scroll.max_offset();
+                                                                 this.composer_preview_scroll
+                                                                     .set_offset(gpui::point(px(0.0), -max_offset.y.abs()));
+                                                                 cx.notify();
+                                                             });
+                                                         }
                                                          window.focus(&this.input.focus_handle(cx), cx);
                                                          cx.notify();
                                                      })),
@@ -1154,7 +1174,8 @@ impl super::Chamber {
             _ => {
                 let repo_root = crate::vcs::repo_root_of(&self.path);
                 let human_name = self.resolve_identity("human").name;
-                let content = resolve_mention_names_with_human(body, roster, Some(repo_root), Some(&human_name));
+                let resolved = resolve_mention_names_with_human(body, roster, Some(repo_root), Some(&human_name));
+                let content = crate::syntax::annotate_bare_code_fences(&resolved);
                 cache.insert(ix, (body.to_string(), content.clone()));
                 content
             }

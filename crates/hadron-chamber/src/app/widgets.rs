@@ -1653,67 +1653,92 @@ pub(super) fn tool_kind_icon(kind: &str) -> IconName {
     }
 }
 
-/// Custom syntax highlight theme matching GitHub Dark semantic tokens (customized to user preference).
+fn rgba_hex(c: gpui::Rgba) -> String {
+    let r = (c.r.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g = (c.g.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b = (c.b.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let a = (c.a.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+}
+
+/// Syntax highlight theme dynamically synchronized with Chamber's active `theme::syntax_*()` tokens.
 pub(super) fn github_syntax_theme() -> std::sync::Arc<gpui_component::highlighter::HighlightTheme> {
-    static THEME: std::sync::LazyLock<std::sync::Arc<gpui_component::highlighter::HighlightTheme>> =
-        std::sync::LazyLock::new(|| {
-            let json = r##"{
-                "name": "GitHub Dark (Custom)",
-                "appearance": "dark",
-                "style": {
-                    "syntax": {
-                        "attribute": { "color": "#b392f0ff" },
-                        "boolean": { "color": "#79b8ffff" },
-                        "comment": { "color": "#7e888cff" },
-                        "comment.doc": { "color": "#7e888cff" },
-                        "constant": { "color": "#79b8ffff" },
-                        "constructor": { "color": "#b392f0ff" },
-                        "embedded": { "color": "#edededff" },
-                        "emphasis": { "color": "#e1e4e8ff", "font_style": "italic" },
-                        "emphasis.strong": { "color": "#e1e4e8ff", "font_weight": 700 },
-                        "enum": { "color": "#79b8ffff" },
-                        "function": { "color": "#b392f0ff" },
-                        "hint": { "color": "#7e888cff" },
-                        "keyword": { "color": "#f97583ff" },
-                        "label": { "color": "#b392f0ff" },
-                        "link_text": { "color": "#48a0c7ff" },
-                        "link_uri": { "color": "#9ecbffff" },
-                        "number": { "color": "#79b8ffff" },
-                        "operator": { "color": "#f97583ff" },
-                        "predictive": { "color": "#555555ff" },
-                        "preproc": { "color": "#f97583ff" },
-                        "primary": { "color": "#bbbebfff" },
-                        "property": { "color": "#79b8ffff" },
-                        "punctuation": { "color": "#bbbebfff" },
-                        "punctuation.bracket": { "color": "#bbbebfff" },
-                        "punctuation.delimiter": { "color": "#f97583ff" },
-                        "punctuation.list_marker": { "color": "#85e89dff" },
-                        "punctuation.special": { "color": "#f97583ff" },
-                        "string": { "color": "#9ecbffff" },
-                        "string.escape": { "color": "#85e89dff", "font_weight": 700 },
-                        "string.regex": { "color": "#dbedffff" },
-                        "string.special": { "color": "#79b8ffff" },
-                        "string.special.symbol": { "color": "#79b8ffff" },
-                        "tag": { "color": "#85e89dff" },
-                        "text.literal": { "color": "#85e89dff" },
-                        "text.code.span": { "color": "#85e89dff" },
-                        "title": { "color": "#79b8ffff", "font_weight": 700 },
-                        "type": { "color": "#79b8ffff" },
-                        "variable": { "color": "#e1e4e8ff" },
-                        "variable.special": { "color": "#ffab70ff" },
-                        "variant": { "color": "#79b8ffff" }
-                    }
-                }
-            }"##;
-            match serde_json::from_str::<gpui_component::highlighter::HighlightTheme>(json) {
-                Ok(theme) => std::sync::Arc::new(theme),
-                Err(err) => {
-                    hadron_lattice::term::error(hadron_lattice::term::Source::Chamber, &format!("widgets: failed to parse GitHub syntax theme: {err}"));
-                    gpui_component::highlighter::HighlightTheme::default_dark()
-                }
-            }
-        });
-    THEME.clone()
+    let att = rgba_hex(theme::syntax_attribute());
+    let boolean = rgba_hex(theme::syntax_boolean());
+    let cmt = rgba_hex(theme::syntax_comment());
+    let cst = rgba_hex(theme::syntax_constant());
+    let func = rgba_hex(theme::syntax_function());
+    let kw = rgba_hex(theme::syntax_keyword());
+    let num = rgba_hex(theme::syntax_number());
+    let op = rgba_hex(theme::syntax_operator());
+    let punc = rgba_hex(theme::syntax_punctuation());
+    let del = rgba_hex(theme::syntax_delimiter());
+    let str_col = rgba_hex(theme::syntax_string());
+    let tag = rgba_hex(theme::syntax_tag());
+    let ty = rgba_hex(theme::syntax_type());
+    let var = rgba_hex(theme::syntax_variable());
+    let var_spec = rgba_hex(theme::syntax_variable_special());
+
+    let json = format!(
+        r##"{{
+            "name": "GitHub Dark (Custom)",
+            "appearance": "dark",
+            "style": {{
+                "syntax": {{
+                    "attribute": {{ "color": "{att}" }},
+                    "boolean": {{ "color": "{boolean}" }},
+                    "comment": {{ "color": "{cmt}" }},
+                    "comment.doc": {{ "color": "{cmt}" }},
+                    "constant": {{ "color": "{cst}" }},
+                    "constructor": {{ "color": "{func}" }},
+                    "embedded": {{ "color": "#edededff" }},
+                    "emphasis": {{ "color": "{var}", "font_style": "italic" }},
+                    "emphasis.strong": {{ "color": "{var}", "font_weight": 700 }},
+                    "enum": {{ "color": "{ty}" }},
+                    "function": {{ "color": "{func}" }},
+                    "hint": {{ "color": "{cmt}" }},
+                    "keyword": {{ "color": "{kw}" }},
+                    "label": {{ "color": "{func}" }},
+                    "link_text": {{ "color": "#48a0c7ff" }},
+                    "link_uri": {{ "color": "{str_col}" }},
+                    "number": {{ "color": "{num}" }},
+                    "operator": {{ "color": "{op}" }},
+                    "predictive": {{ "color": "#555555ff" }},
+                    "preproc": {{ "color": "{kw}" }},
+                    "primary": {{ "color": "{punc}" }},
+                    "property": {{ "color": "{ty}" }},
+                    "punctuation": {{ "color": "{punc}" }},
+                    "punctuation.bracket": {{ "color": "{punc}" }},
+                    "punctuation.delimiter": {{ "color": "{del}" }},
+                    "punctuation.list_marker": {{ "color": "{tag}" }},
+                    "punctuation.special": {{ "color": "{kw}" }},
+                    "string": {{ "color": "{str_col}" }},
+                    "string.escape": {{ "color": "{tag}", "font_weight": 700 }},
+                    "string.regex": {{ "color": "#dbedffff" }},
+                    "string.special": {{ "color": "{ty}" }},
+                    "string.special.symbol": {{ "color": "{ty}" }},
+                    "tag": {{ "color": "{tag}" }},
+                    "text.literal": {{ "color": "{tag}" }},
+                    "text.code.span": {{ "color": "{tag}" }},
+                    "title": {{ "color": "{ty}", "font_weight": 700 }},
+                    "type": {{ "color": "{ty}" }},
+                    "variable": {{ "color": "{var}" }},
+                    "variable.special": {{ "color": "{var_spec}" }},
+                    "variant": {{ "color": "{ty}" }}
+                }}
+            }}
+        }}"##
+    );
+    match serde_json::from_str::<gpui_component::highlighter::HighlightTheme>(&json) {
+        Ok(theme) => std::sync::Arc::new(theme),
+        Err(err) => {
+            hadron_lattice::term::error(
+                hadron_lattice::term::Source::Chamber,
+                &format!("widgets: failed to parse GitHub syntax theme: {err}"),
+            );
+            gpui_component::highlighter::HighlightTheme::default_dark()
+        }
+    }
 }
 
 pub(super) fn markdown_style(ui_font_size: Option<f32>, word_wrap: bool) -> gpui_component::text::TextViewStyle {

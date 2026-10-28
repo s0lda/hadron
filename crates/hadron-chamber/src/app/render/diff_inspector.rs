@@ -398,21 +398,30 @@ impl Chamber {
                                 .flex_1()
                                 .truncate()
                                 .text_color(theme::text_muted())
-                                .child(base_str),
+                                .child(crate::syntax::highlight_code_line_element(
+                                    &base_str,
+                                    Some(file_path),
+                                )),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .truncate()
                                 .text_color(theme::text())
-                                .child(ours_str),
+                                .child(crate::syntax::highlight_code_line_element(
+                                    &ours_str,
+                                    Some(file_path),
+                                )),
                         )
                         .child(
                             div()
                                 .flex_1()
                                 .truncate()
                                 .text_color(theme::text())
-                                .child(theirs_str),
+                                .child(crate::syntax::highlight_code_line_element(
+                                    &theirs_str,
+                                    Some(file_path),
+                                )),
                         )
                         .child(steer_controls)
                         .when_some(hunk_comment, |row, comment| {
