@@ -144,6 +144,9 @@ pub enum Kind {
     Unknown { kind: String, raw: Value },
 }
 
+/// Frozen schema version for `field.jsonl` event lines.
+pub const FIELD_SCHEMA_VERSION: u32 = 1;
+
 /// One line in the field. The envelope (`v/id/ts/from/to`) plus a flattened kind,
 /// plus optional telemetry.
 /// `PartialEq` but not `Eq` (contains `Kind`, which is not `Eq`).
@@ -164,10 +167,10 @@ pub struct Event {
 }
 
 impl Event {
-    /// Construct a fresh event, stamping schema version, a new ULID, and now().
+    /// Construct a fresh event, stamping [`FIELD_SCHEMA_VERSION`], a new ULID, and now().
     pub fn new(from: Actor, to: Option<QuarkId>, kind: Kind) -> Self {
         Event {
-            v: 1,
+            v: FIELD_SCHEMA_VERSION,
             id: Ulid::new(),
             ts: Utc::now(),
             from,
@@ -179,6 +182,47 @@ impl Event {
             full: None,
             severity: None,
         }
+    }
+
+    /// Parse a `field.jsonl` line with explicit schema versioning and v0-to-v1 migration:
+    /// - Missing `"v"` or `"v": 0` (legacy `v0`) is upgraded to [`FIELD_SCHEMA_VERSION`] (`1`)
+    ///   and returns `Ok((event, true))` (`migrated = true`).
+    /// - `"v": 1` returns `Ok((event, false))` (`migrated = false`).
+    /// - `"v" > FIELD_SCHEMA_VERSION` is rejected unless the event payload is preserved as
+    ///   [`Kind::Unknown`] for forward-compatible append-only log replay.
+    pub fn from_versioned_json(line: &str) -> Result<(Self, bool), String> {
+        let value: Value =
+            serde_json::from_str(line).map_err(|e| format!("invalid event JSON: {e}"))?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| "event JSON line must be an object".to_string())?;
+        let (raw_v, migrated) = match obj.get("v") {
+            None | Some(Value::Null) => (0u32, true),
+            Some(v) => {
+                let ver = v
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| "event `v` must be a non-negative integer".to_string())?;
+                (ver, ver == 0)
+            }
+        };
+        let mut ev: Self =
+            serde_json::from_value(value).map_err(|e| format!("invalid event schema: {e}"))?;
+        if raw_v > FIELD_SCHEMA_VERSION && !matches!(ev.kind, Kind::Unknown { .. }) {
+            return Err(format!(
+                "unsupported event schema version {raw_v} (max supported is {FIELD_SCHEMA_VERSION})"
+            ));
+        }
+        if migrated {
+            ev.v = FIELD_SCHEMA_VERSION;
+        }
+        Ok((ev, migrated))
+    }
+
+    /// Returns `true` if this event's schema version is supported by this build
+    /// (`v <= FIELD_SCHEMA_VERSION` or preserved as [`Kind::Unknown`]).
+    pub fn is_supported_schema_version(&self) -> bool {
+        self.v <= FIELD_SCHEMA_VERSION || matches!(self.kind, Kind::Unknown { .. })
     }
 
     /// Attach a severity rating (Info, Warning, Error) to the event.
@@ -347,7 +391,13 @@ impl<'de> Deserialize<'de> for Event {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         use serde::de::Error as _;
         let mut map = serde_json::Map::<String, Value>::deserialize(d)?;
-        let v: u32 = take_field(&mut map, "v")?;
+        let v: u32 = match map.remove("v") {
+            None | Some(Value::Null) => FIELD_SCHEMA_VERSION,
+            Some(val) => {
+                let raw: u32 = serde_json::from_value(val).map_err(D::Error::custom)?;
+                if raw == 0 { FIELD_SCHEMA_VERSION } else { raw }
+            }
+        };
         let id: Ulid = take_field(&mut map, "id")?;
         let ts: DateTime<Utc> = take_field(&mut map, "ts")?;
         let from: Actor = take_field(&mut map, "from")?;

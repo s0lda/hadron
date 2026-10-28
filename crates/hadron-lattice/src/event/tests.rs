@@ -468,4 +468,24 @@ mod event_tests {
         assert!(reline.contains(r#""kind":"edit_by_hash""#));
         assert!(reline.contains(r#""block_hash":"9f86d0""#));
     }
+
+    #[test]
+    fn field_event_schema_v0_migration_v1_roundtrip_and_forward_guard() {
+        // Legacy v0 line without `v` upgrades transparently to FIELD_SCHEMA_VERSION (1)
+        let v0_line = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","ts":"2026-07-10T14:00:00Z","from":"human","to":"agy","kind":"message","body":"hello"}"#;
+        let (ev_v0, migrated) = Event::from_versioned_json(v0_line).unwrap();
+        assert!(migrated);
+        assert_eq!(ev_v0.v, FIELD_SCHEMA_VERSION);
+        assert!(ev_v0.is_supported_schema_version());
+
+        // v1 line parses with migrated = false
+        let v1_line = serde_json::to_string(&ev_v0).unwrap();
+        let (ev_v1, migrated_v1) = Event::from_versioned_json(&v1_line).unwrap();
+        assert!(!migrated_v1);
+        assert_eq!(ev_v1, ev_v0);
+
+        // Known kind with unsupported future version (v99) is rejected by from_versioned_json
+        let future_known = r#"{"v":99,"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","ts":"2026-07-10T14:00:00Z","from":"human","to":null,"kind":"message","body":"future"}"#;
+        assert!(Event::from_versioned_json(future_known).is_err());
+    }
 }

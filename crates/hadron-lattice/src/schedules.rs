@@ -125,14 +125,68 @@ pub enum DueStatus {
     MissingTask { task_id: String, path: PathBuf },
 }
 
+/// Frozen schema version for `<repo_root>/.hadron/schedules/schedules.json`.
+pub const SCHEDULES_SCHEMA_VERSION: u32 = 1;
+
+fn default_schedules_schema_version() -> u32 {
+    SCHEDULES_SCHEMA_VERSION
+}
+
 /// Registry of scheduled jobs stored in `<repo_root>/.hadron/schedules/schedules.json`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduleRegistry {
+    #[serde(default = "default_schedules_schema_version")]
+    pub schema_version: u32,
     #[serde(default)]
     pub jobs: Vec<ScheduledJob>,
 }
 
+impl Default for ScheduleRegistry {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEDULES_SCHEMA_VERSION,
+            jobs: Vec::new(),
+        }
+    }
+}
+
 impl ScheduleRegistry {
+    /// Parse a `schedules.json` payload with explicit schema versioning and v0-to-v1 migration:
+    /// - Missing `"schema_version"` or `"schema_version": 0` (legacy `v0`) is upgraded to
+    ///   [`SCHEDULES_SCHEMA_VERSION`] (`1`) and returns `Ok((registry, true))` (`migrated = true`).
+    /// - `"schema_version": 1` returns `Ok((registry, false))` (`migrated = false`).
+    /// - `"schema_version" > SCHEDULES_SCHEMA_VERSION` is rejected with an error so newer
+    ///   incompatible files are never silently misparsed or overwritten.
+    pub fn from_versioned_json(content: &str) -> anyhow::Result<(Self, bool)> {
+        let value: serde_json::Value = serde_json::from_str(content)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("schedules.json root must be an object"))?;
+        let migrated = match obj.get("schema_version") {
+            None | Some(serde_json::Value::Null) => true,
+            Some(v) => {
+                let ver = v
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("schedules.json schema_version must be a non-negative integer")
+                    })?;
+                if ver == 0 {
+                    true
+                } else if ver > SCHEDULES_SCHEMA_VERSION {
+                    anyhow::bail!(
+                        "unsupported schedules.json schema_version {ver} (max supported is {SCHEDULES_SCHEMA_VERSION})"
+                    );
+                } else {
+                    false
+                }
+            }
+        };
+        let mut reg: Self = serde_json::from_value(value)?;
+        reg.schema_version = SCHEDULES_SCHEMA_VERSION;
+        Ok((reg, migrated))
+    }
+
     pub fn schedules_dir(repo_root: &Path) -> PathBuf {
         repo_root.join(".hadron").join("schedules")
     }
@@ -188,15 +242,19 @@ impl ScheduleRegistry {
         Some(self.jobs.remove(pos))
     }
 
-    /// Load the schedule registry from `<repo_root>/.hadron/schedules/schedules.json`.
+    /// Load the schedule registry from `<repo_root>/.hadron/schedules/schedules.json`,
+    /// transparently migrating legacy `v0` files to [`SCHEDULES_SCHEMA_VERSION`] (`1`) on disk.
     pub fn load(repo_root: &Path) -> anyhow::Result<Self> {
         let file = Self::schedules_file(repo_root);
         if !file.exists() {
             return Ok(Self::default());
         }
         let content = std::fs::read_to_string(&file)?;
-        let reg: Self = serde_json::from_str(&content)
+        let (reg, migrated) = Self::from_versioned_json(&content)
             .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", file.display()))?;
+        if migrated {
+            let _ = reg.save(repo_root);
+        }
         Ok(reg)
     }
 
@@ -205,7 +263,9 @@ impl ScheduleRegistry {
         let dir = Self::schedules_dir(repo_root);
         std::fs::create_dir_all(&dir)?;
         let file = Self::schedules_file(repo_root);
-        let content = serde_json::to_string_pretty(self)?;
+        let mut versioned = self.clone();
+        versioned.schema_version = SCHEDULES_SCHEMA_VERSION;
+        let content = serde_json::to_string_pretty(&versioned)?;
         let tmp = dir.join(format!("schedules.{}.tmp", std::process::id()));
         std::fs::write(&tmp, content)?;
         std::fs::rename(&tmp, &file)?;
@@ -610,5 +670,33 @@ mod tests {
         let removed = reg.remove_job("weekly-audit");
         assert!(removed.is_some());
         assert!(reg.jobs.is_empty());
+    }
+
+    #[test]
+    fn test_schedules_schema_v0_migration_v1_roundtrip_and_forward_guard() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path();
+        let sched_dir = ScheduleRegistry::schedules_dir(repo);
+        std::fs::create_dir_all(&sched_dir).unwrap();
+        let sched_file = ScheduleRegistry::schedules_file(repo);
+
+        // 1. Legacy v0 schedules.json (no schema_version field)
+        let v0_json = r#"{"jobs":[{"id":"nightly","name":"Nightly","task_id":"nightly_task","cron":"@daily","enabled":true,"missed_policy":"ask"}]}"#;
+        std::fs::write(&sched_file, v0_json).unwrap();
+
+        let loaded = ScheduleRegistry::load(repo).unwrap();
+        assert_eq!(loaded.schema_version, SCHEDULES_SCHEMA_VERSION);
+        assert_eq!(loaded.jobs.len(), 1);
+        assert_eq!(loaded.jobs[0].id, "nightly");
+
+        // Verify on-disk file was upgraded to v1
+        let rewritten = std::fs::read_to_string(&sched_file).unwrap();
+        let (reloaded, migrated_again) = ScheduleRegistry::from_versioned_json(&rewritten).unwrap();
+        assert!(!migrated_again);
+        assert_eq!(reloaded, loaded);
+
+        // 2. Forward schema_version > SCHEDULES_SCHEMA_VERSION is rejected
+        let future_json = r#"{"schema_version":99,"jobs":[]}"#;
+        assert!(ScheduleRegistry::from_versioned_json(future_json).is_err());
     }
 }

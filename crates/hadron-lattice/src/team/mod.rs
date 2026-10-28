@@ -24,6 +24,13 @@ pub use migrate::{migrate_to_catalogue, seat_override_delta, orphan_overrides, l
 
 pub(crate) use seat::is_false;
 
+/// Frozen schema version for `.hadron/team.json` and `~/.hadron/team.json`.
+pub const TEAM_SCHEMA_VERSION: u32 = 1;
+
+fn default_team_schema_version() -> u32 {
+    TEAM_SCHEMA_VERSION
+}
+
 /// Strategy used by the merge gate to land a quark's branch onto main.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -45,8 +52,10 @@ pub enum MergeStrategy {
 ///   once the quark *definitions* live globally.
 ///
 /// [`resolve_team`] folds the two (plus the catalogue) into a plain `Vec<Seat>`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Team {
+    #[serde(default = "default_team_schema_version")]
+    pub schema_version: u32,
     #[serde(default)]
     pub quarks: Vec<Seat>,
     /// Per-repo role/state overrides that resolve against the global catalogue.
@@ -106,7 +115,71 @@ pub struct Team {
     pub fast_path_docs_only: Option<bool>,
 }
 
+impl Default for Team {
+    fn default() -> Self {
+        Self {
+            schema_version: TEAM_SCHEMA_VERSION,
+            quarks: Vec::new(),
+            roster: Vec::new(),
+            max_exchanges: None,
+            nucleus_index_budget_kb: None,
+            merge_strategy: None,
+            turn_deadline_secs: None,
+            max_turn_wall_clock_secs: None,
+            stale_after_secs: None,
+            git_auto_prune_worktrees: None,
+            git_author_name: None,
+            git_author_email: None,
+            sandbox_mode: None,
+            hadron_lab_enabled: None,
+            max_concurrent_turns: None,
+            max_concurrent_gates: None,
+            gate_batch_size: None,
+            fast_path_docs_only: None,
+        }
+    }
+}
+
 impl Team {
+    /// Parse a `team.json` payload with explicit schema versioning and v0-to-v1 migration:
+    /// - Missing `"schema_version"` or `"schema_version": 0` (legacy `v0`) is upgraded to
+    ///   [`TEAM_SCHEMA_VERSION`] (`1`) and returns `Ok((team, true))` (`migrated = true`).
+    /// - `"schema_version": 1` returns `Ok((team, false))` (`migrated = false`).
+    /// - `"schema_version" > TEAM_SCHEMA_VERSION` is rejected with an error so newer
+    ///   incompatible files are never silently misparsed or overwritten.
+    pub fn from_versioned_json(text: &str) -> std::io::Result<(Self, bool)> {
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(std::io::Error::other)?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| std::io::Error::other("team.json root must be an object"))?;
+        let migrated = match obj.get("schema_version") {
+            None | Some(serde_json::Value::Null) => true,
+            Some(v) => {
+                let ver = v
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| {
+                        std::io::Error::other("team.json schema_version must be a non-negative integer")
+                    })?;
+                if ver == 0 {
+                    true
+                } else if ver > TEAM_SCHEMA_VERSION {
+                    return Err(std::io::Error::other(format!(
+                        "unsupported team.json schema_version {ver} (max supported is {TEAM_SCHEMA_VERSION})"
+                    )));
+                } else {
+                    false
+                }
+            }
+        };
+        let mut team: Self = serde_json::from_value(value).map_err(std::io::Error::other)?;
+        team.schema_version = TEAM_SCHEMA_VERSION;
+        for seat in &mut team.quarks {
+            seat.normalize_vendor();
+        }
+        Ok((team, migrated))
+    }
     /// Look up a seat by quark id.
     pub fn get(&self, id: &QuarkId) -> Option<&Seat> {
         self.quarks.iter().find(|s| &s.id == id)
@@ -276,6 +349,7 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         }
     }
     Team {
+        schema_version: TEAM_SCHEMA_VERSION,
         quarks,
         roster: Vec::new(),
         max_exchanges: repo.max_exchanges.or(global.max_exchanges),

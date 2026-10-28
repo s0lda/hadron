@@ -1508,3 +1508,21 @@ fn hadron_lab_config_serde_and_effective_helpers() {
     assert_eq!(back.effective_gate_batch_size(), 8);
     assert!(!back.effective_fast_path_docs_only());
 }
+
+#[test]
+fn team_schema_v0_migration_v1_roundtrip_and_forward_guard() {
+    let v0_json = r#"{"quarks":[{"id":"cli-agy","provider":"agy","model":"gemini-3-pro","flavor":"orchestrator"}],"nucleus_index_budget_kb":64}"#;
+    let (team, migrated) = Team::from_versioned_json(v0_json).unwrap();
+    assert!(migrated);
+    assert_eq!(team.schema_version, TEAM_SCHEMA_VERSION);
+    assert_eq!(team.nucleus_index_budget_kb, Some(64));
+
+    let v1_json = serde_json::to_string(&team).unwrap();
+    assert!(v1_json.contains("\"schema_version\":1"));
+    let (reloaded, migrated_again) = Team::from_versioned_json(&v1_json).unwrap();
+    assert!(!migrated_again);
+    assert_eq!(reloaded, team);
+
+    let future_json = r#"{"schema_version":99,"quarks":[]}"#;
+    assert!(parse_team(future_json).is_err());
+}

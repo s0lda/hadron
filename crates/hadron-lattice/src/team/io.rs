@@ -150,11 +150,7 @@ pub fn load_team_for_repo(repo_root: &Path) -> Team {
 /// the file's bytes, and must parse *those* bytes. Re-reading the path to parse it
 /// would be a second read of a file that may have changed in between.
 pub fn parse_team(text: &str) -> std::io::Result<Team> {
-    let mut team: Team = serde_json::from_str(text).map_err(std::io::Error::other)?;
-    for seat in &mut team.quarks {
-        seat.normalize_vendor();
-    }
-    Ok(team)
+    Team::from_versioned_json(text).map(|(team, _)| team)
 }
 
 /// Load a team from an explicit path. Missing or malformed → an empty team, so
@@ -200,7 +196,9 @@ pub fn save_team(path: &Path, team: &Team) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(team).map_err(std::io::Error::other)?;
+    let mut versioned = team.clone();
+    versioned.schema_version = super::TEAM_SCHEMA_VERSION;
+    let json = serde_json::to_string_pretty(&versioned).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, path)
