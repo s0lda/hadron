@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.17",
+        date: Some("2026-10-28"),
+        added: &[
+            "Scheduled Tasks UI & Settings Management: Added Mission -> Swarm Tasks scheduled tasks list, Settings -> Schedules management view (Add, Edit Prompt, Run Now, Enable/Disable, Remove, MissedPolicy selector), and /schedule add|remove|settings commands",
+            "Security Warnings GitHub Alert Closing: Added gh api --method PATCH alert-closing instructions to Dispatch Fix / Dispatch Fix All, per-alert Close action in Git -> Remote & Issues, and automatic GitHub dismissal for locally remediated Cargo.lock alerts",
+            "Chamber Inspector & Daemon Wiring: Wired DagBarrierScheduler and Engine::serve daemon loop, 3-Way Diff per-hunk stage/reject steering, Time Travel and Artifacts Mission subtabs, 3D Visualizer Live Split-Canvas, and stacked active composer Markdown preview",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.16",
         date: Some("2026-10-27"),
         added: &[

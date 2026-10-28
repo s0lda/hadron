@@ -11,6 +11,7 @@ Hadron provides an interactive suite of `/slash` commands directly inside the Ch
 | `/goal` | `/goal <objective>` | Synthesize an end-to-end swarm mission, author a structured plan in `.hadron/docs/plans/`, and fan out tasks across worker Quarks. | `/goal Build user auth with JWT` |
 | `/research` | `/research <topic>` | Conduct in-depth research across the codebase or web, synthesising findings into a structured document in `.hadron/docs/research/`. | `/research memory lifecycle and compaction` |
 | `/loop` | `/loop [count] <objective>` | Execute an iterative evaluation loop until completion criteria are met or count expires. | `/loop 5 fix compiler errors` |
+| `/schedule` | `/schedule [list\|add\|remove\|run\|skip\|enable\|disable\|settings]` | List, add, remove, run, skip, enable, disable, or open Settings for recurring scheduled tasks (`.hadron/schedules/`). | `/schedule add daily-sec @daily Run security audit` |
 | `/absorb` | `/absorb [options]` | Scan foreign assistant folders (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) and distill memories, skills, invariants, and plans into `.hadron/`. | `/absorb` |
 | `/dream` | `/dream` | Trigger an immediate idle workspace maintenance cycle (compaction & worktree cleanup). | `/dream` |
 | `/scout` | `/scout <prompt>` | Spawn ephemeral read-only sub-worker for zero-footprint codebase search. | `/scout find all references to IntentLockTable` |

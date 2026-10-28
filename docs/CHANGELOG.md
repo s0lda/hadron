@@ -5,6 +5,19 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.17] - 2026-10-28
+
+### Added
+- **Scheduled Tasks UI (`Mission -> Swarm Tasks` & `Settings -> Schedules`) and `/schedule` CRUD (`hadron-chamber`, `hadron-lattice`)**:
+  - Added a dedicated `Schedules` management view in Settings (`SettingsTarget::Schedules` in `settings/overlay.rs`) displaying all configured schedules from `.hadron/schedules/schedules.json` with human-readable cron frequencies (`describe_cron`), live `DueStatus` badges (`Enabled`, `Disabled`, `Overdue`, `Due Now`, `Missing TASK.md`), last run/skip timestamps, interactive `MissedPolicy` cycling (`Ask` / `Run` / `Skip`), `Run Now` / `Enable` / `Disable` / `Edit Prompt` / `Remove` actions, and an `Add / Update Scheduled Task` form with cron preset pills.
+  - Added a live `Scheduled Tasks` summary card at the top of `Mission -> Swarm Tasks` (`render/terminal.rs`) showing each task's frequency, target, status, and last run alongside `Run Now`, `Enable`/`Disable`, and a `Manage` shortcut to `Settings -> Schedules`.
+  - Extended `/schedule` (`actions.rs`, `text.rs`, `hadron-lattice::schedules`) with `/schedule add <id> <cron> <prompt>`, `/schedule remove <id>`, and `/schedule settings` commands.
+- **Security Warnings GitHub Alert Closing (`Dispatch Fix` & Auto-Dismissal) (`hadron-chamber`)**:
+  - Updated `GitHubSecurityAlertInfo::remediation_prompt`, `remediation_item`, and `format_security_alerts_remediation_message` (`vcs.rs`) to include the exact `gh api --method PATCH` command (`close_gh_command`) so `Dispatch Fix` and `Dispatch Fix All` instruct `@orchestrator` to close alerts on GitHub once remediated and verified.
+  - Added `close_github_security_alert` and `remediated_dependabot_alert_numbers` (`vcs.rs`), automatically dismissing open GitHub Dependabot alerts that have already been remediated in local `Cargo.lock` during `fetch_github_security_alerts` and adding a per-alert `Close` button in `Git -> Remote & Issues -> Security Warnings` (`render/git.rs`).
+- **7 Audited Chamber UI Components Wired into Production (`hadron-chamber`, `hadron-gluon`)**:
+  - Wired `DagBarrierScheduler` and `Engine::serve` (`FieldWatcher`) into `hadron-gluon` (`engine/run.rs`, `cli.rs`), and wired `DiffSteeringState` per-hunk `✓`/`✕` buttons (`render/diff_inspector.rs`), `time_travel_inspector` (`MissionSubtab::TimeTravel`), `render_artifacts_rail` (`MissionSubtab::Artifacts`), and `render_split_canvas_section` (`render/visualizer.rs`) into live Chamber call sites while keeping the composer editor active below the scrollable Markdown preview (`render/chat.rs`).
+
 ## [0.33.16] - 2026-10-27
 
 ### Added
