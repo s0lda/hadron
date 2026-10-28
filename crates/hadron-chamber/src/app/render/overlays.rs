@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.20",
+        date: Some("2026-10-28"),
+        added: &[],
+        changed: &[
+            "Retire Redundant Swarm Focus HUD from Chat Pane: Removed the attention_hud header strip from Chamber::chat_pane and deleted attention_hud.rs and model/attention.rs so retired UI cannot be re-wired by dead-code audits",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.19",
         date: Some("2026-10-28"),
         added: &[],

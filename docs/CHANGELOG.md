@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.20] - 2026-10-28
+
+### Changed
+- **Retire Redundant Swarm Focus HUD from Chat Pane (`hadron-chamber`)**:
+  - Removed the `attention_hud` header strip call site from `Chamber::chat_pane` (`crates/hadron-chamber/src/app/render/chat.rs`) since the live card and roster already surface active quark state and attention badges.
+  - Deleted `crates/hadron-chamber/src/app/render/attention_hud.rs` and `crates/hadron-chamber/src/model/attention.rs` so retired UI cannot be re-wired by dead-code audits.
+
 ## [0.33.19] - 2026-10-28
 
 ### Fixed
