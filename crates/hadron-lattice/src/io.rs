@@ -22,6 +22,11 @@ fn field_cache() -> &'static Mutex<HashMap<PathBuf, CachedField>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn append_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// Append a single event as one JSON line. Line-atomic; creates the file if
 /// missing. Never rewrites existing content.
 pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
@@ -33,9 +38,11 @@ pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
         );
         *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
     }
-    let line = serde_json::to_string(&ev)?;
+    let mut line = serde_json::to_string(&ev)?;
+    line.push('\n');
+    let _guard = append_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(f, "{line}")?;
+    f.write_all(line.as_bytes())?;
     Ok(())
 }
 
@@ -143,6 +150,13 @@ pub fn read_new(path: &Path, offset: u64) -> std::io::Result<(Vec<Event>, u64)> 
         }
         if let Ok(ev) = serde_json::from_str::<Event>(text) {
             out.push(ev);
+        } else {
+            for item in serde_json::Deserializer::from_str(text).into_iter::<Event>() {
+                match item {
+                    Ok(ev) => out.push(ev),
+                    Err(_) => break,
+                }
+            }
         }
     }
     Ok((out, offset + consumed))
@@ -288,5 +302,50 @@ mod tests {
         assert!(read_events(&path).unwrap().is_empty());
         append_event(&path, &e3).unwrap();
         assert_eq!(read_events(&path).unwrap(), vec![e3]);
+    }
+
+    #[test]
+    fn read_new_recovers_concatenated_events_on_same_line() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        let e1 = Event::new(Actor::Human, None, Kind::Message { body: "@team Let's debate: topic".into() });
+        let e2 = Event::new(Actor::Human, None, Kind::Message { body: "```\nfenced quote\n```".into() });
+        let raw = format!(
+            "{}{}\n\n",
+            serde_json::to_string(&e1).unwrap(),
+            serde_json::to_string(&e2).unwrap()
+        );
+        std::fs::write(&path, raw).unwrap();
+
+        let events = read_events(&path).unwrap();
+        assert_eq!(events, vec![e1, e2]);
+    }
+
+    #[test]
+    fn concurrent_append_event_never_interleaves_lines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        std::thread::scope(|s| {
+            for t in 0..8 {
+                let p = path.clone();
+                s.spawn(move || {
+                    for i in 0..25 {
+                        let ev = Event::new(
+                            Actor::Human,
+                            None,
+                            Kind::Message {
+                                body: format!("thread-{t}-msg-{i}"),
+                            },
+                        );
+                        append_event(&p, &ev).unwrap();
+                    }
+                });
+            }
+        });
+
+        let events = read_events(&path).unwrap();
+        assert_eq!(events.len(), 200);
     }
 }

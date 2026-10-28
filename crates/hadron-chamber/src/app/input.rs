@@ -86,7 +86,8 @@ impl super::Chamber {
         // leading `/command` tokens; the returned body is the untouched remainder, so a
         // multi-line message (Shift+Enter, a markdown list) keeps its newlines.
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let (cmds, body) = split_leading_commands_in(&full, Some(&repo_root));
+        let (mut cmds, mut body) = split_leading_commands_in(&full, Some(&repo_root));
+        fold_preamble_into_prompt_commands(&mut cmds, &mut body, Some(&repo_root));
         for (cmd, args) in &cmds {
             if cmd != "clear" {
                 let cmd_ev = slash_command_event(cmd, args);
@@ -576,6 +577,46 @@ pub(super) fn split_leading_commands_in(
     let body = body.trim();
     let body = (!body.is_empty()).then(|| body.to_string());
     (cmds, body)
+}
+
+/// When the human writes preamble context (e.g. a fenced quote or paragraph) above a
+/// prompt-dispatching `Arity::Body` slash command (such as `/team-debate`, `/debate`,
+/// `/team-brainstorm`, `/brainstorm`, `/goal`), fold that preamble into the command's
+/// argument so a single unified message is posted with the full context rather than
+/// splitting into two concurrent messages where the preamble lacks the `@mention`.
+pub(super) fn fold_preamble_into_prompt_commands(
+    cmds: &mut [(String, String)],
+    body: &mut Option<String>,
+    repo_root: Option<&std::path::Path>,
+) {
+    if body.is_none() {
+        return;
+    }
+    let target_cmd = cmds.iter_mut().find(|(cmd, _)| {
+        !matches!(
+            cmd.as_str(),
+            "add-skill"
+                | "learn"
+                | "learn-global"
+                | "learn-std-model"
+                | "learn-std-model-global"
+                | "settle"
+                | "adr"
+                | "loop"
+                | "steer"
+                | "scout"
+        ) && crate::text::command_in(cmd, repo_root)
+            .is_some_and(|c| c.arity == crate::text::Arity::Body)
+    });
+    if let Some((_, args)) = target_cmd {
+        if let Some(preamble) = body.take() {
+            if args.trim().is_empty() {
+                *args = preamble;
+            } else {
+                *args = format!("{}\n\n{preamble}", args.trim());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1115,6 +1156,31 @@ mod tests {
             ]
         );
         assert_eq!(body2, None);
+    }
+
+    #[test]
+    fn fold_preamble_into_prompt_commands_merges_fenced_quote_into_team_debate() {
+        let raw = "```\nGitHub has almost zero organic discovery\n```\n/team-debate What do you think about making our Hadron popular?";
+        let (mut cmds, mut body) = split_leading_commands_in(raw, None);
+        fold_preamble_into_prompt_commands(&mut cmds, &mut body, None);
+        assert_eq!(body, None);
+        assert_eq!(
+            cmds,
+            vec![(
+                "team-debate".to_string(),
+                "What do you think about making our Hadron popular?\n\n```\nGitHub has almost zero organic discovery\n```".to_string(),
+            )]
+        );
+
+        // Non-prompt commands like /add-skill preserve separate preamble body.
+        let raw_skill = "a preamble line\n/add-skill my-skill\nthe content";
+        let (mut cmds_s, mut body_s) = split_leading_commands_in(raw_skill, None);
+        fold_preamble_into_prompt_commands(&mut cmds_s, &mut body_s, None);
+        assert_eq!(body_s.as_deref(), Some("a preamble line"));
+        assert_eq!(
+            cmds_s,
+            vec![("add-skill".to_string(), "my-skill\nthe content".to_string())]
+        );
     }
 }
 
