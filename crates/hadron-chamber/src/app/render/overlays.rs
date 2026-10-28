@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.18",
+        date: Some("2026-10-28"),
+        added: &[
+            "Composer Preview Auto-Scroll & Universal Code Synaptics: Wired deferred auto-scroll on composer preview and tokenized multi-language syntax highlighting across Markdown code blocks, Git diffs, 3-Way Diff, and Time Travel scrubber",
+            "File Tree Explorer CRUD & Context Menu Operations: Added + File / + Folder / Refresh toolbar buttons, inline create/rename modal, and context menu Copy, Cut, Paste, Duplicate, Delete, Copy Relative Path, and Copy @file Mention actions",
+            "Hadron Lab High-Scale Swarm Orchestration, Quark Duplication & Reserved Name Guards: Added Settings -> Hadron Lab scaling controls (turn/gate concurrency, speculative batching, docs fast-path), one-click Quark duplication, and reserved/unique Quark name enforcement",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.17",
         date: Some("2026-10-28"),
         added: &[

@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.18] - 2026-10-28
+
+### Added
+- **Composer Preview Auto-Scroll & Universal Code Synaptics (`hadron-chamber`)**:
+  - Wired `composer_preview_scroll` (`ScrollHandle`) with deferred `window.on_next_frame` auto-scroll on input change and preview toggle (`render/chat.rs`, `input.rs`).
+  - Added `syntax::tokenize_code_line`, `highlight_code_line_element`, and `annotate_bare_code_fences` mapped to active theme `syntax_*` tokens (`syntax.rs`, `widgets.rs`, `lib.rs`, `main.rs`), delivering multi-language syntax highlighting across Markdown code blocks, Git Changes/Graph/Branch diffs (`render/git.rs`), 3-Way Diff (`render/diff_inspector.rs`), and the Time Travel scrubber (`render/scrubber.rs`).
+- **File Tree Explorer CRUD & Context Menu Operations (`hadron-chamber`, `hadron-lattice`)**:
+  - Extended the `Files` inspector (`render/terminal.rs`, `actions.rs`, `sys.rs`) with top toolbar `+ File`, `+ Folder`, and `Refresh` controls, inline creation/rename input, right-click context actions (`New File...`, `New Folder...`, `Rename...`, `Duplicate`, `Copy`, `Cut`, `Paste`, `Copy Relative Path`, `Copy @file Mention`, `Delete`), and path-traversal-safe filesystem operations.
+- **Hadron Lab High-Scale Swarm Orchestration, Quark Duplication & Reserved Name Guards (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`)**:
+  - Added `SettingsTarget::HadronLab` (`settings/overlay.rs`, `settings/providers.rs`) and `Team` scaling fields (`hadron_lab_enabled`, `max_concurrent_turns`, `max_concurrent_gates`, `gate_batch_size`, `fast_path_docs_only`), wired into `Engine` startup, hot-reload (`cli.rs`, `engine.rs`), concurrency capping, speculative batch verification (`engine/shadow_gate.rs`), and docs/asset-only fast-path merge gate bypass (`engine/merge.rs`).
+  - Added `validate_quark_name`, `validate_quark_id`, and `check_quark_uniqueness` (`hadron-lattice::quark`, `router/mod.rs`, `settings/mod.rs`) blocking reserved aliases (`orchestrator`, `team`, `gluon`, `hadron`, `self`, `all`, `user`, `system`) and duplicate IDs/display names across roster registration, inline rename, and one-click `Duplicate` quark cloning (`duplicate_catalogue_quark`).
+
 ## [0.33.17] - 2026-10-28
 
 ### Added
