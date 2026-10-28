@@ -483,6 +483,10 @@ pub async fn run() {
         .with_max_turn_wall_clock(std::time::Duration::from_secs(team.max_turn_wall_clock_secs()))
         .with_git_author(team.git_author_name.clone(), team.git_author_email.clone())
         .with_git_auto_prune_worktrees(team.git_auto_prune_worktrees())
+        .with_max_concurrent_turns(team.effective_max_concurrent_turns())
+        .with_max_concurrent_gates(team.effective_max_concurrent_gates())
+        .with_gate_batch_size(team.effective_gate_batch_size())
+        .with_fast_path_docs_only(team.effective_fast_path_docs_only())
         .with_nucleus_index_budget_bytes(crate::nucleus_status::resolve_budget_bytes(&team))
         .with_nucleus(crate::engine::build_nucleus_digest(&repo_root))
         // `Engine::new` defaults this to `None` (hermetic — see the field doc), so the
@@ -679,6 +683,10 @@ pub async fn run() {
                                 engine.set_max_turn_wall_clock(std::time::Duration::from_secs(desired.max_turn_wall_clock_secs()));
                                 engine.set_git_author(desired.git_author_name.clone(), desired.git_author_email.clone());
                                 engine.set_git_auto_prune_worktrees(desired.git_auto_prune_worktrees());
+                                engine.set_max_concurrent_turns(desired.effective_max_concurrent_turns());
+                                engine.set_max_concurrent_gates(desired.effective_max_concurrent_gates());
+                                engine.set_gate_batch_size(desired.effective_gate_batch_size());
+                                engine.set_fast_path_docs_only(desired.effective_fast_path_docs_only());
                                 engine.set_nucleus_index_budget_bytes(
                                     crate::nucleus_status::resolve_budget_bytes(&desired),
                                 );

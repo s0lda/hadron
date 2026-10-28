@@ -775,6 +775,10 @@ pub fn validate_quark_id(id: &QuarkId) -> anyhow::Result<()> {
         || s.eq_ignore_ascii_case("gluon")
         || s.eq_ignore_ascii_case(crate::router::ORCHESTRATOR_ALIAS)
         || s.eq_ignore_ascii_case(crate::router::TEAM_ALIAS)
+        || s.eq_ignore_ascii_case("self")
+        || s.eq_ignore_ascii_case("all")
+        || s.eq_ignore_ascii_case("user")
+        || s.eq_ignore_ascii_case("system")
     {
         anyhow::bail!("quark id '{s}' is reserved");
     }

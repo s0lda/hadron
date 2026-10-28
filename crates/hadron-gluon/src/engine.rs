@@ -540,6 +540,10 @@ pub struct Engine {
     git_author_name: Option<String>,
     git_author_email: Option<String>,
     git_auto_prune_worktrees: bool,
+    pub max_concurrent_turns: Option<usize>,
+    pub max_concurrent_gates: usize,
+    pub gate_batch_size: usize,
+    pub fast_path_docs_only: bool,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -648,6 +652,10 @@ impl Engine {
             git_author_name: None,
             git_author_email: None,
             git_auto_prune_worktrees: true,
+            max_concurrent_turns: None,
+            max_concurrent_gates: 1,
+            gate_batch_size: 1,
+            fast_path_docs_only: false,
         }
     }
 
@@ -659,6 +667,32 @@ impl Engine {
     /// Set an explicit shadow gate instance.
     pub fn with_shadow_gate(mut self, gate: Arc<AsyncMutex<ShadowGate>>) -> Self {
         self.shadow_gate = gate;
+        self
+    }
+
+    /// Set max concurrent turns in flight (None = uncapped).
+    pub fn with_max_concurrent_turns(mut self, cap: Option<usize>) -> Self {
+        self.max_concurrent_turns = cap;
+        self
+    }
+
+    /// Set max concurrent merge gates.
+    pub fn with_max_concurrent_gates(mut self, n: usize) -> Self {
+        let permits = n.max(1);
+        self.max_concurrent_gates = permits;
+        self.gate_semaphore = Arc::new(tokio::sync::Semaphore::new(permits));
+        self
+    }
+
+    /// Set merge gate batch size.
+    pub fn with_gate_batch_size(mut self, size: usize) -> Self {
+        self.gate_batch_size = size.max(1);
+        self
+    }
+
+    /// Set whether fast path docs-only verification is enabled.
+    pub fn with_fast_path_docs_only(mut self, enabled: bool) -> Self {
+        self.fast_path_docs_only = enabled;
         self
     }
 
@@ -899,6 +933,28 @@ impl Engine {
     /// Whether git worktrees should be automatically pruned.
     pub fn git_auto_prune_worktrees(&self) -> bool {
         self.git_auto_prune_worktrees
+    }
+
+    /// Set max concurrent turns in flight (None = uncapped).
+    pub fn set_max_concurrent_turns(&mut self, cap: Option<usize>) {
+        self.max_concurrent_turns = cap;
+    }
+
+    /// Set max concurrent merge gates.
+    pub fn set_max_concurrent_gates(&mut self, n: usize) {
+        let permits = n.max(1);
+        self.max_concurrent_gates = permits;
+        self.gate_semaphore = Arc::new(tokio::sync::Semaphore::new(permits));
+    }
+
+    /// Set merge gate batch size.
+    pub fn set_gate_batch_size(&mut self, size: usize) {
+        self.gate_batch_size = size.max(1);
+    }
+
+    /// Set whether fast path docs-only verification is enabled.
+    pub fn set_fast_path_docs_only(&mut self, enabled: bool) {
+        self.fast_path_docs_only = enabled;
     }
 
     /// Switch a seated quark's **participation** on or off.

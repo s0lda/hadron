@@ -287,7 +287,13 @@ fn match_longest_mention<'a>(
     for card in roster {
         try_match(text, card.id.as_str(), ResolvedMention::Quark(card), &mut best_match);
         if let Some(dn) = &card.display_name {
-            try_match(text, dn.as_str(), ResolvedMention::Quark(card), &mut best_match);
+            let is_reserved = hadron_lattice::is_reserved_quark_name(dn);
+            let collides_id = roster
+                .iter()
+                .any(|other| other.id != card.id && other.id.as_str().eq_ignore_ascii_case(dn));
+            if !is_reserved && !collides_id {
+                try_match(text, dn.as_str(), ResolvedMention::Quark(card), &mut best_match);
+            }
         }
     }
 

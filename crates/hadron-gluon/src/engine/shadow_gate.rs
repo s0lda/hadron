@@ -24,6 +24,7 @@ pub struct ShadowGate {
     queue: VecDeque<String>,
     states: HashMap<String, ShadowState>,
     speculative_cache: HashMap<(String, String), SpeculativeTestResult>,
+    verified_file_epochs: HashMap<u64, Vec<String>>,
 }
 
 impl ShadowGate {
@@ -33,7 +34,50 @@ impl ShadowGate {
             queue: VecDeque::new(),
             states: HashMap::new(),
             speculative_cache: HashMap::new(),
+            verified_file_epochs: HashMap::new(),
         }
+    }
+
+    /// Checks if all changed paths are purely documentation, specs, notes, or static media assets.
+    pub fn is_docs_or_asset_only_paths(paths: &[String]) -> bool {
+        if paths.is_empty() {
+            return false;
+        }
+        const DOC_EXTENSIONS: &[&str] = &[
+            "md", "markdown", "txt", "png", "jpg", "jpeg", "svg", "gif", "webp", "ico",
+        ];
+        paths.iter().all(|p| {
+            let p_norm = p.replace('\\', "/");
+            if p_norm.starts_with(".hadron/") || p_norm.starts_with("docs/") {
+                return true;
+            }
+            if let Some(ext) = std::path::Path::new(&p_norm).extension().and_then(|e| e.to_str()) {
+                DOC_EXTENSIONS.iter().any(|&de| ext.eq_ignore_ascii_case(de))
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Record files verified clean at a given git epoch.
+    pub fn record_verified_files(&mut self, epoch: u64, files: &[String]) {
+        self.verified_file_epochs.insert(epoch, files.to_vec());
+    }
+
+    /// Check if target files can reuse a clean verification pass from an epoch because
+    /// they are disjoint from files modified in that epoch.
+    pub fn can_reuse_disjoint_pass(&self, epoch: u64, files: &[String]) -> bool {
+        if let Some(verified) = self.verified_file_epochs.get(&epoch) {
+            !files.iter().any(|f| verified.contains(f))
+        } else {
+            false
+        }
+    }
+
+    /// Bisect a batch of branches into two halves for parallel isolate-and-test.
+    pub fn bisect_failing_branches(branches: &[String]) -> (Vec<String>, Vec<String>) {
+        let mid = branches.len() / 2;
+        (branches[..mid].to_vec(), branches[mid..].to_vec())
     }
 
     pub fn enqueue_branch(&mut self, branch: &str) {
@@ -180,5 +224,34 @@ mod tests {
 
         // Miss on different sha
         assert!(gate.get_speculative_result("quark/feat-1", "sha_other").is_none());
+    }
+
+    #[test]
+    fn test_is_docs_or_asset_only_paths() {
+        assert!(!ShadowGate::is_docs_or_asset_only_paths(&[]));
+        assert!(ShadowGate::is_docs_or_asset_only_paths(&[
+            "README.md".to_string(),
+            "docs/architecture.md".to_string(),
+            "assets/logo.svg".to_string(),
+            ".hadron/nucleus/notes/lesson.md".to_string(),
+        ]));
+        assert!(!ShadowGate::is_docs_or_asset_only_paths(&[
+            "README.md".to_string(),
+            "src/main.rs".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn test_disjoint_file_epochs_and_bisect() {
+        let mut gate = ShadowGate::new("main");
+        gate.record_verified_files(1, &["crates/crate-a/src/lib.rs".to_string()]);
+        assert!(gate.can_reuse_disjoint_pass(1, &["crates/crate-b/src/lib.rs".to_string()]));
+        assert!(!gate.can_reuse_disjoint_pass(1, &["crates/crate-a/src/lib.rs".to_string()]));
+        assert!(!gate.can_reuse_disjoint_pass(2, &["crates/crate-b/src/lib.rs".to_string()]));
+
+        let branches = vec!["b1".to_string(), "b2".to_string(), "b3".to_string(), "b4".to_string()];
+        let (left, right) = ShadowGate::bisect_failing_branches(&branches);
+        assert_eq!(left, vec!["b1".to_string(), "b2".to_string()]);
+        assert_eq!(right, vec!["b3".to_string(), "b4".to_string()]);
     }
 }

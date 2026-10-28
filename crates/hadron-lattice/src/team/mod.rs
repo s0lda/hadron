@@ -89,6 +89,21 @@ pub struct Team {
     /// Optional default process sandbox confinement mode for team executions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_mode: Option<SandboxMode>,
+    /// Whether Hadron Lab high-scale swarm orchestration is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hadron_lab_enabled: Option<bool>,
+    /// Max concurrent active worker turns in flight (None = uncapped/default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_turns: Option<usize>,
+    /// Max concurrent Merge Gate test runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_gates: Option<usize>,
+    /// Merge Gate speculative/batch evaluation size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate_batch_size: Option<usize>,
+    /// Whether documentation and asset-only changes bypass full test suite running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_path_docs_only: Option<bool>,
 }
 
 impl Team {
@@ -140,6 +155,31 @@ impl Team {
     /// The configured sandbox confinement mode, defaulting to `SandboxMode::WorktreeOnly`.
     pub fn sandbox_mode(&self) -> SandboxMode {
         self.sandbox_mode.unwrap_or_default()
+    }
+
+    /// Whether Hadron Lab high-scale swarm orchestration is enabled.
+    pub fn hadron_lab_enabled(&self) -> bool {
+        self.hadron_lab_enabled.unwrap_or(false)
+    }
+
+    /// Effective max concurrent turns in flight (None = uncapped).
+    pub fn effective_max_concurrent_turns(&self) -> Option<usize> {
+        self.max_concurrent_turns
+    }
+
+    /// Effective max concurrent merge gates.
+    pub fn effective_max_concurrent_gates(&self) -> usize {
+        self.max_concurrent_gates.unwrap_or(if self.hadron_lab_enabled() { 8 } else { 2 })
+    }
+
+    /// Effective gate batch size.
+    pub fn effective_gate_batch_size(&self) -> usize {
+        self.gate_batch_size.unwrap_or(if self.hadron_lab_enabled() { 4 } else { 1 })
+    }
+
+    /// Whether fast-path docs/asset verification is enabled.
+    pub fn effective_fast_path_docs_only(&self) -> bool {
+        self.fast_path_docs_only.unwrap_or(self.hadron_lab_enabled())
     }
 }
 
@@ -248,5 +288,10 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         git_author_name: repo.git_author_name.clone().or_else(|| global.git_author_name.clone()),
         git_author_email: repo.git_author_email.clone().or_else(|| global.git_author_email.clone()),
         sandbox_mode: repo.sandbox_mode.or(global.sandbox_mode),
+        hadron_lab_enabled: repo.hadron_lab_enabled.or(global.hadron_lab_enabled),
+        max_concurrent_turns: repo.max_concurrent_turns.or(global.max_concurrent_turns),
+        max_concurrent_gates: repo.max_concurrent_gates.or(global.max_concurrent_gates),
+        gate_batch_size: repo.gate_batch_size.or(global.gate_batch_size),
+        fast_path_docs_only: repo.fast_path_docs_only.or(global.fast_path_docs_only),
     }
 }

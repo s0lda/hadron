@@ -1480,3 +1480,31 @@ fn team_sandbox_mode_serde_round_trip() {
     assert_eq!(deserialized.sandbox_mode, Some(SandboxMode::Strict));
     assert_eq!(deserialized.sandbox_mode(), SandboxMode::Strict);
 }
+
+#[test]
+fn hadron_lab_config_serde_and_effective_helpers() {
+    let mut team = Team::default();
+    assert!(!team.hadron_lab_enabled());
+    assert_eq!(team.effective_max_concurrent_turns(), None);
+    assert_eq!(team.effective_max_concurrent_gates(), 2);
+    assert_eq!(team.effective_gate_batch_size(), 1);
+    assert!(!team.effective_fast_path_docs_only());
+
+    team.hadron_lab_enabled = Some(true);
+    assert!(team.hadron_lab_enabled());
+    assert_eq!(team.effective_max_concurrent_gates(), 8);
+    assert_eq!(team.effective_gate_batch_size(), 4);
+    assert!(team.effective_fast_path_docs_only());
+
+    team.max_concurrent_turns = Some(32);
+    team.max_concurrent_gates = Some(16);
+    team.gate_batch_size = Some(8);
+    team.fast_path_docs_only = Some(false);
+
+    let json = serde_json::to_string(&team).unwrap();
+    let back: Team = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.effective_max_concurrent_turns(), Some(32));
+    assert_eq!(back.effective_max_concurrent_gates(), 16);
+    assert_eq!(back.effective_gate_batch_size(), 8);
+    assert!(!back.effective_fast_path_docs_only());
+}

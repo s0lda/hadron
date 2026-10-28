@@ -866,4 +866,64 @@ fn orchestrator_parallel_self_dispatch_with_peers_and_self_alias() {
     );
 }
 
+#[test]
+fn test_reserved_and_colliding_display_names_ignored() {
+    let r = vec![
+        QuarkCard {
+            id: QuarkId::new("orch"),
+            display_name: None,
+            flavor: Flavor::Orchestrator,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            roles: vec![],
+            exclusive: false,
+            commands: Default::default(),
+            energy_limit: None,
+            deny_skills: vec![],
+            has_forge_tools: false,
+        },
+        QuarkCard {
+            id: QuarkId::new("worker-1"),
+            display_name: Some("orchestrator".to_string()), // reserved!
+            flavor: Flavor::Worker,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            roles: vec![],
+            exclusive: false,
+            commands: Default::default(),
+            energy_limit: None,
+            deny_skills: vec![],
+            has_forge_tools: false,
+        },
+        QuarkCard {
+            id: QuarkId::new("worker-2"),
+            display_name: Some("worker-1".to_string()), // collides with worker-1 ID!
+            flavor: Flavor::Worker,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            roles: vec![],
+            exclusive: false,
+            commands: Default::default(),
+            energy_limit: None,
+            deny_skills: vec![],
+            has_forge_tools: false,
+        },
+    ];
+
+    // @orchestrator must resolve to the real orchestrator, NOT worker-1
+    assert_eq!(
+        parse_addressee("@orchestrator do work", &r, None, &[]),
+        Some(QuarkId::new("orch"))
+    );
+
+    // @worker-1 must resolve to worker-1, NOT worker-2 (even though worker-2 has display_name "worker-1")
+    assert_eq!(
+        parse_addressee("@worker-1 do work", &r, None, &[]),
+        Some(QuarkId::new("worker-1"))
+    );
+}
+
 

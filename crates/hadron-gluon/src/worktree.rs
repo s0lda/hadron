@@ -1027,8 +1027,13 @@ pub fn commits_ahead(wt: &Worktree, base: &str) -> anyhow::Result<usize> {
 
 /// The files this branch touched, relative to `base` — the `Kind::Edit` event's paths.
 pub fn changed_paths(wt: &Worktree, base: &str) -> anyhow::Result<Vec<String>> {
+    changed_files(&wt.path, base)
+}
+
+/// The files touched by a working tree path relative to `base`.
+pub fn changed_files(path: &Path, base: &str) -> anyhow::Result<Vec<String>> {
     let range = format!("{base}...HEAD");
-    let out = git_ok(&wt.path, &["diff", "--name-only", &range])?.unwrap_or_default();
+    let out = git_ok(path, &["diff", "--name-only", &range])?.unwrap_or_default();
     Ok(out.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 

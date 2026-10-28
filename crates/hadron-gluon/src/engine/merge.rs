@@ -402,6 +402,7 @@ impl super::Engine {
         heartbeat: &GateHeartbeat,
         shadow_gate: &tokio::sync::Mutex<crate::engine::shadow_gate::ShadowGate>,
         gate_semaphore: &Arc<tokio::sync::Semaphore>,
+        fast_path_docs_only: bool,
     ) -> anyhow::Result<PreGateOutcome> {
         use hadron_gatekeeper::BranchState;
         let initial_commits = crate::worktree::commits_ahead(&t.wt, &t.base)?;
@@ -451,6 +452,18 @@ impl super::Engine {
         let (passed, tail) = if let Some(spec) = cached_result {
             heartbeat.set_stage("using cached speculative test result");
             (spec.passed, spec.tail)
+        } else if fast_path_docs_only
+            && matches!(
+                crate::worktree::changed_files(&t.wt.path, &t.base),
+                Ok(ref files) if crate::engine::shadow_gate::ShadowGate::is_docs_or_asset_only_paths(files)
+            )
+        {
+            heartbeat.set_stage("fast-path: docs/asset verification");
+            (
+                true,
+                "fast-path: documentation/asset-only changes verified without full test suite"
+                    .to_string(),
+            )
         } else {
             heartbeat.set_stage("running test suite");
             let (passed, tail) = runner.tests(&t.wt).await?;
@@ -498,6 +511,7 @@ impl super::Engine {
                     heartbeat,
                     &self.shadow_gate,
                     &self.gate_semaphore,
+                    self.fast_path_docs_only,
                 )
                 .await?
             }

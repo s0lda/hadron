@@ -494,6 +494,10 @@ impl super::Engine {
                         continue;
                     }
 
+                    if self.max_concurrent_turns.is_some_and(|cap| in_flight.len() >= cap) {
+                        continue;
+                    }
+
                     // `effective_mode`, not `resolve_mode`: a worker clamped to
                     // `Auto` under No-Human-Mode must not get the Bypass seat's
                     // free pass on the exchange backstop either.
@@ -1117,6 +1121,7 @@ impl super::Engine {
                                 }
                                 let shadow_gate = Arc::clone(&self.shadow_gate);
                                 let gate_semaphore = Arc::clone(&self.gate_semaphore);
+                                let fast_path_docs_only = self.fast_path_docs_only;
                                 let gate_abort = gates.spawn(async move {
                                     let pre_res = Self::run_pre_gate(
                                         runner,
@@ -1124,6 +1129,7 @@ impl super::Engine {
                                         &heartbeat,
                                         &shadow_gate,
                                         &gate_semaphore,
+                                        fast_path_docs_only,
                                     )
                                     .await;
                                     (

@@ -252,4 +252,56 @@ mod tests {
         let back: QuarkCard = serde_json::from_str(&json).unwrap();
         assert_eq!(card, back);
     }
+
+    #[test]
+    fn test_is_reserved_quark_name() {
+        assert!(is_reserved_quark_name("orchestrator"));
+        assert!(is_reserved_quark_name("ORCHESTRATOR"));
+        assert!(is_reserved_quark_name("team"));
+        assert!(is_reserved_quark_name("self"));
+        assert!(is_reserved_quark_name("gluon"));
+        assert!(is_reserved_quark_name("human"));
+        assert!(is_reserved_quark_name("user"));
+        assert!(is_reserved_quark_name("system"));
+        assert!(is_reserved_quark_name("all"));
+        assert!(is_reserved_quark_name("architect"));
+        assert!(is_reserved_quark_name("acp"));
+        assert!(is_reserved_quark_name("acp-claude"));
+        assert!(is_reserved_quark_name("cli_tool"));
+        assert!(is_reserved_quark_name("http-service"));
+        assert!(is_reserved_quark_name("SDK-agent"));
+
+        assert!(!is_reserved_quark_name("my-quark"));
+        assert!(!is_reserved_quark_name("alpha"));
+        assert!(!is_reserved_quark_name("claudia"));
+    }
+
+    #[test]
+    fn test_validate_quark_display_name() {
+        let existing = &[
+            ("acp-claude", Some("Claude")),
+            ("cli-agy", None),
+        ];
+
+        // Empty display name is allowed
+        assert!(validate_quark_display_name("", "new-quark", existing).is_ok());
+        assert!(validate_quark_display_name("  ", "new-quark", existing).is_ok());
+
+        // Valid name
+        assert!(validate_quark_display_name("Gemini Pro", "new-quark", existing).is_ok());
+
+        // Self display name collision is allowed
+        assert!(validate_quark_display_name("Claude", "acp-claude", existing).is_ok());
+
+        // Reserved name rejected
+        assert!(validate_quark_display_name("orchestrator", "new-quark", existing).is_err());
+        assert!(validate_quark_display_name("team", "new-quark", existing).is_err());
+        assert!(validate_quark_display_name("acp-tool", "new-quark", existing).is_err());
+
+        // Collision with other ID
+        assert!(validate_quark_display_name("cli-agy", "new-quark", existing).is_err());
+
+        // Collision with other display name
+        assert!(validate_quark_display_name("claude", "new-quark", existing).is_err());
+    }
 }
