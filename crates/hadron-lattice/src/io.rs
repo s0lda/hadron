@@ -2,11 +2,25 @@
 //! gluon daemon and the GPUI chamber can read/append the field without pulling in
 //! each other's runtime. The two-process decoupling depends on this being here.
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::Event;
+
+#[derive(Clone, Debug)]
+struct CachedField {
+    offset: u64,
+    first_line: String,
+    events: Vec<Event>,
+}
+
+fn field_cache() -> &'static Mutex<HashMap<PathBuf, CachedField>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedField>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Append a single event as one JSON line. Line-atomic; creates the file if
 /// missing. Never rewrites existing content.
@@ -28,24 +42,66 @@ pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
 /// Read every event in order. A missing file yields an empty vec. Blank lines
 /// are skipped. A line that fails to parse is skipped rather than crashing the
 /// reader (append-only integrity means a torn final line can be ignored).
+///
+/// Uses an incremental per-path cursor cache backed by [`read_new`] so repeated
+/// reads on an append-only `field.jsonl` parse only newly appended bytes ($O(1)$
+/// per tick). Automatically invalidates and re-reads from byte 0 if the file is
+/// truncated, deleted, or its leading line changes (e.g. `/clear` or session swap).
 pub fn read_events(path: &Path) -> std::io::Result<Vec<Event>> {
     let file = match File::open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Ok(mut guard) = field_cache().lock() {
+                guard.remove(path);
+            }
+            return Ok(Vec::new());
+        }
         Err(e) => return Err(e),
     };
-    let mut out = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    let file_len = file.metadata()?.len();
+    let mut first_line = String::new();
+    let _ = BufReader::new(file).read_line(&mut first_line)?;
+
+    let cached_hit = field_cache().lock().ok().and_then(|guard| {
+        let entry = guard.get(path)?;
+        if entry.offset > 0 && entry.offset <= file_len && entry.first_line == first_line {
+            Some(entry.clone())
+        } else {
+            None
         }
-        match serde_json::from_str::<Event>(&line) {
-            Ok(ev) => out.push(ev),
-            Err(_) => continue,
+    });
+
+    if let Some(mut entry) = cached_hit {
+        if entry.offset == file_len {
+            return Ok(entry.events);
         }
+        let (more, new_off) = read_new(path, entry.offset)?;
+        if !more.is_empty() || new_off != entry.offset {
+            entry.events.extend(more);
+            entry.offset = new_off;
+            if let Ok(mut guard) = field_cache().lock() {
+                guard.insert(path.to_path_buf(), entry.clone());
+            }
+        }
+        return Ok(entry.events);
     }
-    Ok(out)
+
+    let (events, off) = read_new(path, 0)?;
+    if off > 0 {
+        if let Ok(mut guard) = field_cache().lock() {
+            guard.insert(
+                path.to_path_buf(),
+                CachedField {
+                    offset: off,
+                    first_line,
+                    events: events.clone(),
+                },
+            );
+        }
+    } else if let Ok(mut guard) = field_cache().lock() {
+        guard.remove(path);
+    }
+    Ok(events)
 }
 
 /// Incrementally read events appended after byte `offset`. Returns the newly
@@ -211,5 +267,26 @@ mod tests {
         let (batch, off) = read_new(&path, 0).unwrap();
         assert_eq!(batch, vec![e1]);
         assert_eq!(off, std::fs::metadata(&path).unwrap().len());
+    }
+
+    #[test]
+    fn read_events_incremental_cache_handles_append_and_truncate() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        let e1 = Event::new(Actor::Human, None, Kind::Message { body: "first".into() });
+        let e2 = Event::new(Actor::Human, None, Kind::Message { body: "second".into() });
+        append_event(&path, &e1).unwrap();
+        assert_eq!(read_events(&path).unwrap(), vec![e1.clone()]);
+
+        append_event(&path, &e2).unwrap();
+        assert_eq!(read_events(&path).unwrap(), vec![e1.clone(), e2.clone()]);
+
+        // Truncating and replacing with a new session invalidates the cache.
+        let e3 = Event::new(Actor::Human, None, Kind::Message { body: "fresh".into() });
+        std::fs::write(&path, "").unwrap();
+        assert!(read_events(&path).unwrap().is_empty());
+        append_event(&path, &e3).unwrap();
+        assert_eq!(read_events(&path).unwrap(), vec![e3]);
     }
 }

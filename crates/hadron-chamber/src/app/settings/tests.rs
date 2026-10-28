@@ -501,4 +501,21 @@ fn test_auto_detect_env_provider() {
     assert_eq!(detect_available_env_provider(&fake_env_empty), None);
 }
 
+#[test]
+fn strip_seat_numeric_suffix_and_unique_seat_id_prevent_nested_suffixes() {
+    use super::providers::{strip_seat_numeric_suffix, unique_seat_id};
+
+    assert_eq!(strip_seat_numeric_suffix("acp-claude"), "acp-claude");
+    assert_eq!(strip_seat_numeric_suffix("acp-claude-2"), "acp-claude");
+    assert_eq!(strip_seat_numeric_suffix("acp-claude-15"), "acp-claude");
+    // Suffix 1 or non-numeric is preserved as part of the base name
+    assert_eq!(strip_seat_numeric_suffix("cli-gpt-1"), "cli-gpt-1");
+
+    let existing = ["acp-claude", "acp-claude-2"];
+    let base = strip_seat_numeric_suffix("acp-claude-2");
+    let next = unique_seat_id(base, &|id| existing.contains(&id));
+    assert_eq!(next, "acp-claude-3");
+}
+
+
 

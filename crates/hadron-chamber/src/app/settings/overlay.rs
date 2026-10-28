@@ -385,6 +385,7 @@ impl super::Chamber {
                     );
 
                 // 1. Profile & Visual Identity Card
+                let name_error = self.settings_name_error.clone();
                 let profile_card = settings_card_section(
                     "Profile & Appearance",
                     Some(IconName::Info),
@@ -393,7 +394,19 @@ impl super::Chamber {
                         .child(settings_field(
                             "Display name",
                             Some("Shown in chat and the roster."),
-                            Input::new(&self.settings_name).w_full().into_any_element(),
+                            v_flex()
+                                .w_full()
+                                .gap_1()
+                                .child(Input::new(&self.settings_name).w_full())
+                                .when_some(name_error, |v, err| {
+                                    v.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::error())
+                                            .child(err),
+                                    )
+                                })
+                                .into_any_element(),
                         ))
                         .child(settings_field("Color accent", Some("Accent color for identity badges and hero banner."), swatches.into_any_element()))
                         .child(settings_field(
@@ -573,7 +586,15 @@ impl super::Chamber {
                 .gap_3()
                 .pt_1()
                 .when_some(quark_id_opt, |this, qid| {
+                    let dup_id = qid.clone();
                     this.child(
+                        text_button(format!("settings-duplicate-{}", qid), "Duplicate Quark").on_click(
+                            cx.listener(move |this, _, _window, cx| {
+                                this.duplicate_quark(&dup_id, cx);
+                            }),
+                        ),
+                    )
+                    .child(
                         text_button(format!("settings-remove-{}", qid), "Remove Quark").on_click(
                             cx.listener(move |this, _, _window, cx| {
                                 this.remove_quark(&qid, cx);

@@ -2722,6 +2722,10 @@ impl Chamber {
             cx.notify();
             return;
         }
+        if self.file_tree_pending_op.take().is_some() {
+            cx.notify();
+            return;
+        }
         if self.file_tree_open.is_some() {
             self.close_open_file(cx);
             return;
@@ -2924,8 +2928,353 @@ impl Chamber {
 
                 crate::sys::open_path_or_url(&target.display().to_string());
             }
+            ContextMenuAction::CopyRelativePath(path) => {
+                let rel = path.trim_matches('/').to_string();
+                crate::sys::copy_to_system_clipboard(&rel);
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(rel));
+                self.toast_manager.push(
+                    ToastKind::Success,
+                    "Copied relative path to clipboard".to_string(),
+                    Some(2),
+                );
+            }
+            ContextMenuAction::CopyFileItem(path) => {
+                let clean = path.trim_matches('/').to_string();
+                self.file_tree_clipboard = Some(FileTreeClipboard {
+                    rel_path: clean.clone(),
+                    is_cut: false,
+                });
+                self.toast_manager.push(
+                    ToastKind::Info,
+                    format!("Copied '{clean}'"),
+                    Some(2),
+                );
+            }
+            ContextMenuAction::CutFileItem(path) => {
+                let clean = path.trim_matches('/').to_string();
+                self.file_tree_clipboard = Some(FileTreeClipboard {
+                    rel_path: clean.clone(),
+                    is_cut: true,
+                });
+                self.toast_manager.push(
+                    ToastKind::Info,
+                    format!("Cut '{clean}'"),
+                    Some(2),
+                );
+            }
+            ContextMenuAction::PasteFileItem(dest_dir) => {
+                let Some(clip) = self.file_tree_clipboard.clone() else {
+                    return;
+                };
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                match crate::sys::copy_or_move_workspace_item(
+                    &repo_root,
+                    &clip.rel_path,
+                    &dest_dir,
+                    clip.is_cut,
+                ) {
+                    Ok(new_rel) => {
+                        if clip.is_cut {
+                            self.file_tree_clipboard = None;
+                        }
+                        if !dest_dir.is_empty() {
+                            self.file_tree_expanded
+                                .insert(dest_dir.trim_matches('/').to_string());
+                        }
+                        self.refresh_file_tree();
+                        self.toast_manager.push(
+                            ToastKind::Success,
+                            format!(
+                                "{} to '{new_rel}'",
+                                if clip.is_cut { "Moved" } else { "Pasted" }
+                            ),
+                            Some(3),
+                        );
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(ToastKind::Error, e, Some(4));
+                    }
+                }
+            }
+            ContextMenuAction::DuplicateFileItem(path) => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                match crate::sys::duplicate_workspace_item(&repo_root, &path) {
+                    Ok(new_rel) => {
+                        self.refresh_file_tree();
+                        self.toast_manager.push(
+                            ToastKind::Success,
+                            format!("Duplicated as '{new_rel}'"),
+                            Some(3),
+                        );
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(ToastKind::Error, e, Some(4));
+                    }
+                }
+            }
+            ContextMenuAction::DeleteFileItem(path) => {
+                let clean = path.trim_matches('/').to_string();
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                match crate::sys::delete_workspace_item(&repo_root, &clean) {
+                    Ok(()) => {
+                        if self
+                            .file_tree_open
+                            .as_ref()
+                            .is_some_and(|(open_p, _)| open_p == &clean || open_p.starts_with(&format!("{clean}/")))
+                        {
+                            self.file_tree_open = None;
+                        }
+                        self.file_tree_expanded.remove(&clean);
+                        self.refresh_file_tree();
+                        self.toast_manager.push(
+                            ToastKind::Success,
+                            format!("Deleted '{clean}'"),
+                            Some(3),
+                        );
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(ToastKind::Error, e, Some(4));
+                    }
+                }
+            }
+            ContextMenuAction::NewFileIn(dir) => {
+                self.file_tree_pending_op = Some(FileTreePendingOp::NewFile {
+                    parent_dir: dir.trim_matches('/').to_string(),
+                });
+            }
+            ContextMenuAction::NewFolderIn(dir) => {
+                self.file_tree_pending_op = Some(FileTreePendingOp::NewFolder {
+                    parent_dir: dir.trim_matches('/').to_string(),
+                });
+            }
+            ContextMenuAction::RenameFileItem(path) => {
+                self.file_tree_pending_op = Some(FileTreePendingOp::Rename {
+                    target_path: path.trim_matches('/').to_string(),
+                });
+            }
+            ContextMenuAction::InsertFileMention(path) => {
+                let mention = format!("@{}", path.trim_matches('/'));
+                crate::sys::copy_to_system_clipboard(&mention);
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(mention.clone()));
+                self.toast_manager.push(
+                    ToastKind::Success,
+                    format!("Copied {mention} to clipboard"),
+                    Some(2),
+                );
+            }
         }
         cx.notify();
+    }
+
+    /// Re-scan the workspace file tree and git statuses and sync `@`-mention completion candidates.
+    pub(super) fn refresh_file_tree(&mut self) {
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+        self.file_tree_paths =
+            crate::sys::list_workspace_files(repo_root, &self.file_tree_expanded);
+        self.git_statuses = crate::vcs::get_git_statuses(repo_root);
+        *self.completion_files.borrow_mut() = self
+            .file_tree_paths
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect();
+    }
+
+    /// Begin an inline File Tree operation (`New File…`, `New Folder…`, or `Rename…`),
+    /// pre-filling and focusing `file_tree_op_input`.
+    pub(super) fn start_file_tree_pending_op(
+        &mut self,
+        op: FileTreePendingOp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let initial = match &op {
+            FileTreePendingOp::NewFile { parent_dir }
+            | FileTreePendingOp::NewFolder { parent_dir } => {
+                if !parent_dir.is_empty() {
+                    self.file_tree_expanded.insert(parent_dir.clone());
+                }
+                String::new()
+            }
+            FileTreePendingOp::Rename { target_path } => std::path::Path::new(target_path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(target_path)
+                .to_string(),
+        };
+        self.file_tree_op_input.update(cx, |input, cx| {
+            input.set_value(initial, window, cx);
+            input.focus(window, cx);
+        });
+        self.file_tree_pending_op = Some(op);
+        cx.notify();
+    }
+
+    /// Commit the active inline File Tree operation (`NewFile`, `NewFolder`, or `Rename`).
+    pub(super) fn commit_file_tree_pending_op(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(op) = self.file_tree_pending_op.take() else {
+            return;
+        };
+        let typed = self
+            .file_tree_op_input
+            .read(cx)
+            .value()
+            .trim()
+            .trim_matches('/')
+            .to_string();
+        self.file_tree_op_input
+            .update(cx, |s, cx| s.set_value(String::new(), window, cx));
+        if typed.is_empty() {
+            cx.notify();
+            return;
+        }
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        match op {
+            FileTreePendingOp::NewFile { parent_dir } => {
+                let rel = if parent_dir.is_empty() {
+                    typed
+                } else {
+                    format!("{}/{typed}", parent_dir.trim_end_matches('/'))
+                };
+                match crate::sys::create_workspace_file(&repo_root, &rel) {
+                    Ok(_) => {
+                        if !parent_dir.is_empty() {
+                            self.file_tree_expanded.insert(parent_dir);
+                        }
+                        self.refresh_file_tree();
+                        self.toast_manager.push(
+                            ToastKind::Success,
+                            format!("Created file '{rel}'"),
+                            Some(3),
+                        );
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(ToastKind::Error, e, Some(4));
+                    }
+                }
+            }
+            FileTreePendingOp::NewFolder { parent_dir } => {
+                let rel = if parent_dir.is_empty() {
+                    typed
+                } else {
+                    format!("{}/{typed}", parent_dir.trim_end_matches('/'))
+                };
+                match crate::sys::create_workspace_dir(&repo_root, &rel) {
+                    Ok(_) => {
+                        if !parent_dir.is_empty() {
+                            self.file_tree_expanded.insert(parent_dir);
+                        }
+                        self.file_tree_expanded.insert(rel.clone());
+                        self.refresh_file_tree();
+                        self.toast_manager.push(
+                            ToastKind::Success,
+                            format!("Created folder '{rel}'"),
+                            Some(3),
+                        );
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(ToastKind::Error, e, Some(4));
+                    }
+                }
+            }
+            FileTreePendingOp::Rename { target_path } => {
+                let clean_target = target_path.trim_end_matches('/');
+                let dst_rel = if typed.contains('/') {
+                    typed
+                } else if let Some(parent) = std::path::Path::new(clean_target)
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                {
+                    format!("{}/{typed}", parent.to_string_lossy().replace('\\', "/"))
+                } else {
+                    typed
+                };
+                if dst_rel != clean_target {
+                    match crate::sys::rename_workspace_item(&repo_root, clean_target, &dst_rel) {
+                        Ok(_) => {
+                            if let Some((open_p, content)) = self.file_tree_open.take() {
+                                if open_p == clean_target {
+                                    self.file_tree_open = Some((dst_rel.clone(), content));
+                                } else {
+                                    self.file_tree_open = Some((open_p, content));
+                                }
+                            }
+                            self.refresh_file_tree();
+                            self.toast_manager.push(
+                                ToastKind::Success,
+                                format!("Renamed '{clean_target}' to '{dst_rel}'"),
+                                Some(3),
+                            );
+                        }
+                        Err(e) => {
+                            self.toast_manager.push(ToastKind::Error, e, Some(4));
+                        }
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Dispatch a File Tree context menu action that has access to `Window` (allowing
+    /// inline input focus or direct insertion into the chat composer).
+    pub(super) fn handle_file_tree_context_action(
+        &mut self,
+        action: ContextMenuAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            ContextMenuAction::NewFileIn(dir) => {
+                self.start_file_tree_pending_op(
+                    FileTreePendingOp::NewFile {
+                        parent_dir: dir.trim_matches('/').to_string(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+            ContextMenuAction::NewFolderIn(dir) => {
+                self.start_file_tree_pending_op(
+                    FileTreePendingOp::NewFolder {
+                        parent_dir: dir.trim_matches('/').to_string(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+            ContextMenuAction::RenameFileItem(path) => {
+                self.start_file_tree_pending_op(
+                    FileTreePendingOp::Rename {
+                        target_path: path.trim_matches('/').to_string(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+            ContextMenuAction::InsertFileMention(path) => {
+                let clean = path.trim_matches('/');
+                let cur = self.input.read(cx).value().to_string();
+                let sep = if cur.is_empty() || cur.ends_with(char::is_whitespace) {
+                    ""
+                } else {
+                    " "
+                };
+                let next = format!("{cur}{sep}@{clean} ");
+                if self.chat_tab != ChatTab::Chat {
+                    self.chat_tab = ChatTab::Chat;
+                }
+                self.input.update(cx, |s, cx| {
+                    s.set_value(next, window, cx);
+                    s.focus(window, cx);
+                });
+                cx.notify();
+            }
+            other => self.handle_context_menu_action(other, cx),
+        }
     }
 
     /// Open `path` (optionally at `line`) in the editor the human picked in Settings.

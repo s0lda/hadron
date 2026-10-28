@@ -438,6 +438,8 @@ struct Chamber {
     settings_general_expanded: bool,
     /// Whether the "Standard Swarm Skills" collapsible accordion is expanded in Settings.
     settings_standard_skills_expanded: bool,
+    /// Inline validation error when a Quark display name is reserved or collides with another Quark.
+    pub(super) settings_name_error: Option<String>,
     /// Schedule creation form inputs in `Settings -> Schedules`.
     settings_schedule_id: Entity<InputState>,
     settings_schedule_cron: Entity<InputState>,
@@ -617,6 +619,11 @@ struct Chamber {
     pub(super) update_state: UpdateState,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
+    pub(super) file_tree_clipboard: Option<FileTreeClipboard>,
+    pub(super) file_tree_pending_op: Option<FileTreePendingOp>,
+    pub(super) file_tree_op_input: Entity<InputState>,
+    pub(super) file_tree_filter_input: Entity<InputState>,
+    pub(super) file_tree_hide_ignored: bool,
     pub(super) terminals: Vec<TerminalTab>,
     pub(super) active_terminal_index: usize,
     pub(super) terminal_grid_mode: bool,
@@ -678,12 +685,35 @@ struct Chamber {
     pub(super) visualizer_hit_nodes: std::rc::Rc<std::cell::RefCell<Vec<(String, f32, f32)>>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FileTreeClipboard {
+    pub rel_path: String,
+    pub is_cut: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum FileTreePendingOp {
+    NewFile { parent_dir: String },
+    NewFolder { parent_dir: String },
+    Rename { target_path: String },
+}
+
 #[derive(Clone, Debug)]
 pub enum ContextMenuAction {
     OpenFile(String),
     OpenInEditor(String),
     OpenInFolder(String),
     CopyPath(String),
+    CopyRelativePath(String),
+    CopyFileItem(String),
+    CutFileItem(String),
+    PasteFileItem(String),
+    DuplicateFileItem(String),
+    NewFileIn(String),
+    NewFolderIn(String),
+    RenameFileItem(String),
+    DeleteFileItem(String),
+    InsertFileMention(String),
     CopyText(String),
     QuarkInfo(String),
     ToggleQuark(String),
@@ -754,6 +784,16 @@ impl Chamber {
         let repl_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Type /command, ?note query, or tool:name (Enter to run)…")
+        });
+
+        let file_tree_op_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .submit_on_enter(true)
+                .placeholder("Enter file or folder name…")
+        });
+        let file_tree_filter_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter files…")
         });
 
         let focus_handle = cx.focus_handle();
@@ -892,8 +932,35 @@ impl Chamber {
         let theme_color_picker = cx.new(|cx| ColorPickerState::new(window, cx));
         // Repaint the Settings overlay on every edit so its preview is live.
         let _settings_subs = vec![
-            cx.subscribe_in(&settings_name, window, |_, _, _: &InputEvent, _, cx| {
+            cx.subscribe_in(&settings_name, window, |this, _, _: &InputEvent, _, cx| {
+                let key = this.settings_target.key().to_string();
+                let is_quark = key != "human"
+                    && key != "providers"
+                    && key != "general"
+                    && key != "appearance"
+                    && key != "execution"
+                    && key != "environment"
+                    && key != "skills"
+                    && key != "schedules";
+                if is_quark {
+                    let typed = this.settings_name.read(cx).value().trim().to_string();
+                    this.settings_name_error = this
+                        .validate_current_quark_display_name(&typed, &key)
+                        .err();
+                } else {
+                    this.settings_name_error = None;
+                }
                 cx.notify()
+            }),
+            cx.subscribe_in(&file_tree_filter_input, window, |_, _, _: &InputEvent, _, cx| {
+                cx.notify()
+            }),
+            cx.subscribe_in(&file_tree_op_input, window, |this, _, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    this.commit_file_tree_pending_op(window, cx);
+                } else {
+                    cx.notify();
+                }
             }),
             cx.subscribe_in(&settings_path, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
@@ -1662,6 +1729,7 @@ impl Chamber {
             settings_advanced_expanded: false,
             settings_general_expanded: true,
             settings_standard_skills_expanded: false,
+            settings_name_error: None,
             settings_schedule_id,
             settings_schedule_cron,
             settings_schedule_target,
@@ -1765,6 +1833,11 @@ impl Chamber {
             completion_files,
             file_tree_open: None,
             file_tree_expanded: std::collections::HashSet::new(),
+            file_tree_clipboard: None,
+            file_tree_pending_op: None,
+            file_tree_op_input,
+            file_tree_filter_input,
+            file_tree_hide_ignored: false,
             terminals: Vec::new(),
             active_terminal_index: 0,
             terminal_grid_mode: false,

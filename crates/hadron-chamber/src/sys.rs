@@ -254,6 +254,231 @@ pub fn read_workspace_file(repo_root: &Path, file_path: &str) -> Option<String> 
     }
 }
 
+/// Validate a workspace-relative path and return its resolved `PathBuf` inside `repo_root`.
+/// Rejects empty paths, absolute paths, `..` traversal components, and `.git` mutations.
+pub fn validate_workspace_rel_path(
+    repo_root: &Path,
+    rel_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let trimmed = rel_path.trim().trim_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return Err("Path cannot be empty.".to_string());
+    }
+    let normalized = trimmed.replace('\\', "/");
+    for comp in normalized.split('/') {
+        if comp.is_empty() || comp == "." || comp == ".." {
+            return Err(format!("Invalid path segment '{comp}' in '{rel_path}'."));
+        }
+    }
+    if normalized == ".git" || normalized.starts_with(".git/") {
+        return Err("Modifying '.git' is not permitted.".to_string());
+    }
+    let target = repo_root.join(&normalized);
+    if let (Ok(canon_root), Some(parent)) = (repo_root.canonicalize(), target.parent()) {
+        if let Ok(canon_parent) = parent.canonicalize() {
+            let norm_root =
+                hadron_lattice::sys::paths::strip_unc_prefix(&canon_root.to_string_lossy());
+            let norm_parent =
+                hadron_lattice::sys::paths::strip_unc_prefix(&canon_parent.to_string_lossy());
+            if !Path::new(&norm_parent).starts_with(Path::new(&norm_root)) {
+                return Err("Target path escapes workspace root.".to_string());
+            }
+        }
+    }
+    Ok(target)
+}
+
+/// Create a new empty file at `rel_path` inside `repo_root` (creating parent dirs if needed).
+/// Fails if the target already exists.
+pub fn create_workspace_file(
+    repo_root: &Path,
+    rel_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let target = validate_workspace_rel_path(repo_root, rel_path)?;
+    if target.exists() {
+        return Err(format!("'{}' already exists.", rel_path.trim()));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dir: {e}"))?;
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| format!("Failed to create file: {e}"))?;
+    Ok(target)
+}
+
+/// Create a new directory at `rel_path` inside `repo_root`.
+pub fn create_workspace_dir(
+    repo_root: &Path,
+    rel_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let target = validate_workspace_rel_path(repo_root, rel_path)?;
+    if target.exists() {
+        return Err(format!("'{}' already exists.", rel_path.trim()));
+    }
+    std::fs::create_dir_all(&target).map_err(|e| format!("Failed to create folder: {e}"))?;
+    Ok(target)
+}
+
+/// Rename or move a workspace file or directory from `from_rel` to `to_rel`.
+pub fn rename_workspace_item(
+    repo_root: &Path,
+    from_rel: &str,
+    to_rel: &str,
+) -> Result<std::path::PathBuf, String> {
+    let src = validate_workspace_rel_path(repo_root, from_rel)?;
+    let dst = validate_workspace_rel_path(repo_root, to_rel)?;
+    if !src.exists() {
+        return Err(format!("Source '{}' does not exist.", from_rel.trim()));
+    }
+    if dst.exists() {
+        return Err(format!("Destination '{}' already exists.", to_rel.trim()));
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dir: {e}"))?;
+    }
+    std::fs::rename(&src, &dst).map_err(|e| format!("Failed to rename item: {e}"))?;
+    Ok(dst)
+}
+
+/// Delete a workspace file or directory at `rel_path`.
+pub fn delete_workspace_item(repo_root: &Path, rel_path: &str) -> Result<(), String> {
+    let target = validate_workspace_rel_path(repo_root, rel_path)?;
+    if !target.exists() {
+        return Err(format!("'{}' does not exist.", rel_path.trim()));
+    }
+    if target.is_dir() {
+        std::fs::remove_dir_all(&target).map_err(|e| format!("Failed to delete folder: {e}"))
+    } else {
+        std::fs::remove_file(&target).map_err(|e| format!("Failed to delete file: {e}"))
+    }
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| format!("Failed to create folder: {e}"))?;
+    let entries = std::fs::read_dir(src).map_err(|e| format!("Failed to read folder: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let ty = entry.file_type().map_err(|e| e.to_string())?;
+        let dest_child = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_child)?;
+        } else {
+            std::fs::copy(entry.path(), &dest_child)
+                .map_err(|e| format!("Failed to copy file: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn next_available_copy_name(parent: &Path, file_name: &str, is_dir: bool) -> String {
+    let candidate = parent.join(file_name);
+    if !candidate.exists() {
+        return file_name.to_string();
+    }
+    let (stem, ext) = if is_dir {
+        (file_name, "")
+    } else if let Some((s, e)) = file_name.rsplit_once('.') {
+        if s.is_empty() {
+            (file_name, "")
+        } else {
+            (s, e)
+        }
+    } else {
+        (file_name, "")
+    };
+    for n in 1u32.. {
+        let suffix = if n == 1 {
+            "copy".to_string()
+        } else {
+            format!("copy-{n}")
+        };
+        let name = if ext.is_empty() {
+            format!("{stem}-{suffix}")
+        } else {
+            format!("{stem}-{suffix}.{ext}")
+        };
+        if !parent.join(&name).exists() {
+            return name;
+        }
+    }
+    unreachable!()
+}
+
+/// Copy or move (`is_cut = true`) `src_rel` into `dest_dir_rel` (empty string means workspace root).
+/// Returns the new workspace-relative path.
+pub fn copy_or_move_workspace_item(
+    repo_root: &Path,
+    src_rel: &str,
+    dest_dir_rel: &str,
+    is_cut: bool,
+) -> Result<String, String> {
+    let src = validate_workspace_rel_path(repo_root, src_rel)?;
+    if !src.exists() {
+        return Err(format!("Source '{}' does not exist.", src_rel.trim()));
+    }
+    let dest_dir = if dest_dir_rel.trim().trim_matches(['/', '\\']).is_empty() {
+        repo_root.to_path_buf()
+    } else {
+        let d = validate_workspace_rel_path(repo_root, dest_dir_rel)?;
+        if d.is_file() {
+            d.parent().unwrap_or(repo_root).to_path_buf()
+        } else {
+            d
+        }
+    };
+    let file_name = src
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| "Invalid source filename.".to_string())?;
+    let is_dir = src.is_dir();
+
+    if is_cut {
+        let dst = dest_dir.join(file_name);
+        if dst == src {
+            return Ok(src_rel.trim().trim_matches('/').to_string());
+        }
+        if dst.exists() {
+            return Err(format!("Destination '{}' already exists.", file_name));
+        }
+        std::fs::rename(&src, &dst).map_err(|e| format!("Failed to move item: {e}"))?;
+        let rel = dst
+            .strip_prefix(repo_root)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| file_name.to_string());
+        return Ok(rel);
+    }
+
+    let target_name = next_available_copy_name(&dest_dir, file_name, is_dir);
+    let dst = dest_dir.join(&target_name);
+    if is_dir {
+        if dst.starts_with(&src) {
+            return Err("Cannot copy a folder into itself.".to_string());
+        }
+        copy_dir_recursive(&src, &dst)?;
+    } else {
+        std::fs::copy(&src, &dst).map_err(|e| format!("Failed to copy file: {e}"))?;
+    }
+    let rel = dst
+        .strip_prefix(repo_root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or(target_name);
+    Ok(rel)
+}
+
+/// Duplicate `src_rel` alongside itself (`<stem>-copy.<ext>`, `<stem>-copy-2.<ext>`, …).
+/// Returns the new workspace-relative path.
+pub fn duplicate_workspace_item(repo_root: &Path, src_rel: &str) -> Result<String, String> {
+    let clean = src_rel.trim().trim_matches(['/', '\\']);
+    let parent_rel = Path::new(clean)
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    copy_or_move_workspace_item(repo_root, clean, &parent_rel, false)
+}
+
 /// Prepares workspace file content for preview rendering in the file tree viewer.
 ///
 /// Markdown files (`.md`, `.markdown`) are returned verbatim so they render formatted prose.
@@ -1631,6 +1856,46 @@ mod tests {
         assert!(!env.layer_shell_status.is_empty());
         assert!(!env.notification_backend.is_empty());
         assert!(!env.graphics_pipeline.is_empty());
+    }
+
+    #[test]
+    fn workspace_file_operations_enforce_jail_and_crud() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        // Reject traversal and .git modification
+        assert!(validate_workspace_rel_path(root, "../outside.txt").is_err());
+        assert!(validate_workspace_rel_path(root, "src/../../outside.txt").is_err());
+        assert!(validate_workspace_rel_path(root, ".git/config").is_err());
+        assert!(validate_workspace_rel_path(root, "").is_err());
+
+        // Create folder and file
+        let dir = create_workspace_dir(root, "src/components").expect("create dir");
+        assert!(dir.is_dir());
+        let file = create_workspace_file(root, "src/components/button.rs").expect("create file");
+        assert!(file.is_file());
+        std::fs::write(&file, "pub struct Button;").unwrap();
+
+        // Duplicate item creates `-copy` suffix
+        let dup1 = duplicate_workspace_item(root, "src/components/button.rs").expect("dup 1");
+        assert_eq!(dup1, "src/components/button-copy.rs");
+        let dup2 = duplicate_workspace_item(root, "src/components/button.rs").expect("dup 2");
+        assert_eq!(dup2, "src/components/button-copy-2.rs");
+
+        // Rename item
+        let renamed =
+            rename_workspace_item(root, "src/components/button-copy-2.rs", "src/components/icon.rs")
+                .expect("rename");
+        assert!(renamed.is_file());
+
+        // Copy and Move into root
+        let copied =
+            copy_or_move_workspace_item(root, "src/components/icon.rs", "", false).expect("copy");
+        assert_eq!(copied, "icon.rs");
+
+        // Delete item
+        delete_workspace_item(root, "icon.rs").expect("delete file");
+        assert!(!root.join("icon.rs").exists());
     }
 }
 

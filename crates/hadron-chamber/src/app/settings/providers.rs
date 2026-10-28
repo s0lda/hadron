@@ -15,6 +15,17 @@ pub(super) fn unique_seat_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String
         .expect("an unbounded counter always finds a free id")
 }
 
+/// Strip a trailing `-<digits>` suffix (where `<digits> >= 2`) from a seat ID so
+/// duplicating `acp-claude-2` produces `acp-claude-3` rather than `acp-claude-2-2`.
+pub(super) fn strip_seat_numeric_suffix(id: &str) -> &str {
+    if let Some((base, suffix)) = id.rsplit_once('-') {
+        if !base.is_empty() && suffix.parse::<u32>().is_ok_and(|n| n >= 2) {
+            return base;
+        }
+    }
+    id
+}
+
 /// Cloud LLM provider candidate detected from environment variables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvProviderCandidate {
@@ -321,6 +332,79 @@ impl super::Chamber {
         seat.normalize_vendor();
         self.add_configured_quark(seat, cx);
         self.wizard_state = WizardState::None;
+        cx.notify();
+    }
+
+    /// Duplicate an existing Quark seat under `<base>-2`, `<base>-3`, … preserving transport,
+    /// command/CLI/HTTP target, model, effort, mode_config, roles, deny_skills, energy_limit,
+    /// model_params, sandbox, and copying any keychain secrets in `secret_env`.
+    pub(super) fn duplicate_quark(&mut self, source_id: &str, cx: &mut Context<Self>) {
+        let src_qid = hadron_lattice::QuarkId::new(source_id);
+        let resolved = resolve_team(&self.team, &self.global);
+        let Some(source_seat) = resolved
+            .get(&src_qid)
+            .cloned()
+            .or_else(|| self.global.get(&src_qid).cloned())
+            .or_else(|| self.team.get(&src_qid).cloned())
+        else {
+            return;
+        };
+
+        let base = strip_seat_numeric_suffix(source_id);
+        let new_id = {
+            let taken = |id: &str| {
+                self.providers.iter().any(|p| p.id.eq_ignore_ascii_case(id))
+                    || self.global.quarks.iter().any(|s| {
+                        s.id.as_str().eq_ignore_ascii_case(id)
+                            || s.display_name
+                                .as_deref()
+                                .is_some_and(|dn| dn.trim().eq_ignore_ascii_case(id))
+                    })
+                    || self.team.quarks.iter().any(|s| {
+                        s.id.as_str().eq_ignore_ascii_case(id)
+                            || s.display_name
+                                .as_deref()
+                                .is_some_and(|dn| dn.trim().eq_ignore_ascii_case(id))
+                    })
+                    || self.team.roster.iter().any(|o| o.id.as_str().eq_ignore_ascii_case(id))
+                    || self.prefs.quarks.iter().any(|(k, ident)| {
+                        k.eq_ignore_ascii_case(id)
+                            || ident
+                                .display_name
+                                .as_deref()
+                                .is_some_and(|dn| dn.trim().eq_ignore_ascii_case(id))
+                    })
+            };
+            unique_seat_id(base, &taken)
+        };
+        let new_qid = hadron_lattice::QuarkId::new(&new_id);
+
+        for var in &source_seat.secret_env {
+            if let Ok(Some(val)) = self.secret_store.get(&src_qid, var) {
+                let _ = self.secret_store.set(&new_qid, var, &val);
+            }
+        }
+
+        self.providers.push(ConfiguredQuark {
+            id: new_id.clone(),
+            transport: source_seat.transport.code().to_string(),
+            model: source_seat.model.clone(),
+        });
+
+        let mut new_seat = source_seat;
+        new_seat.id = new_qid;
+        new_seat.display_name = None;
+        new_seat.flavor = hadron_lattice::Flavor::Worker;
+        new_seat.enabled = true;
+        new_seat.normalize_vendor();
+
+        self.add_configured_quark(new_seat, cx);
+        self.show_toast(
+            toasts::ToastKind::Success,
+            format!("Duplicated {source_id} as {new_id}"),
+            Some(3),
+            cx,
+        );
         cx.notify();
     }
 
@@ -1048,10 +1132,138 @@ impl super::Chamber {
                 )),
         );
 
+        let lab_enabled = self.team.effective_hadron_lab_enabled();
+        let active_turns_limit = self.team.effective_max_concurrent_turns();
+        let active_gates_limit = self.team.effective_max_concurrent_gates();
+        let active_batch_size = self.team.effective_gate_batch_size();
+        let fast_path_docs = self.team.effective_fast_path_docs_only();
+
+        let mut turns_pills = h_flex().gap_1p5().items_center();
+        for preset in [16usize, 32, 64, 128, 256] {
+            let is_active = active_turns_limit == preset;
+            turns_pills = turns_pills.child(
+                div()
+                    .id(SharedString::from(format!("lab-turns-{preset}")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .bg(if is_active { theme::accent() } else { theme::bg_surface_raised() })
+                    .text_color(if is_active { theme::field_base() } else { theme::text_secondary() })
+                    .border_1()
+                    .border_color(if is_active { theme::accent() } else { theme::border() })
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.team.max_concurrent_turns = Some(preset);
+                        this.save_repo_team(cx);
+                        cx.notify();
+                    }))
+                    .child(format!("{preset}")),
+            );
+        }
+
+        let mut gates_pills = h_flex().gap_1p5().items_center();
+        for preset in [1usize, 2, 4, 8, 16] {
+            let is_active = active_gates_limit == preset;
+            gates_pills = gates_pills.child(
+                div()
+                    .id(SharedString::from(format!("lab-gates-{preset}")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .bg(if is_active { theme::accent() } else { theme::bg_surface_raised() })
+                    .text_color(if is_active { theme::field_base() } else { theme::text_secondary() })
+                    .border_1()
+                    .border_color(if is_active { theme::accent() } else { theme::border() })
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.team.max_concurrent_gates = Some(preset);
+                        this.save_repo_team(cx);
+                        cx.notify();
+                    }))
+                    .child(format!("{preset}")),
+            );
+        }
+
+        let mut batch_pills = h_flex().gap_1p5().items_center();
+        for preset in [1usize, 4, 8, 16, 32] {
+            let is_active = active_batch_size == preset;
+            batch_pills = batch_pills.child(
+                div()
+                    .id(SharedString::from(format!("lab-batch-{preset}")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .bg(if is_active { theme::accent() } else { theme::bg_surface_raised() })
+                    .text_color(if is_active { theme::field_base() } else { theme::text_secondary() })
+                    .border_1()
+                    .border_color(if is_active { theme::accent() } else { theme::border() })
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.team.gate_batch_size = Some(preset);
+                        this.save_repo_team(cx);
+                        cx.notify();
+                    }))
+                    .child(format!("{preset}")),
+            );
+        }
+
+        let hadron_lab_card = settings_card_section(
+            "Hadron Lab (High-Scale Swarm)",
+            Some(IconName::Cpu),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Hadron Lab high-scale mode (50–1000+ Quarks)",
+                    Some("Enable bounded turn/gate concurrency, disjoint-file speculative batch merging, and incremental field I/O for massive swarms."),
+                    Switch::new("hadron-lab-enabled")
+                        .checked(lab_enabled)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.team.hadron_lab_enabled = Some(*checked);
+                            this.save_repo_team(cx);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Max concurrent turns",
+                    Some("Maximum number of Quark subprocesses/HTTP turns executing simultaneously before queuing."),
+                    turns_pills.into_any_element(),
+                ))
+                .child(settings_field(
+                    "Max concurrent shadow gates",
+                    Some("Maximum number of parallel ShadowGate verification worktrees running cargo check/test."),
+                    gates_pills.into_any_element(),
+                ))
+                .child(settings_field(
+                    "Speculative gate batch size",
+                    Some("Number of disjoint-file candidate commits combined and verified in a single shadow gate pass."),
+                    batch_pills.into_any_element(),
+                ))
+                .child(settings_field(
+                    "Docs & assets fast-path merge",
+                    Some("Bypass full cargo compile/test gates when a candidate branch touches only documentation (.md, .txt) or static assets."),
+                    Switch::new("hadron-lab-fast-path-docs")
+                        .checked(fast_path_docs)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.team.fast_path_docs_only = Some(*checked);
+                            this.save_repo_team(cx);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )),
+        );
+
         v_flex()
             .w_full()
             .gap_4()
             .child(execution_card)
+            .child(hadron_lab_card)
             .child(watchdog_card)
             .child(git_card)
             .child(repo_monitor_card)
@@ -2121,6 +2333,18 @@ impl super::Chamber {
                                             .text_color(theme::text_secondary())
                                             .child(format!("Model: {}", model_text)),
                                     )
+                                    .child({
+                                        let pid = provider.id.clone();
+                                        text_button(
+                                            format!("duplicate-{}", provider.id),
+                                            "Duplicate",
+                                        )
+                                        .on_click(cx.listener(
+                                            move |this, _, _window, cx| {
+                                                this.duplicate_quark(&pid, cx);
+                                            },
+                                        ))
+                                    })
                                     .child({
                                         let pid = provider.id.clone();
                                         text_button(

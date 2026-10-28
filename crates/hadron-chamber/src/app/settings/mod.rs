@@ -188,6 +188,7 @@ impl Chamber {
         self.settings_secret_applies = secret_applies;
         self.settings_model_params_applies = supports_params;
         self.settings_advanced_expanded = !temp_str.is_empty() || !top_p_str.is_empty() || !max_tokens_str.is_empty();
+        self.settings_name_error = None;
         // Team-wide, not per-identity — loaded unconditionally (not keyed off `key`) so
         // it stays in sync with `self.team.max_exchanges` regardless of which target the
         // overlay happens to be showing when this runs.
@@ -313,17 +314,33 @@ impl Chamber {
             }
         }
 
-        let key = self.settings_target.key();
-        if key != "human"
+        let key = self.settings_target.key().to_string();
+        let is_quark_target = key != "human"
             && key != "providers"
             && key != "general"
             && key != "appearance"
             && key != "execution"
             && key != "environment"
             && key != "skills"
-            && key != "schedules"
-        {
-            let qid = QuarkId::new(key);
+            && key != "schedules";
+        let name_valid = if is_quark_target {
+            match self.validate_current_quark_display_name(&name, &key) {
+                Ok(()) => {
+                    self.settings_name_error = None;
+                    true
+                }
+                Err(err) => {
+                    self.settings_name_error = Some(err);
+                    false
+                }
+            }
+        } else {
+            self.settings_name_error = None;
+            true
+        };
+
+        if is_quark_target {
+            let qid = QuarkId::new(&key);
             // The definition knobs (model/effort/mode/display name) are **per-repo**. How
             // they persist depends on how the quark is seated here:
             //  - a self-contained legacy seat pins the values directly on the seat;
@@ -350,7 +367,7 @@ impl Chamber {
                 // also what the router matches `@mentions` against, so a name set once here
                 // resolves everywhere. (A purely-local legacy seat has no catalogue entry, so
                 // its name lives on the seat itself — the only place it can.)
-                if base.display_name != new_name {
+                if name_valid && base.display_name != new_name {
                     if let Some(g) = self.global.quarks.iter_mut().find(|s| s.id == qid) {
                         g.display_name = new_name.clone();
                         self.save_global_team(cx);
@@ -387,10 +404,50 @@ impl Chamber {
         }
 
         if let Some(id) = self.settings_identity_mut() {
-            id.display_name = (!name.is_empty()).then_some(name);
+            if name_valid {
+                id.display_name = (!name.is_empty()).then_some(name);
+            }
             id.image_path = (!path.is_empty()).then_some(path);
             let _ = config::save(&self.prefs);
         }
+    }
+
+    /// Validate `name` for quark `qid_str` against reserved routing names, transport prefixes,
+    /// and case-insensitive collisions with other quarks in the global catalogue or repo team.
+    pub(super) fn validate_current_quark_display_name(
+        &self,
+        name: &str,
+        qid_str: &str,
+    ) -> Result<(), String> {
+        let resolved = resolve_team(&self.team, &self.global);
+        let mut pairs: Vec<(String, Option<String>)> = Vec::new();
+        for seat in &self.global.quarks {
+            let pref_dn = self
+                .prefs
+                .quarks
+                .get(seat.id.as_str())
+                .and_then(|i| i.display_name.clone());
+            pairs.push((
+                seat.id.as_str().to_string(),
+                seat.display_name.clone().or(pref_dn),
+            ));
+        }
+        for seat in &resolved.quarks {
+            let pref_dn = self
+                .prefs
+                .quarks
+                .get(seat.id.as_str())
+                .and_then(|i| i.display_name.clone());
+            pairs.push((
+                seat.id.as_str().to_string(),
+                seat.display_name.clone().or(pref_dn),
+            ));
+        }
+        let refs: Vec<(&str, Option<&str>)> = pairs
+            .iter()
+            .map(|(id, dn)| (id.as_str(), dn.as_deref()))
+            .collect();
+        hadron_lattice::quark::validate_quark_display_name(name, qid_str, &refs)
     }
 
     /// Persist updated configuration knobs (model, effort, mode, roles, deny_skills, energy_limit, model_params)
