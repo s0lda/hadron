@@ -187,6 +187,8 @@ pub fn active_custom_theme() -> Option<ResolvedTheme> {
     ACTIVE_CUSTOM_THEME.read().ok().and_then(|lock| lock.clone())
 }
 
+pub use crate::config::THEME_SCHEMA_VERSION;
+
 pub fn custom_themes_dir() -> Option<std::path::PathBuf> {
     Some(hadron_lattice::user_hadron_dir()?.join("themes"))
 }
@@ -234,16 +236,29 @@ pub fn load_custom_themes() -> Vec<crate::config::ThemeDefinition> {
     let Some(dir) = custom_themes_dir() else {
         return Vec::new();
     };
+    load_custom_themes_from_dir(&dir)
+}
+
+/// Load all custom themes from `dir`, transparently migrating legacy `v0` files to
+/// [`THEME_SCHEMA_VERSION`] (`1`) on disk and skipping files with unsupported future
+/// `schema_version` values without overwriting them.
+pub fn load_custom_themes_from_dir(dir: &std::path::Path) -> Vec<crate::config::ThemeDefinition> {
     if !dir.exists() {
         return Vec::new();
     }
     let mut themes = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    let mut migrated_ids = std::collections::HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(theme) = serde_json::from_str::<crate::config::ThemeDefinition>(&content) {
+                    if let Ok((theme, migrated)) =
+                        crate::config::ThemeDefinition::from_versioned_json(&content)
+                    {
+                        if migrated {
+                            migrated_ids.insert(theme.id.clone());
+                        }
                         themes.push(theme);
                     }
                 }
@@ -254,9 +269,10 @@ pub fn load_custom_themes() -> Vec<crate::config::ThemeDefinition> {
     themes.sort_by(|a, b| a.id.cmp(&b.id));
 
     // Ensure all custom themes have unique names by numbering duplicates (e.g. "Custom Obsidian Neutral 2")
-    if disambiguate_theme_names(&mut themes) {
-        for theme in &themes {
-            let _ = save_custom_theme(theme);
+    let names_modified = disambiguate_theme_names(&mut themes);
+    for theme in &themes {
+        if names_modified || migrated_ids.contains(&theme.id) {
+            let _ = save_custom_theme_to_dir(dir, theme);
         }
     }
 
@@ -296,9 +312,18 @@ pub fn save_custom_theme(theme: &crate::config::ThemeDefinition) -> std::io::Res
     let Some(dir) = custom_themes_dir() else {
         return Err(std::io::Error::other("Could not resolve user themes directory"));
     };
-    std::fs::create_dir_all(&dir)?;
-    let file_path = dir.join(format!("{}.json", theme.id));
-    let json = serde_json::to_string_pretty(theme).map_err(std::io::Error::other)?;
+    save_custom_theme_to_dir(&dir, theme)
+}
+
+pub fn save_custom_theme_to_dir(
+    dir: &std::path::Path,
+    theme: &crate::config::ThemeDefinition,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let mut versioned = theme.clone();
+    versioned.schema_version = THEME_SCHEMA_VERSION;
+    let file_path = dir.join(format!("{}.json", versioned.id));
+    let json = serde_json::to_string_pretty(&versioned).map_err(std::io::Error::other)?;
     std::fs::write(file_path, json)
 }
 
@@ -1366,6 +1391,64 @@ mod tests {
         assert_eq!(resolve_term_cell_bg(crate::pty::DEFAULT_BG), None);
 
         set_active_preset(crate::config::ThemePreset::Obsidian);
+    }
+
+    #[test]
+    fn test_custom_theme_schema_v0_migration_v1_roundtrip_and_forward_guard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+
+        // 1. Legacy v0 unversioned theme JSON (no schema_version field, partial sub-palettes)
+        let legacy_v0_json = r##"{
+            "id": "custom-100",
+            "name": "Legacy Neon",
+            "is_dark": true,
+            "surfaces": {
+                "canvas_base": "#010203"
+            },
+            "accents": {
+                "primary": "#ff00aa"
+            }
+        }"##;
+        let v0_path = dir.join("custom-100.json");
+        std::fs::write(&v0_path, legacy_v0_json).unwrap();
+
+        // 2. Future incompatible schema_version (v99) — must be rejected and untouched on disk
+        let future_v99_json = r##"{
+            "schema_version": 99,
+            "id": "custom-future",
+            "name": "Future Theme"
+        }"##;
+        let future_path = dir.join("custom-future.json");
+        std::fs::write(&future_path, future_v99_json).unwrap();
+
+        assert!(
+            crate::config::ThemeDefinition::from_versioned_json(future_v99_json).is_err(),
+            "forward schema_version > THEME_SCHEMA_VERSION must be rejected"
+        );
+
+        // Load directory: v0 migrates to v1 in-memory and on disk; v99 is skipped and preserved
+        let loaded = load_custom_themes_from_dir(dir);
+        assert_eq!(loaded.len(), 1);
+        let migrated_theme = &loaded[0];
+        assert_eq!(migrated_theme.schema_version, THEME_SCHEMA_VERSION);
+        assert_eq!(migrated_theme.id, "custom-100");
+        assert_eq!(migrated_theme.name, "Legacy Neon");
+        assert_eq!(migrated_theme.surfaces.canvas_base, "#010203");
+        assert_eq!(migrated_theme.surfaces.bg_base, "#171717");
+        assert_eq!(migrated_theme.accents.primary, "#ff00aa");
+        assert_eq!(migrated_theme.syntax.keyword, "#f97583");
+
+        // Verify v0 file on disk was upgraded to v1 with explicit schema_version: 1
+        let rewritten = std::fs::read_to_string(&v0_path).unwrap();
+        let (reloaded, migrated_again) =
+            crate::config::ThemeDefinition::from_versioned_json(&rewritten).unwrap();
+        assert!(!migrated_again, "upgraded v1 file must not re-migrate");
+        assert_eq!(reloaded.schema_version, THEME_SCHEMA_VERSION);
+        assert_eq!(&reloaded, migrated_theme);
+
+        // Verify future v99 file on disk was NOT overwritten
+        assert_eq!(std::fs::read_to_string(&future_path).unwrap(), future_v99_json);
     }
 }
 

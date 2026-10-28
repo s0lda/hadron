@@ -569,17 +569,35 @@ impl AccentChoice {
     }
 }
 
+/// Frozen schema version for `~/.hadron/themes/*.json` custom theme files.
+pub const THEME_SCHEMA_VERSION: u32 = 1;
+
+fn default_theme_schema_version() -> u32 {
+    THEME_SCHEMA_VERSION
+}
+
 /// Comprehensive, serializable theme definition for custom colors and surfaces.
+///
+/// On-disk schema (`~/.hadron/themes/*.json`) is frozen at [`THEME_SCHEMA_VERSION`] (`1`).
+/// Legacy unversioned (`v0`) files omit `schema_version` (or set `0`) and are transparently
+/// migrated to `v1` on load via [`ThemeDefinition::from_versioned_json`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeDefinition {
+    #[serde(default = "default_theme_schema_version")]
+    pub schema_version: u32,
     pub id: String,
     pub name: String,
     #[serde(default = "default_true")]
     pub is_dark: bool,
+    #[serde(default)]
     pub surfaces: SurfacePalette,
+    #[serde(default)]
     pub accents: AccentPalette,
+    #[serde(default)]
     pub text: TextPalette,
+    #[serde(default)]
     pub syntax: SyntaxPalette,
+    #[serde(default)]
     pub terminal: TerminalPalette,
     #[serde(default)]
     pub status: StatusPalette,
@@ -587,18 +605,48 @@ pub struct ThemeDefinition {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SurfacePalette {
+    #[serde(default = "default_canvas_base_hex")]
     pub canvas_base: String,
+    #[serde(default = "default_surface_bg_hex")]
     pub bg_base: String,
+    #[serde(default = "default_surface_bg_hex")]
     pub bg_surface: String,
+    #[serde(default = "default_surface_raised_hex")]
     pub bg_surface_raised: String,
+    #[serde(default = "default_surface_elevated_hex")]
     pub bg_elevated: String,
+    #[serde(default = "default_surface_elevated_hex")]
     pub input_bg: String,
+    #[serde(default = "default_surface_border_hex")]
     pub border: String,
+    #[serde(default = "default_surface_bg_hex")]
     pub popover: String,
+}
+
+fn default_canvas_base_hex() -> String { "#0f0f0f".to_string() }
+fn default_surface_bg_hex() -> String { "#171717".to_string() }
+fn default_surface_raised_hex() -> String { "#262626".to_string() }
+fn default_surface_elevated_hex() -> String { "#1f1f1f".to_string() }
+fn default_surface_border_hex() -> String { "#2e2e2e".to_string() }
+
+impl Default for SurfacePalette {
+    fn default() -> Self {
+        Self {
+            canvas_base: default_canvas_base_hex(),
+            bg_base: default_surface_bg_hex(),
+            bg_surface: default_surface_bg_hex(),
+            bg_surface_raised: default_surface_raised_hex(),
+            bg_elevated: default_surface_elevated_hex(),
+            input_bg: default_surface_elevated_hex(),
+            border: default_surface_border_hex(),
+            popover: default_surface_bg_hex(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccentPalette {
+    #[serde(default = "default_glow_pink_hex")]
     pub primary: String,
     #[serde(default = "default_glow_blue_hex")]
     pub glow_blue: String,
@@ -621,36 +669,108 @@ fn default_glow_amber_hex() -> String { "#e5c07b".to_string() }
 fn default_link_hex() -> String { "#38bdf8".to_string() }
 fn default_file_link_hex() -> String { "#e5c07b".to_string() }
 
+impl Default for AccentPalette {
+    fn default() -> Self {
+        Self {
+            primary: default_glow_pink_hex(),
+            glow_blue: default_glow_blue_hex(),
+            glow_pink: default_glow_pink_hex(),
+            glow_green: default_glow_green_hex(),
+            glow_amber: default_glow_amber_hex(),
+            link: default_link_hex(),
+            file_link: default_file_link_hex(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextPalette {
+    #[serde(default = "default_text_primary_hex")]
     pub primary: String,
+    #[serde(default = "default_text_secondary_hex")]
     pub secondary: String,
+    #[serde(default = "default_text_secondary_hex")]
     pub muted: String,
+}
+
+fn default_text_primary_hex() -> String { "#ededed".to_string() }
+fn default_text_secondary_hex() -> String { "#8e8e8e".to_string() }
+
+impl Default for TextPalette {
+    fn default() -> Self {
+        Self {
+            primary: default_text_primary_hex(),
+            secondary: default_text_secondary_hex(),
+            muted: default_text_secondary_hex(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SyntaxPalette {
+    #[serde(default = "default_syntax_keyword_hex")]
     pub keyword: String,
+    #[serde(default = "default_syntax_function_hex")]
     pub function: String,
+    #[serde(default = "default_syntax_type_hex")]
     pub r#type: String,
+    #[serde(default = "default_syntax_string_hex")]
     pub string: String,
+    #[serde(default = "default_syntax_type_hex")]
     pub number: String,
+    #[serde(default = "default_syntax_comment_hex")]
     pub comment: String,
+    #[serde(default = "default_syntax_keyword_hex")]
     pub operator: String,
+    #[serde(default = "default_syntax_variable_hex")]
     pub variable: String,
+    #[serde(default = "default_syntax_type_hex")]
     pub constant: String,
+    #[serde(default = "default_syntax_function_hex")]
     pub attribute: String,
+    #[serde(default = "default_syntax_tag_hex")]
     pub tag: String,
+    #[serde(default = "default_syntax_type_hex")]
     pub boolean: String,
+    #[serde(default = "default_syntax_keyword_hex")]
     pub delimiter: String,
+    #[serde(default = "default_syntax_punctuation_hex")]
     pub punctuation: String,
+}
+
+fn default_syntax_keyword_hex() -> String { "#f97583".to_string() }
+fn default_syntax_function_hex() -> String { "#b392f0".to_string() }
+fn default_syntax_type_hex() -> String { "#79b8ff".to_string() }
+fn default_syntax_string_hex() -> String { "#9ecbff".to_string() }
+fn default_syntax_comment_hex() -> String { "#7e888c".to_string() }
+fn default_syntax_variable_hex() -> String { "#e1e4e8".to_string() }
+fn default_syntax_tag_hex() -> String { "#85e89d".to_string() }
+fn default_syntax_punctuation_hex() -> String { "#bbbebf".to_string() }
+
+impl Default for SyntaxPalette {
+    fn default() -> Self {
+        Self::default_dark()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TerminalPalette {
+    #[serde(default = "default_canvas_base_hex")]
     pub bg: String,
+    #[serde(default = "default_text_primary_hex")]
     pub fg: String,
+    #[serde(default = "default_glow_green_hex")]
     pub prompt: String,
+}
+
+impl Default for TerminalPalette {
+    fn default() -> Self {
+        Self {
+            bg: default_canvas_base_hex(),
+            fg: default_text_primary_hex(),
+            prompt: default_glow_green_hex(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -688,8 +808,47 @@ impl Default for ThemeDefinition {
 }
 
 impl ThemeDefinition {
+    /// Parse a custom theme JSON payload (`~/.hadron/themes/*.json`) with explicit
+    /// schema versioning and v0-to-v1 migration guarantees:
+    /// - Missing `"schema_version"` or `"schema_version": 0` (legacy `v0`) is upgraded to
+    ///   [`THEME_SCHEMA_VERSION`] (`1`) and returns `Ok((theme, true))` (`migrated = true`).
+    /// - `"schema_version": 1` returns `Ok((theme, false))` (`migrated = false`).
+    /// - `"schema_version" > THEME_SCHEMA_VERSION` is rejected with an error so newer
+    ///   incompatible files are never silently misparsed or overwritten.
+    pub fn from_versioned_json(content: &str) -> Result<(Self, bool), String> {
+        let value: serde_json::Value =
+            serde_json::from_str(content).map_err(|e| format!("invalid theme JSON: {e}"))?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| "theme JSON root must be an object".to_string())?;
+        let (raw_version, migrated) = match obj.get("schema_version") {
+            None => (0u32, true),
+            Some(v) => {
+                let ver = v
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| "theme schema_version must be a non-negative integer".to_string())?;
+                if ver == 0 {
+                    (0u32, true)
+                } else if ver > THEME_SCHEMA_VERSION {
+                    return Err(format!(
+                        "unsupported theme schema_version {ver} (max supported is {THEME_SCHEMA_VERSION})"
+                    ));
+                } else {
+                    (ver, false)
+                }
+            }
+        };
+        let _ = raw_version;
+        let mut theme: Self =
+            serde_json::from_value(value).map_err(|e| format!("invalid theme schema: {e}"))?;
+        theme.schema_version = THEME_SCHEMA_VERSION;
+        Ok((theme, migrated))
+    }
+
     pub fn preset_obsidian() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "obsidian".into(),
             name: "Obsidian Neutral".into(),
             is_dark: true,
@@ -729,6 +888,7 @@ impl ThemeDefinition {
 
     pub fn preset_oled() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "oled".into(),
             name: "OLED True Black".into(),
             is_dark: true,
@@ -768,6 +928,7 @@ impl ThemeDefinition {
 
     pub fn preset_midnight() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "midnight".into(),
             name: "Midnight Slate".into(),
             is_dark: true,
@@ -812,6 +973,7 @@ impl ThemeDefinition {
 
     pub fn preset_tokyo() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "tokyo".into(),
             name: "Tokyo Dark".into(),
             is_dark: true,
@@ -856,6 +1018,7 @@ impl ThemeDefinition {
 
     pub fn preset_nord() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "nord".into(),
             name: "Nord Frost".into(),
             is_dark: true,
@@ -900,6 +1063,7 @@ impl ThemeDefinition {
 
     pub fn preset_catppuccin() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "catppuccin".into(),
             name: "Catppuccin Mocha".into(),
             is_dark: true,
@@ -944,6 +1108,7 @@ impl ThemeDefinition {
 
     pub fn preset_gruvbox() -> Self {
         Self {
+            schema_version: THEME_SCHEMA_VERSION,
             id: "gruvbox".into(),
             name: "Gruvbox Dark".into(),
             is_dark: true,
