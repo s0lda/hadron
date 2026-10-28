@@ -72,6 +72,91 @@ pub struct QuarkCard {
     pub has_forge_tools: bool,
 }
 
+/// Reserved names that cannot be used as Quark IDs or display names.
+pub const RESERVED_QUARK_NAMES: &[&str] = &[
+    "orchestrator",
+    "team",
+    "self",
+    "gluon",
+    "human",
+    "user",
+    "system",
+    "all",
+    "architect",
+    "reviewer",
+    "researcher",
+    "executor",
+    "auditor",
+    "optimizer",
+    "scribe",
+];
+
+/// Reserved transport prefixes.
+pub const RESERVED_TRANSPORT_PREFIXES: &[&str] = &["acp", "cli", "http", "sdk"];
+
+/// Checks whether a given string is a reserved quark name, role, or transport prefix.
+pub fn is_reserved_quark_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if RESERVED_QUARK_NAMES
+        .iter()
+        .any(|&r| r.eq_ignore_ascii_case(trimmed))
+    {
+        return true;
+    }
+    for &prefix in RESERVED_TRANSPORT_PREFIXES {
+        if trimmed.eq_ignore_ascii_case(prefix) {
+            return true;
+        }
+        if trimmed.len() > prefix.len()
+            && trimmed[..prefix.len()].eq_ignore_ascii_case(prefix)
+            && (trimmed.as_bytes()[prefix.len()] == b'-' || trimmed.as_bytes()[prefix.len()] == b'_')
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Validates a proposed display name for a quark.
+///
+/// An empty name is valid (`Ok(())`, meaning no display name override).
+/// Rejects reserved system names and transport prefixes.
+/// Rejects case-insensitive collisions with any other quark's ID or display name.
+pub fn validate_quark_display_name(
+    name: &str,
+    self_id: &str,
+    existing: &[(&str, Option<&str>)],
+) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if is_reserved_quark_name(trimmed) {
+        return Err(format!("'{trimmed}' is a reserved system name or prefix"));
+    }
+    for (other_id, other_dn) in existing {
+        if other_id.eq_ignore_ascii_case(self_id) {
+            continue;
+        }
+        if other_id.eq_ignore_ascii_case(trimmed) {
+            return Err(format!(
+                "display name '{trimmed}' collides with existing quark ID '{other_id}'"
+            ));
+        }
+        if let Some(odn) = other_dn {
+            if odn.trim().eq_ignore_ascii_case(trimmed) {
+                return Err(format!(
+                    "display name '{trimmed}' collides with existing quark display name '{odn}'"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
