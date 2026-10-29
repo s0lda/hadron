@@ -132,15 +132,41 @@ pub fn build_cache_stable_prefix(projection: &Projection) -> String {
         p.push_str("\n\n");
     }
 
+    // 6. Response Format & Output Strictness (static core)
+    p.push_str("# Response Format & Output Strictness\n");
+    p.push_str(
+        "**Be short.** Write shorter, meaningful messages. Put the outcome in the first \
+         line, keep the evidence to the command and its result, and cut every restatement, \
+         preamble, and summary-of-your-summary. No TL;DR of your own answer, and no wall of \
+         text for a trivial ask — answer at the length the question deserves. Be concise but \
+         complete: never drop a critical detail just to be brief.\n\n\
+         Be truthful about your actions: report only what you actually did and verified this \
+         turn, and clearly separate what you PROPOSE from what you have DONE. Never state \
+         completed work — commits, passing tests, file edits — that you did not perform. If you \
+         could not do something, say so.\n\n",
+    );
+
     p
+}
+
+/// Strip the static cache-stable prefix sections (`invariants`, `role_body`,
+/// `has_forge_tools`, `nucleus_digest`, and `nucleus_index`) from a projection bound
+/// for a resumed resident conversation that already received them on turn 1.
+pub fn without_static_prefix(mut projection: Projection) -> Projection {
+    projection.invariants.clear();
+    projection.role_body = None;
+    projection.has_forge_tools = false;
+    projection.nucleus_digest.clear();
+    projection.nucleus_index.clear();
+    projection.nucleus_index_path = std::path::PathBuf::new();
+    projection
 }
 
 /// Part B: Dynamic per-turn suffix containing identities, task, field events, and working diff.
 pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> String {
     let mut p = String::new();
 
-    // Response Format & Zero-Essay Directive
-    p.push_str("# Response Format & Output Strictness\n");
+    // Role-specific addressing & delegation directives
     if is_orchestrator(projection, self_id) {
         p.push_str(
             "Reply in Markdown. If a message addresses several quarks (e.g. `@alpha do X and @beta \
@@ -169,14 +195,6 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
              ignored.\n\n",
         );
     }
-
-    p.push_str(
-        "**Be short.** Write shorter, meaningful messages. Put the outcome in the first \
-         line, keep the evidence to the command and its result, and cut every restatement, \
-         preamble, and summary-of-your-summary. No TL;DR of your own answer, and no wall of \
-         text for a trivial ask — answer at the length the question deserves. Be concise but \
-         complete: never drop a critical detail just to be brief.\n\n",
-    );
 
     if is_worker(projection, self_id) {
         p.push_str(
@@ -282,13 +300,6 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
              not as your own finding.\n\n",
         );
     }
-
-    p.push_str(
-        "Be truthful about your actions: report only what you actually did and verified this \
-         turn, and clearly separate what you PROPOSE from what you have DONE. Never state \
-         completed work — commits, passing tests, file edits — that you did not perform. If you \
-         could not do something, say so.\n\n",
-    );
 
     // Who you are
     p.push_str(&format!(

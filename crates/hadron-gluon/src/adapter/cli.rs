@@ -318,6 +318,8 @@ pub struct CliQuark<R: CliRunner> {
     /// same shape as `adapter::local::LocalQuark::live_dir`. A `spec.stream: None`
     /// seat never reads this: there is nothing to publish until the process exits.
     live_dir: Option<PathBuf>,
+    /// Where to persist the latest prompt cost breakdown (`<hadron-dir>/prompt-cost`).
+    prompt_cost_dir: Option<PathBuf>,
 }
 
 impl<R: CliRunner> CliQuark<R> {
@@ -338,6 +340,7 @@ impl<R: CliRunner> CliQuark<R> {
             deny_skills: Vec::new(),
             sandbox: hadron_gatekeeper::SandboxMode::default(),
             live_dir: None,
+            prompt_cost_dir: None,
         }
     }
 
@@ -350,6 +353,7 @@ impl<R: CliRunner> CliQuark<R> {
     /// Only matters for a `spec.stream: Some(_)` seat — a non-streaming CLI seat
     /// has nothing to publish until its process exits either way.
     pub fn watching(mut self, dir: PathBuf) -> Self {
+        self.prompt_cost_dir = dir.parent().map(|p| p.join("prompt-cost"));
         self.live_dir = Some(dir);
         self
     }
@@ -587,21 +591,34 @@ impl<R: CliRunner> Quark for CliQuark<R> {
         let mode = turn.mode;
         let cwd = turn.cwd.clone();
         // A resumed conversation already holds everything we sent before, so re-sending
-        // the field window would pay for the same history twice — the whole point of
-        // going resident. Send the new instruction only; the CLI still has the rest.
+        // the field window and static cache prefix would pay for the same history twice —
+        // the whole point of going resident. Send the new instruction only; the CLI still has the rest.
         // Only true when this CLI actually supports resuming (`spec.resume` is not
         // `None`) — a generic CLI with no resume flag never gets to drop context it
         // has no way to recall.
         let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
-        let turn = if resuming { without_field_window(turn) } else { turn };
+        let turn = if resuming {
+            crate::adapter::prompt::without_static_prefix(without_field_window(turn))
+        } else {
+            turn
+        };
+        if let Some(dir) = &self.prompt_cost_dir {
+            let breakdown = crate::adapter::prompt::measure(&turn, &self.id);
+            let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
+        }
         // The argv guard only applies when the spec says the prompt rides as one
         // argv element with no stdin fallback (`execve` on Linux rejects an over-long one
         // with E2BIG; `CreateProcessW` on Windows returns error 206 before the CLI ever starts).
-        // Otherwise build the prompt normally — `fit_prompt`'s truncation is a tax a stdin-fed CLI never needs.
+        // Otherwise fit the prompt through `SlidingContextPruner` first when oversized.
         let prompt = if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
             fit_prompt(&turn, &self.id)
         } else {
-            crate::adapter::prompt::build(&turn, &self.id)
+            fit_prompt_with_sliding_pruner(
+                &turn,
+                &self.id,
+                SAFE_ARG_BYTES,
+                &crate::sliding_pruner::SlidingPrunerConfig::default(),
+            )
         };
         let invocation = self.invocation(prompt, mode, cwd);
         let outcome = if let Some(stream) = self.spec.stream.clone() {
@@ -1264,6 +1281,65 @@ mod tests {
         assert_eq!(
             ctx.used_tokens, 443_232,
             "cumulative cache_read_tokens (14.4M) must never be folded into context.used_tokens"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resumed_turn_strips_static_prefix_and_persists_prompt_cost() {
+        let dir = std::env::temp_dir().join(format!("hadron-cli-cost-test-{}", ulid::Ulid::new()));
+        let live_dir = dir.join("live");
+        let cost_dir = dir.join("prompt-cost");
+        let id = QuarkId::new("cli-agy");
+        let runner = FakeRunner::with_stdout(vec!["first reply", "second reply"]);
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
+        let mut q = CliQuark::new(id.clone(), Flavor::Worker, "", spec, runner).watching(live_dir);
+
+        let mut first = projection_mode("first task", Mode::Bypass);
+        first.invariants = "STATIC-INVARIANTS-CANARY".to_string();
+        first.nucleus_digest = "STATIC-DIGEST-CANARY".to_string();
+        first.has_forge_tools = true;
+        first.field_window = vec![Event::new(
+            Actor::Human,
+            None,
+            Kind::Message { body: "FIRST-FIELD-LINE".into() },
+        )];
+
+        let mut second = first.clone();
+        second.task = "second task".into();
+
+        q.excite(first).await.unwrap();
+        let first_cost = hadron_lattice::prompt_cost::load(&cost_dir, &id).expect("first turn prompt_cost saved");
+        assert!(first_cost.invariants > 0);
+        assert!(first_cost.nucleus_digest > 0);
+
+        q.excite(second).await.unwrap();
+        let second_cost = hadron_lattice::prompt_cost::load(&cost_dir, &id).expect("second turn prompt_cost saved");
+        assert_eq!(second_cost.invariants, 0, "resumed turn strips already-cached invariants");
+        assert_eq!(second_cost.nucleus_digest, 0, "resumed turn strips already-cached nucleus_digest");
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(recorded[0].args[1].contains("STATIC-INVARIANTS-CANARY"));
+        let resumed_prompt = &recorded[1].args[2];
+        assert!(resumed_prompt.contains("second task"));
+        assert!(!resumed_prompt.contains("STATIC-INVARIANTS-CANARY"));
+        assert!(!resumed_prompt.contains("STATIC-DIGEST-CANARY"));
+        assert!(!resumed_prompt.contains("# Available Hadron Forge Tools"));
+    }
+
+    #[tokio::test]
+    async fn a_stdin_cli_seat_compacts_oversized_field_via_sliding_pruner() {
+        let runner = FakeRunner::with_stdout(vec!["ok"]);
+        let spec = CliSpec::generic("cat".to_string(), vec![]);
+        let mut q = CliQuark::new(QuarkId::new("cat-quark"), Flavor::Worker, "", spec, runner);
+
+        let p = huge_projection(120, 1200);
+        q.excite(p).await.unwrap();
+
+        let recorded = q.runner.recorded.lock().unwrap();
+        assert!(
+            recorded[0].stdin.contains("Sliding Context Pruner: compacted"),
+            "oversized stdin prompt must compact older field events via SlidingContextPruner"
         );
     }
 }

@@ -1107,6 +1107,28 @@ fn test_cache_stable_prefix_remains_byte_identical_across_different_tasks() {
 
     assert_eq!(prefix1, prefix2, "Stable prefix must match 100% byte-for-byte to preserve KV cache");
     assert!(prefix1.contains(CRITICAL_DIRECTIVE_HEADER));
+    assert!(prefix1.contains("# Response Format & Output Strictness"));
+    assert!(prefix1.contains("**Be short.**"));
+}
+
+#[test]
+fn without_static_prefix_strips_cached_reference_sections_and_preserves_task() {
+    let mut proj = projection("Delta task");
+    proj.invariants = "Standard model rules".to_string();
+    proj.role_body = Some("Architect role".to_string());
+    proj.has_forge_tools = true;
+    proj.nucleus_digest = "Feature map".to_string();
+    proj.nucleus_index = "- [lesson](notes/lesson.md) — hook".to_string();
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+
+    let stripped = without_static_prefix(proj);
+    assert!(stripped.invariants.is_empty());
+    assert!(stripped.role_body.is_none());
+    assert!(!stripped.has_forge_tools);
+    assert!(stripped.nucleus_digest.is_empty());
+    assert!(stripped.nucleus_index.is_empty());
+    assert!(stripped.nucleus_index_path.as_os_str().is_empty());
+    assert_eq!(stripped.task, "Delta task");
 }
 
 
