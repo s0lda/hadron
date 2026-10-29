@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.21",
+        date: Some("2026-10-29"),
+        added: &[
+            "Multi-Turn Token Efficiency, Resident Delta Prompts & Cache Telemetry: Moved static response rules into build_cache_stable_prefix, stripped cached static prefix on resumed CLI turns, split LocalQuark prompt into system/user messages with cache_read/cache_write spend accounting, wired SlidingContextPruner and prompt_cost::save across CLI/HTTP adapters, and extracted cache_read_input_tokens in parse_agy_statusline",
+            "Frozen v1 On-Disk Schemas & Automatic v0-to-v1 Migration: Froze schema v1 for field.jsonl, team.json, schedules.json, and ~/.hadron/themes/*.json with seamless v0 migration and forward-version guards",
+        ],
+        changed: &[
+            "Refined README.md Tagline & 6-Pillar Key Superpowers: Updated header tagline and streamlined Key Superpowers into 6 problem-first pillars including Token-Efficient Swarm Economics",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.20",
         date: Some("2026-10-28"),
         added: &[],

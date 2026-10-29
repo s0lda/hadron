@@ -5,6 +5,21 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.21] - 2026-10-29
+
+### Added
+- **Multi-Turn Token Efficiency, Resident Delta Prompts & Cache Telemetry (`hadron-gluon`, `hadron-lattice`)**:
+  - Moved static `# Response Format & Output Strictness` core directives into `build_cache_stable_prefix` (`crates/hadron-gluon/src/adapter/prompt/mod.rs`) and added `without_static_prefix` so resumed (`--continue`) `CliQuark` turns strip already-cached reference sections (`invariants`, `role_body`, `has_forge_tools`, `nucleus_digest`, `nucleus_index`).
+  - Wired `fit_prompt_with_sliding_pruner` (`SlidingContextPruner`) and `prompt_cost::save` into `CliQuark::excite` (`crates/hadron-gluon/src/adapter/cli.rs`).
+  - Split `LocalQuark` (`crates/hadron-gluon/src/adapter/local.rs`) initial messages into `"role": "system"` (`build_cache_stable_prefix`) and `"role": "user"` (`build_dynamic_suffix`), wired `prompt_cost::save`, and included `cache_read` / `cache_write` in `accumulate_spend`.
+  - Updated `parse_agy_statusline` (`crates/hadron-lattice/src/telemetry.rs`) to extract `context_window.current_usage.cache_read_input_tokens` into `TokenSpend::cache_read`.
+- **Frozen `v1` On-Disk Schemas & Automatic `v0`-to-`v1` Migration (`hadron-lattice`, `hadron-chamber`)**:
+  - Froze `FIELD_SCHEMA_VERSION = 1` (`field.jsonl`), `TEAM_SCHEMA_VERSION = 1` (`.hadron/team.json`), `SCHEDULES_SCHEMA_VERSION = 1` (`.hadron/schedules/schedules.json`), and `THEME_SCHEMA_VERSION = 1` (`~/.hadron/themes/*.json`) with seamless `v0`-to-`v1` migration and forward-version guards (`crates/hadron-lattice/src/event/mod.rs`, `crates/hadron-lattice/src/team/mod.rs`, `crates/hadron-lattice/src/schedules.rs`, `crates/hadron-chamber/src/theme.rs`).
+
+### Changed
+- **Refined `README.md` Tagline & 6-Pillar `Key Superpowers` (`README.md`)**:
+  - Updated header tagline and streamlined `Key Superpowers` into 6 problem-first pillars including `Token-Efficient Swarm Economics`.
+
 ## [0.33.20] - 2026-10-28
 
 ### Changed
