@@ -1154,6 +1154,69 @@ where
     cmd.spawn()
 }
 
+/// Resolve the `hadron-gluon` binary next to our own executable, falling back to
+/// the bare name (resolved via `PATH`) only if the sibling is absent. Resolving
+/// against `current_exe()` first means a `hadron-gluon` planted earlier on `PATH`
+/// cannot be run in place of the one we shipped.
+pub fn resolve_gluon_binary() -> std::path::PathBuf {
+    let name = format!("hadron-gluon{}", std::env::consts::EXE_SUFFIX);
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let candidate = parent.join(&name);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    std::path::PathBuf::from(name)
+}
+
+/// Read the daemon's PID from a `gluon.lock` file. Returns `None` when the file is
+/// missing, empty, or does not hold a parseable integer — the case that made the
+/// "close gluon on exit" option appear broken: a daemon from a build predating PID
+/// tracking holds the lock but leaves it empty, so there is nothing to terminate.
+pub fn read_lock_pid(lock_path: &Path) -> Option<u32> {
+    std::fs::read_to_string(lock_path)
+        .ok()
+        .and_then(|content| content.trim().parse::<u32>().ok())
+}
+
+/// Start or restart the `hadron-gluon` daemon for `field_path`: if a live
+/// `hadron-gluon` currently holds `<field_dir>/gluon.lock`, terminates it and waits
+/// briefly for exit before spawning a fresh `hadron-gluon` instance.
+pub fn restart_gluon_daemon(field_path: &Path, show_console: bool) -> std::io::Result<u32> {
+    let field_dir = hadron_lattice::hadron_dir_of(field_path);
+    let lock_path = field_dir.join("gluon.lock");
+    if let Some(pid) = read_lock_pid(&lock_path) {
+        if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
+            #[cfg(unix)]
+            {
+                unsafe {
+                    let _ = libc::kill(pid as i32, libc::SIGTERM);
+                }
+                for _ in 0..30 {
+                    if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
+                hadron_lattice::sys::process::kill_process_group(pid);
+                for _ in 0..20 {
+                    if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+    }
+    let gluon_bin = resolve_gluon_binary();
+    let child = spawn_with_console_pref(&gluon_bin, [field_path], show_console)?;
+    Ok(child.id())
+}
+
 /// Diagnostic snapshot of the display server, compositor layer shell, and notification pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayEnvironment {

@@ -66,18 +66,31 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
 
 /// Check if `pid` is currently alive in the context of `dir`.
 ///
-/// When `dir` is a WSL UNC path (`\\wsl.localhost\<distro>\...` or `\\wsl$\<distro>\...`),
-/// execution routes inside the target WSL distribution via `wsl_aware_command(dir, "kill")`
-/// with `-0 <pid>` so Linux daemon PIDs are verified natively in WSL rather than failing
-/// Win32 `OpenProcess` calls on the Windows host.
-/// Otherwise, checks process liveness on the local host.
+/// Checks the local host first via [`is_process_alive`] because a Windows `hadron.exe`
+/// opening a WSL UNC workspace (`\\wsl.localhost\<distro>\...`) still spawns
+/// `hadron-gluon.exe` as a native Windows process whose Windows PID is written to
+/// `gluon.lock`. If the PID is not a live host process and `dir` is a WSL UNC path,
+/// falls back to inspecting `/proc/<pid>/comm` inside the target WSL distribution.
 pub fn is_process_alive_named_in_dir(pid: u32, dir: &std::path::Path, expected_name: &str) -> bool {
-    if crate::wsl::is_wsl_unc_path(dir) {
-        let mut cmd = crate::wsl::wsl_aware_command(dir, "kill");
-        cmd.args(["-0", &pid.to_string()]);
-        return cmd.status().map(|s| s.success()).unwrap_or(false);
+    if is_process_alive(pid, expected_name) {
+        return true;
     }
-    is_process_alive(pid, expected_name)
+    if let Some((distro, _)) = crate::wsl::parse_wsl_unc_path(dir) {
+        let wsl_proc = crate::wsl::format_wsl_unc_path(&distro, std::path::Path::new("/proc"));
+        if wsl_proc.is_dir() {
+            let comm_path = wsl_proc.join(pid.to_string()).join("comm");
+            return std::fs::read_to_string(comm_path)
+                .map(|c| matches_process_image_name(c.trim(), expected_name))
+                .unwrap_or(false);
+        }
+        #[cfg(windows)]
+        {
+            let mut cmd = crate::wsl::wsl_aware_command(dir, "kill");
+            cmd.args(["-0", &pid.to_string()]);
+            return cmd.status().map(|s| s.success()).unwrap_or(false);
+        }
+    }
+    false
 }
 
 /// Check if `pid` of `hadron-gluon` is currently alive in the context of `dir`.
@@ -131,13 +144,18 @@ mod tests {
     fn is_process_alive_in_dir_detects_current_process_on_local_dir() {
         let current_pid = std::process::id();
         let local_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        // Using current process id with current process name or fallback
+        //Using current process id with current process name or fallback
         #[cfg(unix)]
         {
             let comm_path = PathBuf::from(format!("/proc/{current_pid}/comm"));
             if let Ok(comm) = std::fs::read_to_string(&comm_path) {
                 let name = comm.trim();
                 assert!(is_process_alive_named_in_dir(current_pid, &local_dir, name));
+                let wsl_unc_dir = std::path::Path::new(r"\\wsl.localhost\Ubuntu\workspace\.hadron");
+                assert!(
+                    is_process_alive_named_in_dir(current_pid, wsl_unc_dir, name),
+                    "host-spawned daemon PID must be detected as alive even when workspace is a WSL UNC path"
+                );
             }
         }
         // Non-existent PID should always be false

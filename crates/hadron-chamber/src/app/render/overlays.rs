@@ -1350,12 +1350,24 @@ impl super::Chamber {
                                 .child("⚠️ Gluon stopped — no quark can take a turn until it's restarted."),
                         )
                         .child(
-                            text_button("gluon-stopped-dismiss", "Dismiss").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.gluon_stopped_notice = false;
-                                    cx.notify();
-                                }),
-                            ),
+                            h_flex()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    text_button("gluon-stopped-restart", "Restart").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.restart_gluon_daemon(cx);
+                                        }),
+                                    ),
+                                )
+                                .child(
+                                    text_button("gluon-stopped-dismiss", "Dismiss").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.gluon_stopped_notice = false;
+                                            cx.notify();
+                                        }),
+                                    ),
+                                ),
                         ),
                 ),
         )
@@ -1841,9 +1853,17 @@ impl super::Chamber {
             let mut row_actions = h_flex().gap_1p5();
             if row.can_restart {
                 let id = row.id.clone();
+                let is_gluon = id == "gluon";
+                let label = if is_gluon && !row.enabled { "Start" } else { "Restart" };
                 row_actions = row_actions.child(
-                    text_button(SharedString::from(format!("proc-restart-{}", row.id)), "Restart")
-                        .on_click(cx.listener(move |this, _, _, cx| this.reboot_quark(&id, cx))),
+                    text_button(SharedString::from(format!("proc-restart-{}", row.id)), label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if is_gluon {
+                                this.restart_gluon_daemon(cx);
+                            } else {
+                                this.reboot_quark(&id, cx);
+                            }
+                        })),
                 );
             }
             if row.can_toggle {

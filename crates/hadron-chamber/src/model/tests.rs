@@ -476,7 +476,7 @@
         );
 
         assert_eq!(rows[0].status, "Running");
-        assert!(!rows[0].can_restart && !rows[0].can_toggle, "chamber has no daemon control path");
+        assert!(rows[0].can_restart && !rows[0].can_toggle, "daemon can be restarted/started from Process Manager");
 
         assert_eq!(rows[1].status, "Excited");
         assert!(rows[1].can_restart, "enabled ACP seat can be force-restarted");

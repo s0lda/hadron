@@ -3451,6 +3451,42 @@ impl Chamber {
         );
     }
 
+    /// Start or restart the `hadron-gluon` daemon for the current workspace on a
+    /// background thread so the UI never blocks waiting for an exiting process.
+    pub(super) fn restart_gluon_daemon(&mut self, cx: &mut Context<Self>) {
+        let field_path = self.path.clone();
+        let show_console = self.prefs.show_console_window;
+        cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_spawn(async move {
+                    crate::sys::restart_gluon_daemon(&field_path, show_console)
+                })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                match res {
+                    Ok(pid) => {
+                        chamber.last_gluon_running = true;
+                        chamber.gluon_stopped_notice = false;
+                        chamber.toast_manager.push(
+                            ToastKind::Success,
+                            format!("Started hadron-gluon daemon (PID {pid})"),
+                            Some(3),
+                        );
+                    }
+                    Err(e) => {
+                        chamber.toast_manager.push(
+                            ToastKind::Error,
+                            format!("Failed to start hadron-gluon: {e}"),
+                            Some(5),
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// The colour to paint a quark's name / chart series with: its **custom** colour if
     /// one is set in the stored identity (`ChamberPrefs`), else the stable auto hue. Thin
     /// wrapper over [`Self::resolve_identity`] — the one colour-resolution path — so a

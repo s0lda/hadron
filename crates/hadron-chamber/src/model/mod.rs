@@ -348,7 +348,7 @@ pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<Proc
         id: "gluon".to_string(),
         label: "hadron-gluon (daemon)".to_string(),
         status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
-        can_restart: false,
+        can_restart: true,
         can_toggle: false,
         enabled: gluon_running,
     }];

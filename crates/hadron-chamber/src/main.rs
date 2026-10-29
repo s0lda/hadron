@@ -342,34 +342,8 @@ fn main() {
     }
 }
 
-/// Resolve the `hadron-gluon` binary next to our own executable, falling back to
-/// the bare name (resolved via `PATH`) only if the sibling is absent. Resolving
-/// against `current_exe()` first means a `hadron-gluon` planted earlier on `PATH`
-/// cannot be run in place of the one we shipped.
 #[cfg(feature = "gui")]
-fn resolve_gluon_binary() -> std::path::PathBuf {
-    let name = format!("hadron-gluon{}", std::env::consts::EXE_SUFFIX);
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(parent) = current_exe.parent() {
-            let candidate = parent.join(&name);
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-    }
-    std::path::PathBuf::from(name)
-}
-
-/// Read the daemon's PID from a `gluon.lock` file. Returns `None` when the file is
-/// missing, empty, or does not hold a parseable integer — the case that made the
-/// "close gluon on exit" option appear broken: a daemon from a build predating PID
-/// tracking holds the lock but leaves it empty, so there is nothing to terminate.
-#[cfg(feature = "gui")]
-fn read_lock_pid(lock_path: &std::path::Path) -> Option<u32> {
-    std::fs::read_to_string(lock_path)
-        .ok()
-        .and_then(|content| content.trim().parse::<u32>().ok())
-}
+use sys::{read_lock_pid, resolve_gluon_binary};
 
 /// The name the kernel reports for the daemon in `<proc_root>/<pid>/comm`: the basename
 /// of the binary `resolve_gluon_binary` runs, comfortably inside `comm`'s 15-char limit.
