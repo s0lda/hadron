@@ -45,17 +45,38 @@ pub(super) fn acp_stdio_descriptor_sandboxed(
     mode: hadron_gatekeeper::SandboxMode,
 ) -> String {
     let (raw_prog, raw_args) = (target.program(), target.args());
-    let (program, args) = hadron_gatekeeper::resolve_sandboxed_command(
+    let (sandboxed_prog, sandboxed_args) = hadron_gatekeeper::resolve_sandboxed_command(
         work_dir,
         raw_prog,
         &raw_args,
         mode,
         false,
     );
-    let env_json: Vec<serde_json::Value> = env
+    let wsl_parsed = hadron_lattice::wsl::parse_wsl_unc_path(work_dir);
+    let (program, args) = match &wsl_parsed {
+        Some((distro, linux_cwd)) if hadron_lattice::wsl::should_run_in_wsl(distro, raw_prog) => {
+            hadron_lattice::wsl::wrap_wsl_command(distro, linux_cwd, &sandboxed_prog, &sandboxed_args)
+        }
+        _ => (sandboxed_prog, sandboxed_args),
+    };
+    let running_via_wsl = program == "wsl.exe";
+    let wsl_distro = wsl_parsed.map(|(d, _)| d);
+    let mut env_json: Vec<serde_json::Value> = env
         .iter()
-        .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
+        .map(|(name, value)| {
+            let val = match (&wsl_distro, running_via_wsl) {
+                (Some(distro), true) => hadron_lattice::wsl::translate_arg_for_wsl(distro, value),
+                _ => value.clone(),
+            };
+            serde_json::json!({ "name": name, "value": val })
+        })
         .collect();
+    if running_via_wsl && !env.is_empty() {
+        let wslenv = hadron_lattice::wsl::wslenv_for_keys(env.iter().map(|(k, _)| k.as_str()));
+        if !wslenv.is_empty() {
+            env_json.push(serde_json::json!({ "name": "WSLENV", "value": wslenv }));
+        }
+    }
     serde_json::json!({
         "type": "stdio",
         // The descriptor requires a human-readable name; the program itself is a

@@ -440,6 +440,10 @@ pub fn reap_build_artifacts(repo_root: &Path, min_age: std::time::Duration) -> a
     reap_build_artifacts_maybe_dry(repo_root, min_age, false)
 }
 
+/// Subdirectories inside a Cargo profile target directory (`target/debug`, `target/release`)
+/// that accumulate stale build artifacts over time.
+const ARTIFACT_SWEEP_SUBDIRS: [&str; 5] = ["incremental", "deps", ".fingerprint", "build", "examples"];
+
 /// [`reap_build_artifacts`], with `dry_run: true` reporting exactly what it would
 /// reclaim (same walk, same staleness check) without deleting anything — the way
 /// to get a trustworthy number off a production `target/debug` before letting the
@@ -452,31 +456,337 @@ pub fn reap_build_artifacts_maybe_dry(
 ) -> anyhow::Result<Option<ArtifactReap>> {
     // Windows 9P (`\\wsl.localhost\...`) rejects Win32 `LockFileEx` with `ERROR_INVALID_FUNCTION`
     // (`os error 1`) and makes walking `target/debug` across the VM boundary prohibitively slow.
-    if hadron_lattice::wsl::is_wsl_unc_path(repo_root) {
-        return Ok(Some(ArtifactReap::default()));
+    // Route WSL UNC paths through a native in-distro sweep using Linux `flock -n` and ext4 traversal.
+    if let Some((distro, linux_root)) = hadron_lattice::wsl::parse_wsl_unc_path(repo_root) {
+        return reap_build_artifacts_wsl(&distro, &linux_root, min_age, dry_run);
     }
-
-    let debug_dir = repo_root.join("target").join("debug");
-    if !debug_dir.is_dir() {
-        return Ok(Some(ArtifactReap::default()));
-    }
-
-    let lock_path = debug_dir.join(".cargo-lock");
-    // Held for the whole sweep; dropped at the end of this function.
-    let _lock_file = match hold_target_lock(&lock_path)? {
-        Some(held) => held,
-        None => return Ok(None),
-    };
 
     let cutoff = std::time::SystemTime::now()
         .checked_sub(min_age)
         .context("min_age is larger than the current time")?;
     let mut reap = ArtifactReap::default();
-    for sub in ["incremental", "deps", ".fingerprint", "build"] {
-        sweep_stale_entries(&debug_dir.join(sub), cutoff, dry_run, &mut reap)?;
+
+    for profile in ["debug", "release"] {
+        let profile_dir = repo_root.join("target").join(profile);
+        if !profile_dir.is_dir() {
+            continue;
+        }
+        let lock_path = profile_dir.join(".cargo-lock");
+        let _lock_file = match hold_target_lock(&lock_path)? {
+            Some(held) => held,
+            None => return Ok(None),
+        };
+        for sub in ARTIFACT_SWEEP_SUBDIRS {
+            sweep_stale_entries(&profile_dir.join(sub), cutoff, dry_run, &mut reap)?;
+        }
     }
-    // `lock_file` drops here, releasing the advisory lock.
+
+    sweep_orphaned_worktree_targets(repo_root, dry_run, &mut reap)?;
+
     Ok(Some(reap))
+}
+
+/// Remove any orphaned `.hadron/trees/*/target` directories whose `.cargo-lock`
+/// is not actively held by a running build.
+///
+/// Every quark worktree shares `<repo_root>/target` via `CARGO_TARGET_DIR`
+/// ([`shared_build_env`]); a `<worktree>/target` directory only appears when an
+/// un-isolated command or legacy session built locally inside the worktree,
+/// stranding tens of GB of duplicate build artifacts per quark.
+fn sweep_orphaned_worktree_targets(
+    repo_root: &Path,
+    dry_run: bool,
+    reap: &mut ArtifactReap,
+) -> anyhow::Result<()> {
+    let trees = trees_dir(repo_root);
+    let entries = match std::fs::read_dir(&trees) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", trees.display())),
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading an entry of {}", trees.display()))?;
+        let wt_path = entry.path();
+        if !wt_path.is_dir() {
+            continue;
+        }
+        let wt_target = wt_path.join("target");
+        if !wt_target.is_dir() {
+            continue;
+        }
+        let mut locked = false;
+        for profile in ["debug", "release"] {
+            let lock_path = wt_target.join(profile).join(".cargo-lock");
+            if lock_path.exists() {
+                match hold_target_lock(&lock_path)? {
+                    Some(held) => drop(held),
+                    None => {
+                        locked = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if locked {
+            continue;
+        }
+        let bytes = dir_size(&wt_target)?;
+        if !dry_run {
+            std::fs::remove_dir_all(&wt_target)
+                .with_context(|| format!("removing orphaned worktree target {}", wt_target.display()))?;
+        }
+        reap.files_removed += 1;
+        reap.bytes_removed += bytes;
+    }
+    Ok(())
+}
+
+/// Native Linux shell + `flock -n` + `python3` / `find` sweep executed inside WSL when
+/// `repo_root` is a Windows WSL UNC path (`\\wsl.localhost\<distro>\<linux_root>`).
+const WSL_ARTIFACT_REAP_SCRIPT: &str = r#"
+set -e
+cutoff="$1"
+dry_run="$2"
+
+try_lock_fd9() {
+    lock_file="$1"
+    i=0
+    while [ "$i" -lt 20 ]; do
+        exec 9>>"$lock_file"
+        if flock -n 9; then
+            return 0
+        fi
+        exec 9>&-
+        sleep 0.025 2>/dev/null || sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+try_lock_fd8() {
+    lock_file="$1"
+    i=0
+    while [ "$i" -lt 20 ]; do
+        exec 8>>"$lock_file"
+        if flock -n 8; then
+            return 0
+        fi
+        exec 8>&-
+        sleep 0.025 2>/dev/null || sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+if [ -d "target/debug" ]; then
+    if ! try_lock_fd9 "target/debug/.cargo-lock"; then
+        echo "LOCKED"
+        exit 0
+    fi
+fi
+
+if [ -d "target/release" ]; then
+    if ! try_lock_fd8 "target/release/.cargo-lock"; then
+        echo "LOCKED"
+        exit 0
+    fi
+fi
+
+python3 - "$cutoff" "$dry_run" << 'PYEOF'
+import os, shutil, subprocess, sys
+
+cutoff = float(sys.argv[1])
+dry_run = sys.argv[2] == "1"
+files_removed = 0
+bytes_removed = 0
+
+def newest_atime_and_size(path, is_dir):
+    if not is_dir:
+        st = os.lstat(path)
+        return float(st.st_atime), int(st.st_size)
+    newest = 0.0
+    total = 0
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for child in it:
+                    if child.is_dir(follow_symlinks=False):
+                        stack.append(child.path)
+                    else:
+                        st = child.stat(follow_symlinks=False)
+                        if st.st_atime > newest:
+                            newest = float(st.st_atime)
+                        total += int(st.st_size)
+        except FileNotFoundError:
+            pass
+    return newest, total
+
+def dir_size_only(path):
+    if not os.path.isdir(path):
+        try:
+            return int(os.lstat(path).st_size)
+        except FileNotFoundError:
+            return 0
+    total = 0
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for child in it:
+                    if child.is_dir(follow_symlinks=False):
+                        stack.append(child.path)
+                    else:
+                        total += int(child.stat(follow_symlinks=False).st_size)
+        except FileNotFoundError:
+            pass
+    return total
+
+for profile in ("target/debug", "target/release"):
+    if not os.path.isdir(profile):
+        continue
+    for sub in ("incremental", "deps", ".fingerprint", "build", "examples"):
+        cat_dir = os.path.join(profile, sub)
+        if not os.path.isdir(cat_dir):
+            continue
+        with os.scandir(cat_dir) as it:
+            for entry in it:
+                is_dir = entry.is_dir(follow_symlinks=False)
+                atime, sz = newest_atime_and_size(entry.path, is_dir)
+                if atime >= cutoff:
+                    continue
+                if not dry_run:
+                    if is_dir:
+                        shutil.rmtree(entry.path)
+                    else:
+                        os.unlink(entry.path)
+                files_removed += 1
+                bytes_removed += sz
+
+trees_dir = ".hadron/trees"
+if os.path.isdir(trees_dir):
+    with os.scandir(trees_dir) as it:
+        for entry in it:
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            wt_target = os.path.join(entry.path, "target")
+            if not os.path.isdir(wt_target):
+                continue
+            locked = False
+            for prof in ("debug", "release"):
+                lock_path = os.path.join(wt_target, prof, ".cargo-lock")
+                if os.path.exists(lock_path):
+                    res = subprocess.run(["flock", "-n", lock_path, "true"])
+                    if res.returncode != 0:
+                        locked = True
+                        break
+            if locked:
+                continue
+            sz = dir_size_only(wt_target)
+            if not dry_run:
+                shutil.rmtree(wt_target)
+            files_removed += 1
+            bytes_removed += sz
+
+print(f"OK {files_removed} {bytes_removed}")
+PYEOF
+"#;
+
+fn reap_build_artifacts_wsl(
+    distro: &str,
+    linux_root: &Path,
+    min_age: std::time::Duration,
+    dry_run: bool,
+) -> anyhow::Result<Option<ArtifactReap>> {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(min_age)
+        .context("min_age is larger than the current time")?;
+    let cutoff_secs = cutoff
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let cutoff_arg = format!("{cutoff_secs:.6}");
+    let dry_arg = if dry_run { "1" } else { "0" };
+
+    #[cfg(not(windows))]
+    if !linux_root.is_dir() {
+        let _ = distro;
+        return Ok(Some(ArtifactReap::default()));
+    }
+
+    let mut cmd = {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let mut c = std::process::Command::new("wsl.exe");
+            c.args([
+                "-d",
+                distro,
+                "--cd",
+                &linux_root.to_string_lossy().replace('\\', "/"),
+                "--exec",
+                "sh",
+                "-c",
+                WSL_ARTIFACT_REAP_SCRIPT,
+                "sh",
+                &cutoff_arg,
+                dry_arg,
+            ]);
+            c.creation_flags(0x08000000);
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = distro;
+            let mut c = std::process::Command::new("sh");
+            c.current_dir(linux_root).args([
+                "-c",
+                WSL_ARTIFACT_REAP_SCRIPT,
+                "sh",
+                &cutoff_arg,
+                dry_arg,
+            ]);
+            c
+        }
+    };
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("spawning WSL artifact sweep in {}", linux_root.display()))?;
+    let stdout = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+    let stderr = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        bail!(
+            "WSL artifact sweep in {} failed: {}",
+            linux_root.display(),
+            stderr.trim()
+        );
+    }
+
+    for line in stdout.lines().map(str::trim) {
+        if line == "LOCKED" {
+            return Ok(None);
+        }
+        if let Some(rest) = line.strip_prefix("OK ") {
+            let mut parts = rest.split_whitespace();
+            let files_removed: u64 = parts
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let bytes_removed: u64 = parts
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            return Ok(Some(ArtifactReap {
+                files_removed,
+                bytes_removed,
+            }));
+        }
+    }
+
+    Ok(Some(ArtifactReap::default()))
 }
 
 /// How long the sweep keeps asking for `target/debug/.cargo-lock` before it
@@ -1867,6 +2177,78 @@ pub(crate) mod tests {
             lines[0]
         );
         assert!(lines[1].contains("files=0"), "a zero sweep is still recorded: {}", lines[1]);
+    }
+
+    #[test]
+    fn orphaned_worktree_target_dirs_are_reaped_unless_locked() {
+        let repo = tempfile::tempdir().unwrap();
+        let wt_unlocked = repo.path().join(".hadron/trees/cli-agy/target/debug/deps");
+        let wt_locked = repo.path().join(".hadron/trees/acp-agy/target/debug/deps");
+        write_aged(&wt_unlocked.join("dup.rlib"), b"0123456789abcdef", Duration::from_secs(60));
+        write_aged(&wt_locked.join("active.rlib"), b"01234", Duration::from_secs(60));
+
+        let lock_path = repo.path().join(".hadron/trees/acp-agy/target/debug/.cargo-lock");
+        let held = File::options().create(true).write(true).open(&lock_path).unwrap();
+        held.lock().unwrap();
+
+        let dry = reap_build_artifacts_maybe_dry(repo.path(), ARTIFACT_REAP_MIN_AGE, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(dry, ArtifactReap { files_removed: 1, bytes_removed: 16 });
+        assert!(repo.path().join(".hadron/trees/cli-agy/target").exists());
+
+        let reap = reap_build_artifacts(repo.path(), ARTIFACT_REAP_MIN_AGE).unwrap().unwrap();
+        assert_eq!(reap, ArtifactReap { files_removed: 1, bytes_removed: 16 });
+        assert!(
+            !repo.path().join(".hadron/trees/cli-agy/target").exists(),
+            "unlocked orphaned worktree target dir must be removed wholesale"
+        );
+        assert!(
+            repo.path().join(".hadron/trees/acp-agy/target").exists(),
+            "locked worktree target dir must be spared while a build holds .cargo-lock"
+        );
+
+        drop(held);
+        let reap2 = reap_build_artifacts(repo.path(), ARTIFACT_REAP_MIN_AGE).unwrap().unwrap();
+        assert_eq!(reap2, ArtifactReap { files_removed: 1, bytes_removed: 5 });
+        assert!(!repo.path().join(".hadron/trees/acp-agy/target").exists());
+    }
+
+    #[test]
+    fn wsl_unc_repo_root_sweeps_stale_artifacts_and_honors_cargo_lock() {
+        let repo = tempfile::tempdir().unwrap();
+        let unc_root = hadron_lattice::wsl::format_wsl_unc_path("Ubuntu", repo.path());
+        let debug = repo.path().join("target").join("debug");
+        write_aged(&debug.join("deps").join("stale.rlib"), b"0123456789", Duration::from_secs(10 * 86400));
+        write_aged(&debug.join("deps").join("fresh.rlib"), b"x", Duration::from_secs(86400));
+        write_aged(
+            &repo.path().join(".hadron/trees/cli-agy/target/debug/deps/orphan.rlib"),
+            b"12345",
+            Duration::from_secs(60),
+        );
+
+        // Held lock on target/debug/.cargo-lock skips the WSL sweep via flock -n
+        let lock_path = debug.join(".cargo-lock");
+        let held = File::options().create(true).write(true).open(&lock_path).unwrap();
+        held.lock().unwrap();
+        let locked_reap = reap_build_artifacts(&unc_root, Duration::from_secs(7 * 86400)).unwrap();
+        assert_eq!(locked_reap, None, "held lock must skip WSL sweep");
+        drop(held);
+
+        let dry = reap_build_artifacts_maybe_dry(&unc_root, Duration::from_secs(7 * 86400), true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(dry, ArtifactReap { files_removed: 2, bytes_removed: 15 });
+        assert!(debug.join("deps").join("stale.rlib").exists());
+        assert!(repo.path().join(".hadron/trees/cli-agy/target").exists());
+
+        let real = reap_build_artifacts(&unc_root, Duration::from_secs(7 * 86400))
+            .unwrap()
+            .unwrap();
+        assert_eq!(real, dry);
+        assert!(!debug.join("deps").join("stale.rlib").exists());
+        assert!(debug.join("deps").join("fresh.rlib").exists());
+        assert!(!repo.path().join(".hadron/trees/cli-agy/target").exists());
     }
 
     #[test]

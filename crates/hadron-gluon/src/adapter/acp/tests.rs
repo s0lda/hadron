@@ -422,6 +422,49 @@ fn acp_stdio_descriptor_no_env_matches_bare_command() {
     assert_eq!(json_stdio.env.len(), bare_stdio.env.len());
 }
 
+#[test]
+fn acp_stdio_descriptor_translates_wsl_env_and_injects_wslenv() {
+    let target = AcpTarget {
+        program: "agy".to_string(),
+        args: vec!["acp".to_string()],
+        env: Vec::new(),
+    }
+    .resolved()
+    .expect("bare program needs no repo root");
+    let work_dir = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\trees\acp-agy");
+    let env = vec![
+        (
+            "CARGO_TARGET_DIR".to_string(),
+            r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\target".to_string(),
+        ),
+        ("CARGO_INCREMENTAL".to_string(), "0".to_string()),
+    ];
+    let json = super::session::acp_stdio_descriptor_sandboxed(
+        &target,
+        &env,
+        work_dir,
+        hadron_gatekeeper::SandboxMode::Off,
+    );
+    let agent = AcpAgent::from_str(&json).expect("valid stdio descriptor");
+    let agent_client_protocol::schema::v1::McpServer::Stdio(stdio) = agent.into_server() else {
+        panic!("expected Stdio descriptor");
+    };
+    assert_eq!(stdio.command, std::path::PathBuf::from("wsl.exe"));
+    let target_dir = stdio
+        .env
+        .iter()
+        .find(|e| e.name == "CARGO_TARGET_DIR")
+        .expect("CARGO_TARGET_DIR present");
+    assert_eq!(target_dir.value, "/home/Jake/dev/hadron/target");
+    let wslenv = stdio
+        .env
+        .iter()
+        .find(|e| e.name == "WSLENV")
+        .expect("WSLENV injected so wsl.exe forwards CARGO_TARGET_DIR into Linux guest");
+    assert!(wslenv.value.contains("CARGO_TARGET_DIR/u"));
+    assert!(wslenv.value.contains("CARGO_INCREMENTAL/u"));
+}
+
 /// A boot that cannot possibly work must FAIL the turn, not hang it. The pump
 /// thread dies before `session/new`, and `boot` has to notice rather than park on
 /// `ready_rx` forever. (This one is not `#[ignore]`d: it spawns a process, but a
