@@ -263,7 +263,7 @@ mod event_tests {
     #[test]
     fn email_never_reaches_the_serialized_event() {
         // The real payload shape, with a real-looking email in it.
-        let payload = r#"{"cwd":"/home/Jake/dev/hadron","conversation_id":"b66f1126","model":{"id":"Gemini 3.1 Pro (High)"},"context_window":{"total_input_tokens":635,"total_output_tokens":292,"context_window_size":1048576,"used_percentage":0.06},"quota":{"gemini-weekly":{"remaining_fraction":0.0517783,"reset_time":"2026-07-13T13:12:03Z"}},"plan_tier":"Google AI Ultra","email":"secret.human@gmail.com","terminal_width":80}"#;
+        let payload = r#"{"cwd":"/home/user/project","conversation_id":"b66f1126","model":{"id":"Gemini 3.1 Pro (High)"},"context_window":{"total_input_tokens":635,"total_output_tokens":292,"context_window_size":1048576,"used_percentage":0.06},"quota":{"gemini-weekly":{"remaining_fraction":0.0517783,"reset_time":"2026-07-13T13:12:03Z"}},"plan_tier":"Google AI Ultra","email":"secret.human@gmail.com","terminal_width":80}"#;
 
         let t = crate::parse_agy_statusline(payload).unwrap();
         let ev = Event::new(
@@ -304,7 +304,7 @@ mod event_tests {
         assert_eq!(ev.kind, Kind::EnergyReport { used_tokens: 42 });
     }
 
-    /// **The history must not break.** `field.jsonl` is an append-only log, and Jake's
+    /// **The history must not break.** `field.jsonl` is an append-only log, and a
     /// live one holds 70 `energy_report` events written in the OLD shape — a bare
     /// `used_tokens` and no `usage` at all. Widening the event must keep reading every
     /// one of them, or the token split silently eats his history.
@@ -371,7 +371,7 @@ mod event_tests {
         assert_eq!(got.cached(), Some(234_792));
     }
 
-    /// Parse Jake's **actual** log, every line of it, if it is present. This is the
+    /// Parse the **actual** live log, every line of it, if it is present. This is the
     /// one that would catch a shape we never thought to embed above. It is skipped
     /// (not failed) when `.hadron/` is absent, because it is gitignored and will not
     /// exist in a fresh clone — the embedded test above is what runs there.
@@ -403,7 +403,7 @@ mod event_tests {
         eprintln!("live field: {} lines, {energy} energy_report", text.lines().count());
     }
 
-    /// The turn id is additive. Every line already in Jake's `field.jsonl` was written
+    /// The turn id is additive. Every line already in a legacy `field.jsonl` was written
     /// without one, and must still parse — with `turn: None`, which honestly means
     /// "we do not know", not a fabricated link.
     #[test]

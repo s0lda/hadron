@@ -323,8 +323,8 @@ mod tests {
     #[test]
     fn test_resolve_image_path() {
         use super::plugin::resolve_image_path;
-        let repo_root = std::path::Path::new("/home/Jake/dev/hadron");
-        let resolved = resolve_image_path("assets/demo_3.png", repo_root);
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let resolved = resolve_image_path("assets/demo_3.png", &repo_root);
         assert!(resolved.is_some(), "assets/demo_3.png should resolve to an existing file");
         assert!(resolved.unwrap().exists());
     }
@@ -367,7 +367,7 @@ mod tests {
     fn test_probe_image_meta_and_dimensions() {
         use super::plugin::{probe_image_meta, probe_image_dimensions_from_bytes};
 
-        let repo_root = std::path::Path::new("/home/Jake/dev/hadron");
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let demo3 = repo_root.join("assets/demo_3.png");
         if demo3.exists() {
             let (dims, size) = probe_image_meta(&demo3);
@@ -402,6 +402,7 @@ mod tests {
     fn test_image_card_constructs() {
         use super::plugin::ImageBlockData;
         use super::render::ImageCard;
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let card = ImageCard::new(
             ImageBlockData {
                 url: "assets/demo_3.png".to_string(),
@@ -410,7 +411,7 @@ mod tests {
                 width: Some(900.0),
                 height: None,
             },
-            std::path::PathBuf::from("/home/Jake/dev/hadron/assets/demo_3.png"),
+            repo_root.join("assets/demo_3.png"),
         );
         assert_eq!(card.data.width, Some(900.0));
     }

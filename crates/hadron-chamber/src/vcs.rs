@@ -262,7 +262,7 @@ pub fn strip_unc_prefix(path_str: &str) -> String {
     }
 }
 
-/// Formats a repository root path for display in the UI (e.g. `~/dev/hadron/`),
+/// Formats a repository root path for display in the UI (e.g. `~/dev/project/`),
 /// normalizing WSL UNC paths (`\\wsl.localhost\<distro>\home\<user>\...`) and
 /// Windows backslashes to forward slashes with a trailing `/`.
 pub fn format_repo_root_display(root: &Path, home_override: Option<&str>) -> String {
@@ -329,7 +329,7 @@ pub fn format_repo_root_display(root: &Path, home_override: Option<&str>) -> Str
     }
 }
 
-/// Formats the repository working directory for display in the UI (e.g. `~/dev/hadron/`).
+/// Formats the repository working directory for display in the UI (e.g. `~/dev/project/`).
 pub fn format_working_dir(field_path: &Path) -> String {
     let abs_path = if let Some((distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(field_path) {
         let linux_root = repo_root_of(&linux_path);
@@ -1987,8 +1987,8 @@ mod tests {
 
     #[test]
     fn the_repo_root_is_the_parent_of_the_hadron_dir() {
-        let field = PathBuf::from("/home/jake/dev/hadron/.hadron/field.jsonl");
-        assert_eq!(repo_root_of(&field), Path::new("/home/jake/dev/hadron"));
+        let field = PathBuf::from("/home/user/project/.hadron/field.jsonl");
+        assert_eq!(repo_root_of(&field), Path::new("/home/user/project"));
     }
 
     #[test]
@@ -2013,30 +2013,30 @@ mod tests {
 
     #[test]
     fn format_repo_root_display_normalizes_wsl_unc_and_windows_paths() {
-        let wsl_home_repo = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        let wsl_home_repo = Path::new(r"\\wsl.localhost\Ubuntu\home\user\dev\project");
         assert_eq!(
-            format_repo_root_display(wsl_home_repo, Some(r"C:\Users\Komputer")),
-            "~/dev/hadron/"
+            format_repo_root_display(wsl_home_repo, Some(r"C:\Users\user")),
+            "~/dev/project/"
         );
 
-        let wsl_field = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
-        assert_eq!(format_working_dir(wsl_field), "~/dev/hadron/");
+        let wsl_field = Path::new(r"\\wsl.localhost\Ubuntu\home\user\dev\project\.hadron\field.jsonl");
+        assert_eq!(format_working_dir(wsl_field), "~/dev/project/");
 
         let wsl_opt_repo = Path::new(r"\\wsl$\Ubuntu\opt\workspace\app");
         assert_eq!(
-            format_repo_root_display(wsl_opt_repo, Some(r"C:\Users\Komputer")),
+            format_repo_root_display(wsl_opt_repo, Some(r"C:\Users\user")),
             "/opt/workspace/app/"
         );
 
-        let win_home_repo = Path::new(r"C:\Users\Jake\dev\hadron");
+        let win_home_repo = Path::new(r"C:\Users\user\dev\project");
         assert_eq!(
-            format_repo_root_display(win_home_repo, Some(r"C:\Users\Jake")),
-            "~/dev/hadron/"
+            format_repo_root_display(win_home_repo, Some(r"C:\Users\user")),
+            "~/dev/project/"
         );
 
         let win_other_repo = Path::new(r"D:\projects\hadron");
         assert_eq!(
-            format_repo_root_display(win_other_repo, Some(r"C:\Users\Jake")),
+            format_repo_root_display(win_other_repo, Some(r"C:\Users\user")),
             "D:/projects/hadron/"
         );
     }
@@ -2100,30 +2100,30 @@ quark/acp-agy/01K dead000";
     #[test]
     fn parse_worktrees_splits_blank_line_separated_blocks() {
         let raw = "\
-worktree /home/jake/dev/hadron
+worktree /home/user/project
 HEAD f33de6e1234567890
 branch refs/heads/main
 
-worktree /home/jake/dev/hadron/.hadron/trees/acp-claude-2
+worktree /home/user/project/.hadron/trees/acp-claude-2
 HEAD abcdef0123456789
 branch refs/heads/quark/acp-claude-2/01K
 
-worktree /home/jake/dev/hadron/.hadron/trees/detached-scratch
+worktree /home/user/project/.hadron/trees/detached-scratch
 HEAD 0011223344556677
 detached
 ";
         let worktrees = parse_worktrees(raw);
         assert_eq!(worktrees.len(), 3);
         assert_eq!(worktrees[0], WorktreeInfo {
-            path: "/home/jake/dev/hadron".into(), head: "f33de6e1".into(), branch: Some("main".into()),
+            path: "/home/user/project".into(), head: "f33de6e1".into(), branch: Some("main".into()),
         });
         assert_eq!(worktrees[1], WorktreeInfo {
-            path: "/home/jake/dev/hadron/.hadron/trees/acp-claude-2".into(),
+            path: "/home/user/project/.hadron/trees/acp-claude-2".into(),
             head: "abcdef01".into(),
             branch: Some("quark/acp-claude-2/01K".into()),
         });
         assert_eq!(worktrees[2], WorktreeInfo {
-            path: "/home/jake/dev/hadron/.hadron/trees/detached-scratch".into(),
+            path: "/home/user/project/.hadron/trees/detached-scratch".into(),
             head: "00112233".into(),
             branch: None,
         });
@@ -2278,7 +2278,7 @@ detached
     #[test]
     fn parse_graph_reads_commit_and_connector_rows() {
         let raw = "\
-* 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|p1|Jake|2 hours ago|HEAD -> main, origin/main|fix the gate
+* 3aee5bb|3aee5bb1234567890abcdef1234567890abcdef|p1|Alice|2 hours ago|HEAD -> main, origin/main|fix the gate
 | * abc1234|abc1234567890abcdef1234567890abcdef1234|p2|Alice|1 hour ago|quark/acp-claude/01K|wip on branch
 |/
 * def5678|def5678567890abcdef1234567890abcdef1234|p3|Bob|3 hours ago||earlier commit";
@@ -2290,7 +2290,7 @@ detached
             hash: Some("3aee5bb".into()),
             full_hash: Some("3aee5bb1234567890abcdef1234567890abcdef".into()),
             parents: vec!["p1".into()],
-            author: Some("Jake".into()),
+            author: Some("Alice".into()),
             relative_date: Some("2 hours ago".into()),
             decorations: vec![
                 RefDecoration { name: "main".into(), kind: RefKind::Head },
@@ -2329,13 +2329,13 @@ detached
     #[test]
     fn parse_graph_keeps_the_lanes_that_continue_past_the_commit() {
         // `* | |` — cutting the rail at the `*` would read the next `|` as the sha.
-        let rows = parse_graph("* | | 1234abc|1234abc1234567890abcdef1234567890abcdef|p1 p2|Jake|1 hour ago||a merge point");
+        let rows = parse_graph("* | | 1234abc|1234abc1234567890abcdef1234567890abcdef|p1 p2|Alice|1 hour ago||a merge point");
         assert_eq!(rows[0], GraphRow {
             rail: "* | |".into(),
             hash: Some("1234abc".into()),
             full_hash: Some("1234abc1234567890abcdef1234567890abcdef".into()),
             parents: vec!["p1".into(), "p2".into()],
-            author: Some("Jake".into()),
+            author: Some("Alice".into()),
             relative_date: Some("1 hour ago".into()),
             decorations: vec![],
             subject: "a merge point".into(),
@@ -2453,7 +2453,7 @@ index a1b2c3d..e4f5g6h 100644
     fn commit_diff_parses_patch() {
         let raw_patch = "\
 commit 3aee5bb1234567890abcdef1234567890abcdef
-Author: Jake <jake@orch.dev>
+Author: Alice <alice@orch.dev>
 Date:   Thu Jul 23 22:00:00 2026 -0400
 
     feat: example commit

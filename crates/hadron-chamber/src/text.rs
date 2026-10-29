@@ -10,7 +10,7 @@
 /// The two `@names` that are **not** roster ids but still route: `@orchestrator`
 /// resolves to whoever currently holds the Orchestrator seat, and `@team` fans out
 /// to every quark. The chat field is the human's, and `@team` is human-only, so
-/// both belong in its completion list — they were missing, so the one mention Jake
+/// both belong in its completion list — they were missing, so the mention a human
 /// uses most often was the one the menu would not offer.
 ///
 /// The names come from the router's own constants rather than being retyped here:
@@ -1163,7 +1163,7 @@ pub fn is_safe_session_arg(arg: &str) -> bool {
 ///
 /// `/brainstorm @Sonnet the menu` → `(Some("Sonnet"), "the menu")`, and
 /// `/brainstorm the menu` → `(None, "the menu")`. The caller substitutes the
-/// orchestrator alias when there is no target, which is the rule Jake asked for:
+/// orchestrator alias when there is no target, which is the default routing rule:
 /// the mentioned quark, or the orchestrator when none is named.
 pub fn split_target(args: &str) -> (Option<&str>, &str) {
     let args = args.trim();
@@ -1371,7 +1371,7 @@ pub fn extract_completion_query_with_root(
 /// The label and filter text of one completion-menu row, built so the menu cannot
 /// panic on it.
 ///
-/// **Jake's `::` crash.** The completion menu highlights the matched prefix of a row
+/// **The `::` completion crash.** The completion menu highlights the matched prefix of a row
 /// by byte range — `0..filter_text.len()` (gpui-component `completion_menu.rs`) — and
 /// gpui `debug_assert!`s that both ends of a highlight range are char boundaries
 /// (`gpui/src/elements/text.rs`). We used to build emoji rows as `"📺 :tv"`: the label
@@ -2491,7 +2491,7 @@ mod tests {
         assert!(!mention_matches(hadron_gluon::router::TEAM_ALIAS, "zzz"));
     }
 
-    /// The guard for Jake's `::` crash, over **every emoji the picker can offer** —
+    /// The guard for the `::` completion crash, over **every emoji the picker can offer** —
     /// not a hand-picked one. `:tv`, `:id` and `:vs` are the short shortcodes that
     /// actually fired it; an exhaustive sweep does not depend on us guessing right.
     #[test]
@@ -2544,7 +2544,7 @@ mod tests {
         assert_eq!(extract_completion_query("no trigger", 10), None);
     }
 
-    /// **Jake's crash.** Every byte offset into a string full of multi-byte
+    /// **Multibyte cursor-offset crash guard.** Every byte offset into a string full of multi-byte
     /// characters must be survivable — including offsets that land *inside* an
     /// emoji, and offsets past the end. Exhaustive rather than exemplary: a single
     /// hand-picked offset proves nothing about the one the editor actually sends.

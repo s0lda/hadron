@@ -326,10 +326,10 @@ mod tests {
 
     #[test]
     fn the_live_dir_sits_beside_the_field() {
-        let field = Path::new("/home/jake/dev/hadron/.hadron/field.jsonl");
+        let field = Path::new("/home/user/project/.hadron/field.jsonl");
         assert_eq!(
             live_dir(field),
-            PathBuf::from("/home/jake/dev/hadron/.hadron/live")
+            PathBuf::from("/home/user/project/.hadron/live")
         );
     }
 
@@ -382,8 +382,8 @@ mod tests {
         );
     }
 
-    /// Byte-slicing a multi-byte character panics the renderer. This is the one
-    /// crash Jake has actually hit, so the cap counts characters.
+    /// Byte-slicing a multi-byte character panics the renderer. This is a real
+    /// crash hazard in production, so the cap counts characters.
     #[test]
     fn a_long_multibyte_detail_is_cut_on_a_character_boundary() {
         let detail = "🚀".repeat(DETAIL_CHARS * 2);

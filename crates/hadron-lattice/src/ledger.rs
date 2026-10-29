@@ -44,24 +44,24 @@ mod tests {
         let local = Path::new("/tmp/test-repo/.hadron/ledger.db");
         assert_eq!(resolve_sqlite_db_path(local), local);
 
-        let win_local = Path::new(r"C:\Users\Jake\dev\hadron\.hadron\ledger.db");
+        let win_local = Path::new(r"C:\Users\user\project\.hadron\ledger.db");
         assert_eq!(resolve_sqlite_db_path(win_local), win_local);
     }
 
     #[test]
     fn resolve_sqlite_db_path_redirects_wsl_unc_deterministically() {
-        let unc1 = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\ledger.db");
+        let unc1 = Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\ledger.db");
         let resolved = resolve_sqlite_db_path(unc1);
         assert_ne!(resolved, unc1);
         assert!(resolved.to_string_lossy().contains("ledgers"));
         assert!(resolved.to_string_lossy().ends_with(".db"));
 
         // Verbatim UNC yields identical deterministic path
-        let unc_verbatim = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\ledger.db");
+        let unc_verbatim = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\user\project\.hadron\ledger.db");
         assert_eq!(resolve_sqlite_db_path(unc_verbatim), resolved);
 
         // Forward slash variation
-        let unc_forward = Path::new("//wsl.localhost/Ubuntu/home/Jake/dev/hadron/.hadron/ledger.db");
+        let unc_forward = Path::new("//wsl.localhost/Ubuntu/home/user/project/.hadron/ledger.db");
         assert_eq!(resolve_sqlite_db_path(unc_forward), resolved);
     }
 }

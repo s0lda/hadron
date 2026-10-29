@@ -3585,7 +3585,7 @@ impl Chamber {
 
     /// Save a newly-configured quark. Its **definition** goes to the global catalogue
     /// (`~/.hadron/team.json`) so every repo can reach it; this repo **auto-adopts** it
-    /// (an enabled override), matching Jake's "added quark joins the current repo".
+    /// (an enabled override), matching the "added quark joins the current repo" rule.
     /// When there is no separate catalogue (the repo file *is* the global file), fall
     /// back to a self-contained legacy seat — the pre-split behaviour.
     ///
@@ -4419,7 +4419,7 @@ mod tests {
 
     #[test]
     fn test_wsl_skills_dir_resolution_for_unc_path() {
-        let unc_path = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
+        let unc_path = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\field.jsonl");
         let wsl_skills = hadron_lattice::wsl::wsl_skills_dir_for_field(unc_path);
         assert!(wsl_skills.is_some());
         let s = wsl_skills.unwrap().to_string_lossy().to_string();

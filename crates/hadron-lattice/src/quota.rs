@@ -68,8 +68,8 @@ mod tests {
 
     #[test]
     fn the_quota_dir_sits_beside_the_field() {
-        let field = Path::new("/home/jake/dev/hadron/.hadron/field.jsonl");
-        assert_eq!(quota_dir(field), PathBuf::from("/home/jake/dev/hadron/.hadron/quota"));
+        let field = Path::new("/home/user/project/.hadron/field.jsonl");
+        assert_eq!(quota_dir(field), PathBuf::from("/home/user/project/.hadron/quota"));
     }
 
     #[test]

@@ -1245,7 +1245,7 @@ fn default_terminal_scrollback() -> usize {
 }
 fn default_roster_width() -> f32 {
     // Wide enough for effort + mode tags beside the name/model column, trimmed
-    // ~11% from the previous 450 default (Jake's request).
+    // ~11% from the previous 450 default.
     400.0
 }
 fn default_inspector_width() -> f32 {
@@ -1490,7 +1490,7 @@ mod tests {
             default_mode: hadron_lattice::Mode::Auto,
             window_bounds: None,
             human: Identity {
-                display_name: Some("Jake".into()),
+                display_name: Some("Alice".into()),
                 color: Some("#ec4899".into()),
                 image_path: Some("/tmp/me.png".into()),
             },
@@ -1605,13 +1605,13 @@ mod tests {
         let path = dir.path().join("chamber.json");
         std::fs::write(
             &path,
-            r#"{"editor":"Vim","inspector_width":333.0,"human":{"display_name":"Jake"}}"#,
+            r#"{"editor":"Vim","inspector_width":333.0,"human":{"display_name":"Alice"}}"#,
         )
         .unwrap();
         let prefs = load_from(&path);
         assert_eq!(prefs.editor, crate::sys::EditorChoice::System);
         assert_eq!(prefs.inspector_width, 333.0);
-        assert_eq!(prefs.human.display_name.as_deref(), Some("Jake"));
+        assert_eq!(prefs.human.display_name.as_deref(), Some("Alice"));
     }
 
     /// The hand-edit the docs actually invite, and the reason the field exists.
@@ -1847,27 +1847,27 @@ mod tests {
         assert_eq!(prefs.last_project(), None);
 
         // Record a project
-        let p1 = RecentProject::new("/home/jake/dev/p1", "p1");
+        let p1 = RecentProject::new("/home/user/dev/p1", "p1");
         prefs.record_project(p1.clone());
         assert_eq!(prefs.recent_projects.len(), 1);
-        assert_eq!(prefs.last_project().unwrap().path, "/home/jake/dev/p1");
+        assert_eq!(prefs.last_project().unwrap().path, "/home/user/dev/p1");
 
         // Record a second project
-        let p2 = RecentProject::new(r"\\wsl.localhost\Ubuntu\home\jake\p2", "p2")
+        let p2 = RecentProject::new(r"\\wsl.localhost\Ubuntu\home\user\p2", "p2")
             .with_remote(ProjectRemote::Wsl {
                 distro: "Ubuntu".to_string(),
-                linux_path: "/home/jake/p2".to_string(),
+                linux_path: "/home/user/p2".to_string(),
             })
             .with_branch("main");
         prefs.record_project(p2.clone());
         assert_eq!(prefs.recent_projects.len(), 2);
-        assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+        assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\user\p2");
 
         // Record p1 again -> moves to front (LRU)
         prefs.record_project(p1.clone());
         assert_eq!(prefs.recent_projects.len(), 2);
-        assert_eq!(prefs.last_project().unwrap().path, "/home/jake/dev/p1");
-        assert_eq!(prefs.recent_projects[1].path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+        assert_eq!(prefs.last_project().unwrap().path, "/home/user/dev/p1");
+        assert_eq!(prefs.recent_projects[1].path, r"\\wsl.localhost\Ubuntu\home\user\p2");
 
         // Serde round-trip
         let json = serde_json::to_string(&prefs).expect("serialize");
@@ -1876,9 +1876,9 @@ mod tests {
         assert_eq!(prefs.startup_behavior, loaded.startup_behavior);
 
         // Remove project
-        prefs.remove_project("/home/jake/dev/p1");
+        prefs.remove_project("/home/user/dev/p1");
         assert_eq!(prefs.recent_projects.len(), 1);
-        assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\jake\p2");
+        assert_eq!(prefs.last_project().unwrap().path, r"\\wsl.localhost\Ubuntu\home\user\p2");
 
         // StartupBehavior labels and parsing
         assert_eq!(StartupBehavior::ALL.len(), 3);
@@ -1900,7 +1900,7 @@ mod tests {
             Some(Path::new("/opt/hadron/bin"))
         ));
         assert!(!is_install_or_system_dir(
-            Path::new("/home/user/dev/hadron"),
+            Path::new("/home/user/dev/project"),
             Some(Path::new("/opt/hadron/bin"))
         ));
 

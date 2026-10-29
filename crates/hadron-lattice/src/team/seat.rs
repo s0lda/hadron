@@ -488,10 +488,10 @@ mod tests {
         let mut seat = Seat {
             transport: Transport::Acp,
             command: Some(AcpCommand {
-                program: "/home/Jake/dev/hadron/crates/hadron-gluon/scripts/venv/bin/python"
+                program: "/home/user/project/crates/hadron-gluon/scripts/venv/bin/python"
                     .to_string(),
                 args: vec![
-                    "/home/Jake/dev/hadron/crates/hadron-gluon/scripts/agy_acp.py".to_string(),
+                    "/home/user/project/crates/hadron-gluon/scripts/agy_acp.py".to_string(),
                 ],
             }),
             ..Seat::cli(QuarkId::new("acp-agy"), "acp-agy", "gemini-3-pro", Flavor::Worker)
@@ -510,9 +510,9 @@ mod tests {
         let mut win_seat = Seat {
             transport: Transport::Acp,
             command: Some(AcpCommand {
-                program: r"C:\Users\Komputer\.hadron\bridges\agy\venv\Scripts\python.exe"
+                program: r"C:\Users\user\.hadron\bridges\agy\venv\Scripts\python.exe"
                     .to_string(),
-                args: vec![r"C:\Users\Komputer\.hadron\bridges\agy\agy_acp.py".to_string()],
+                args: vec![r"C:\Users\user\.hadron\bridges\agy\agy_acp.py".to_string()],
             }),
             ..Seat::cli(QuarkId::new("acp-agy"), "agy", "gemini-3-pro", Flavor::Worker)
         };

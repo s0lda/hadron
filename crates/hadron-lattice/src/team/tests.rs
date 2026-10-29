@@ -407,25 +407,25 @@ fn team_for_field_prefers_the_sibling_then_global() {
 #[test]
 fn is_global_team_config_path_detects_native_and_wsl_home_catalogues() {
     assert!(is_global_team_config_path(std::path::Path::new(
-        "/home/Jake/.hadron/team.json"
+        "/home/user/.hadron/team.json"
     )));
     assert!(is_global_team_config_path(std::path::Path::new(
         "/root/.hadron/team.json"
     )));
     assert!(is_global_team_config_path(std::path::Path::new(
-        r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+        r"\\wsl.localhost\Ubuntu\home\user\.hadron\team.json"
     )));
     assert!(is_global_team_config_path(std::path::Path::new(
-        r"\\wsl$\Ubuntu\home\Jake\.hadron\team.json"
+        r"\\wsl$\Ubuntu\home\user\.hadron\team.json"
     )));
     assert!(is_global_team_config_path(std::path::Path::new(
-        r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+        r"\\?\UNC\wsl.localhost\Ubuntu\home\user\.hadron\team.json"
     )));
     assert!(!is_global_team_config_path(std::path::Path::new(
-        "/home/Jake/dev/hadron/.hadron/team.json"
+        "/home/user/project/.hadron/team.json"
     )));
     assert!(!is_global_team_config_path(std::path::Path::new(
-        r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\team.json"
+        r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\team.json"
     )));
 }
 
@@ -844,7 +844,7 @@ mod resolve_tests {
         assert_eq!(resolved.quarks[0].flavor, Flavor::Orchestrator);
     }
 
-    /// **Jake's exact scenario.** One catalogue default (`acp-claude` = Opus). A fresh
+    /// **Per-repo model divergence.** One catalogue default (`acp-claude` = Opus). A fresh
     /// repo that only adopts it (no model delta) resolves to Opus; a second repo that
     /// pins `model: Some("sonnet")` resolves to Sonnet — and the **catalogue is untouched
     /// by either**, so the two repos never clobber each other's model.
@@ -1136,15 +1136,15 @@ mod resolve_tests {
         assert_eq!(ov.display_name, None);
     }
 
-    /// The migration that runs once on Jake's LIVE setup. This is the single most
-    /// dangerous path in the split — it rewrites both his daemon-polled catalogue and
-    /// his repo file — so the property it rests on is asserted here, not just in prose:
+    /// The migration that runs once on a live setup. This is the single most
+    /// dangerous path in the split — it rewrites both the daemon-polled catalogue and
+    /// the repo file — so the property it rests on is asserted here, not just in prose:
     /// **`resolve_team` is seat-for-seat identical (order included) before and after**,
     /// which is exactly what lets the running daemon reconcile the split to a no-op
     /// re-seat instead of tearing down live ACP sessions.
     #[test]
     fn migrate_to_catalogue_is_identity_under_resolve() {
-        // Jake's actual four seats, incl. the disabled orchestrator (`enabled:false`).
+        // Four typical seats, incl. a disabled orchestrator (`enabled:false`).
         let mut repo = Team {
             quarks: vec![
                 Seat { enabled: false, ..seat("opus", "claude", "opus", Flavor::Orchestrator) },
@@ -1367,7 +1367,7 @@ mod enabled_tests {
     use super::super::*;
     use crate::Flavor;
 
-    /// Jake's live `team.json` has no `enabled` key anywhere — it was written before the
+    /// A legacy `team.json` has no `enabled` key anywhere — it was written before the
     /// field existed. Every one of those seats must read as **on**. If this ever
     /// defaults to `false`, a Hadron upgrade silently switches the whole swarm off.
     #[test]

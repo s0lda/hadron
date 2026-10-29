@@ -618,12 +618,6 @@ pub fn resolve_image_path(url_str: &str, repo_root: &std::path::Path) -> Option<
         }
     }
 
-    let fallback_root = std::path::Path::new("/home/Jake/dev/hadron");
-    let fallback_candidate = fallback_root.join(cleaned.trim_start_matches("./"));
-    if fallback_candidate.is_file() {
-        return Some(fallback_candidate);
-    }
-
     None
 }
 

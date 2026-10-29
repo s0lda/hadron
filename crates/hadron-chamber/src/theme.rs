@@ -996,7 +996,7 @@ pub fn quark_state(state: QuarkState) -> Rgba {
     }
 }
 
-/// Presence-dot color for the roster user-list — Jake's traffic-light semantics
+/// Presence-dot color for the roster user-list — traffic-light semantics
 /// (green available · violet/orchid working · amber waiting · red unavailable), distinct
 /// from the [`quark_state`] accent ramp used elsewhere.
 pub fn presence(state: QuarkState) -> Rgba {
@@ -1498,7 +1498,7 @@ mod tests {
 
     #[test]
     fn test_custom_themes_dirs_for_field_resolves_wsl_unc_path() {
-        let unc_field = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
+        let unc_field = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\field.jsonl");
         let dirs = custom_themes_dirs_for_field(Some(unc_field));
         assert!(
             dirs.iter().any(|d| d.to_string_lossy().contains("themes")),

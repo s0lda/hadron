@@ -1467,12 +1467,12 @@ mod tests {
 
     #[test]
     fn resolve_file_url_for_workspace_maps_linux_paths_and_strips_worktree_under_wsl_unc() {
-        let wsl_ws = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
-        let url = "file:///home/Jake/dev/hadron/.hadron/trees/cli-agy/crates/hadron-chamber/src/pty.rs#L48-L49";
+        let wsl_ws = Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\field.jsonl");
+        let url = "file:///home/user/project/.hadron/trees/cli-agy/crates/hadron-chamber/src/pty.rs#L48-L49";
         let (resolved, line) = super::resolve_file_url_for_workspace(url, Some(wsl_ws)).unwrap();
         assert_eq!(
             resolved,
-            Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\crates\hadron-chamber\src\pty.rs")
+            Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\crates\hadron-chamber\src\pty.rs")
         );
         assert_eq!(line, Some(48));
     }
@@ -1562,9 +1562,8 @@ mod tests {
         assert_eq!(content, Some("hello world".to_string()));
     }
 
-    /// The file tree is a view of the **disk**, not of git's index. Jake deleted
-    /// two screenshots and added five; the tree kept showing the deleted ones and
-    /// never showed the new ones, because `git ls-files` reports the index.
+    /// The file tree is a view of the **disk**, not of git's index. When a user deletes
+    /// two screenshots and adds five, `git ls-files` still reports the index rather than disk.
     ///
     /// Gitignored files are now surfaced too (rendered muted), flagged `is_ignored = true`,
     /// so this also asserts they appear with the right flag rather than being dropped.

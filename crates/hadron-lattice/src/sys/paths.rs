@@ -68,20 +68,20 @@ mod tests {
     #[test]
     fn test_strip_unc_prefix_preserves_network_share() {
         assert_eq!(
-            strip_unc_prefix(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron"),
-            r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron"
+            strip_unc_prefix(r"\\?\UNC\wsl.localhost\Ubuntu\home\user\project"),
+            r"\\wsl.localhost\Ubuntu\home\user\project"
         );
         assert_eq!(
-            strip_unc_prefix("//?/UNC/wsl.localhost/Ubuntu/home/Jake"),
-            "//wsl.localhost/Ubuntu/home/Jake"
+            strip_unc_prefix("//?/UNC/wsl.localhost/Ubuntu/home/user"),
+            "//wsl.localhost/Ubuntu/home/user"
         );
         assert_eq!(
-            strip_unc_prefix(r"\\?\C:\Users\Jake\repo"),
-            r"C:\Users\Jake\repo"
+            strip_unc_prefix(r"\\?\C:\Users\user\repo"),
+            r"C:\Users\user\repo"
         );
         assert_eq!(
-            strip_unc_prefix(r"\\wsl.localhost\Ubuntu\home\Jake"),
-            r"\\wsl.localhost\Ubuntu\home\Jake"
+            strip_unc_prefix(r"\\wsl.localhost\Ubuntu\home\user"),
+            r"\\wsl.localhost\Ubuntu\home\user"
         );
     }
 }

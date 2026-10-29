@@ -1267,7 +1267,7 @@ impl super::Chamber {
                         .child(text),
                 )
                 // Buttons on their own row, right-aligned — the question and the
-                // choices no longer fight for the same line (Jake's request).
+                // choices no longer fight for the same line.
                 // Outline variants carry the answer's severity: green to approve,
                 // amber for the remembered/always-on choice, red to deny.
                 .child(

@@ -91,7 +91,7 @@ pub fn parse_wsl_home_output(distro: &str, bytes: &[u8]) -> PathBuf {
 }
 
 /// Resolve the default user's `$HOME` inside `distro` as a Windows WSL UNC path
-/// (e.g. `\\wsl.localhost\Ubuntu\home\Jake`), falling back to `\\wsl.localhost\<distro>\home`.
+/// (e.g. `\\wsl.localhost\Ubuntu\home\user`), falling back to `\\wsl.localhost\<distro>\home`.
 pub fn resolve_wsl_home_unc_path(distro: &str) -> PathBuf {
     #[cfg(windows)]
     {
@@ -111,7 +111,6 @@ pub fn resolve_wsl_home_unc_path(distro: &str) -> PathBuf {
     parse_wsl_home_output(distro, b"")
 }
 
-/// Given a WSL UNC workspace path (e.g. `\\wsl.localhost\Ubuntu\home\Jake\dev\hadron`),
 /// Given a workspace or field path on Windows WSL UNC (`\\wsl.localhost\<distro>\home\<user>\...`),
 /// infer the in-distro user's `~/.hadron` directory UNC path
 /// (`\\wsl.localhost\<distro>\home\<user>\.hadron`).
@@ -416,7 +415,7 @@ pub fn decide_wsl_vs_host(in_wsl: bool, on_host: bool) -> bool {
     }
 }
 
-/// Resolve the in-distro user home directory (e.g. `/home/Jake` or `/root`) from a Linux path,
+/// Resolve the in-distro user home directory (e.g. `/home/user` or `/root`) from a Linux path,
 /// falling back to `None` if `linux_path` is not under `/home/<user>` or `/root`.
 pub fn infer_linux_home_from_path(linux_path: &Path) -> Option<String> {
     let s = linux_path.to_string_lossy();
@@ -560,25 +559,25 @@ mod tests {
 
     #[test]
     fn test_parse_wsl_unc_path_localhost() {
-        let path = Path::new(r"\\wsl.localhost\Ubuntu\home\jake\repo");
+        let path = Path::new(r"\\wsl.localhost\Ubuntu\home\user\repo");
         let parsed = parse_wsl_unc_path(path);
         assert_eq!(
             parsed,
-            Some(("Ubuntu".to_string(), PathBuf::from("/home/jake/repo")))
+            Some(("Ubuntu".to_string(), PathBuf::from("/home/user/repo")))
         );
 
         // Forward-slash variant
-        let forward = Path::new("//wsl.localhost/Ubuntu/home/jake/repo");
+        let forward = Path::new("//wsl.localhost/Ubuntu/home/user/repo");
         assert_eq!(
             parse_wsl_unc_path(forward),
-            Some(("Ubuntu".to_string(), PathBuf::from("/home/jake/repo")))
+            Some(("Ubuntu".to_string(), PathBuf::from("/home/user/repo")))
         );
 
         // Windows canonicalized verbatim UNC variants (`\\?\UNC\...`)
-        let verbatim = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\jake\repo");
+        let verbatim = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\user\repo");
         assert_eq!(
             parse_wsl_unc_path(verbatim),
-            Some(("Ubuntu".to_string(), PathBuf::from("/home/jake/repo")))
+            Some(("Ubuntu".to_string(), PathBuf::from("/home/user/repo")))
         );
         let verbatim_dollar = Path::new(r"\\?\UNC\wsl$\Debian\var\log");
         assert_eq!(
@@ -606,14 +605,14 @@ mod tests {
 
     #[test]
     fn test_parse_non_wsl_paths() {
-        assert_eq!(parse_wsl_unc_path(Path::new(r"C:\Users\Jake")), None);
-        assert_eq!(parse_wsl_unc_path(Path::new("/home/jake")), None);
+        assert_eq!(parse_wsl_unc_path(Path::new(r"C:\Users\user")), None);
+        assert_eq!(parse_wsl_unc_path(Path::new("/home/user")), None);
         assert_eq!(parse_wsl_unc_path(Path::new(r"\\server\share\folder")), None);
         assert_eq!(parse_wsl_unc_path(Path::new(".")), None);
 
-        assert!(!is_wsl_unc_path(Path::new(r"C:\Users\Jake")));
-        assert!(is_wsl_unc_path(Path::new(r"\\wsl.localhost\Ubuntu\home\jake")));
-        assert!(is_wsl_unc_path(Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\jake")));
+        assert!(!is_wsl_unc_path(Path::new(r"C:\Users\user")));
+        assert!(is_wsl_unc_path(Path::new(r"\\wsl.localhost\Ubuntu\home\user")));
+        assert!(is_wsl_unc_path(Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\user")));
         assert!(is_wsl_unc_path(Path::new(r"\\wsl$\Debian\var\log")));
 
         // Verify list_installed_wsl_distros executes safely without panicking
@@ -623,89 +622,89 @@ mod tests {
     #[test]
     fn test_parse_wsl_home_and_catalogue_path() {
         assert_eq!(
-            parse_wsl_home_output("Ubuntu", b"/home/Jake\n"),
-            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\Jake")
+            parse_wsl_home_output("Ubuntu", b"/home/user\n"),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\user")
         );
         assert_eq!(
             parse_wsl_home_output("Ubuntu", b""),
             PathBuf::from(r"\\wsl.localhost\Ubuntu\home")
         );
         assert_eq!(
-            resolve_wsl_home_unc_path("Ubuntu"),
-            PathBuf::from(r"\\wsl.localhost\Ubuntu\home")
+            resolve_wsl_home_unc_path("NonExistentTestDistro"),
+            PathBuf::from(r"\\wsl.localhost\NonExistentTestDistro\home")
         );
 
-        let field = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        let field = Path::new(r"\\wsl.localhost\Ubuntu\home\user\project");
         assert_eq!(
             wsl_catalogue_path_for_field(field),
             Some(PathBuf::from(
-                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+                r"\\wsl.localhost\Ubuntu\home\user\.hadron\team.json"
             ))
         );
         assert_eq!(
             wsl_themes_dir_for_field(field),
             Some(PathBuf::from(
-                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\themes"
+                r"\\wsl.localhost\Ubuntu\home\user\.hadron\themes"
             ))
         );
         assert_eq!(
             wsl_skills_dir_for_field(field),
             Some(PathBuf::from(
-                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\skills"
+                r"\\wsl.localhost\Ubuntu\home\user\.hadron\skills"
             ))
         );
-        let verbatim_field = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        let verbatim_field = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\user\project");
         assert_eq!(
             wsl_catalogue_path_for_field(verbatim_field),
             Some(PathBuf::from(
-                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+                r"\\wsl.localhost\Ubuntu\home\user\.hadron\team.json"
             ))
         );
         assert_eq!(
             wsl_themes_dir_for_field(verbatim_field),
             Some(PathBuf::from(
-                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\themes"
+                r"\\wsl.localhost\Ubuntu\home\user\.hadron\themes"
             ))
         );
         assert_eq!(
             wsl_skills_dir_for_field(verbatim_field),
             Some(PathBuf::from(
-                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\skills"
+                r"\\wsl.localhost\Ubuntu\home\user\.hadron\skills"
             ))
         );
         assert_eq!(
-            wsl_catalogue_path_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
+            wsl_catalogue_path_for_field(Path::new(r"C:\Users\user\project")),
             None
         );
         assert_eq!(
-            wsl_themes_dir_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
+            wsl_themes_dir_for_field(Path::new(r"C:\Users\user\project")),
             None
         );
         assert_eq!(
-            wsl_skills_dir_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
+            wsl_skills_dir_for_field(Path::new(r"C:\Users\user\project")),
             None
         );
     }
 
     #[test]
     fn test_format_wsl_unc_path() {
-        let formatted = format_wsl_unc_path("Ubuntu", Path::new("/home/jake/repo"));
+        let formatted = format_wsl_unc_path("Ubuntu", Path::new("/home/user/repo"));
         assert_eq!(
             formatted,
-            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\jake\repo")
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\user\repo")
         );
 
         // Round trip
         let parsed = parse_wsl_unc_path(&formatted).unwrap();
         assert_eq!(parsed.0, "Ubuntu");
-        assert_eq!(parsed.1, PathBuf::from("/home/jake/repo"));
+        assert_eq!(parsed.1, PathBuf::from("/home/user/repo"));
     }
 
     #[test]
     fn test_wrap_wsl_command() {
         let (prog, args) = wrap_wsl_command(
             "Ubuntu",
-            Path::new("/home/jake"),
+            Path::new("/home/user"),
             "cargo",
             &["test".to_string()],
         );
@@ -716,7 +715,7 @@ mod tests {
                 "-d".to_string(),
                 "Ubuntu".to_string(),
                 "--cd".to_string(),
-                "/home/jake".to_string(),
+                "/home/user".to_string(),
                 "--exec".to_string(),
                 "cargo".to_string(),
                 "test".to_string(),
@@ -755,16 +754,16 @@ mod tests {
 
     #[test]
     fn test_git_command_routes_wsl_unc_to_wsl_exe() {
-        let unc = Path::new(r"\\wsl.localhost\Ubuntu\home\jake\dev\hadron");
+        let unc = Path::new(r"\\wsl.localhost\Ubuntu\home\user\project");
         let cmd = git_command(unc);
         assert_eq!(cmd.get_program(), "wsl.exe");
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(
             args,
-            vec!["-d", "Ubuntu", "--cd", "/home/jake/dev/hadron", "--exec", "git"]
+            vec!["-d", "Ubuntu", "--cd", "/home/user/project", "--exec", "git"]
         );
 
-        let local = Path::new("/home/jake/dev/hadron");
+        let local = Path::new("/home/user/project");
         let local_cmd = git_command(local);
         assert_eq!(local_cmd.get_program(), "git");
         assert_eq!(local_cmd.get_current_dir(), Some(local));
@@ -781,8 +780,8 @@ mod tests {
         assert!(decide_wsl_vs_host(false, false));
 
         assert_eq!(
-            infer_linux_home_from_path(Path::new("/home/Jake/dev/hadron")),
-            Some("/home/Jake".to_string())
+            infer_linux_home_from_path(Path::new("/home/user/project")),
+            Some("/home/user".to_string())
         );
         assert_eq!(
             infer_linux_home_from_path(Path::new("/root/project")),
@@ -790,9 +789,9 @@ mod tests {
         );
         assert_eq!(infer_linux_home_from_path(Path::new("/var/log")), None);
 
-        let path_env = wsl_user_path_env(Path::new("/home/Jake/dev/hadron")).unwrap();
-        assert!(path_env.contains("/home/Jake/.local/bin"));
-        assert!(path_env.contains("/home/Jake/.cargo/bin"));
-        assert!(path_env.contains("/home/Jake/.gemini/antigravity-cli/bin"));
+        let path_env = wsl_user_path_env(Path::new("/home/user/project")).unwrap();
+        assert!(path_env.contains("/home/user/.local/bin"));
+        assert!(path_env.contains("/home/user/.cargo/bin"));
+        assert!(path_env.contains("/home/user/.gemini/antigravity-cli/bin"));
     }
 }

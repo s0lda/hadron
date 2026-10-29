@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn migrate_repo_to_catalogue_never_wipes_a_global_catalogue_path() {
         let dir = tempdir().unwrap();
-        let fake_wsl_global = dir.path().join("home").join("Jake").join(".hadron").join("team.json");
+        let fake_wsl_global = dir.path().join("home").join("user").join(".hadron").join("team.json");
         std::fs::create_dir_all(fake_wsl_global.parent().unwrap()).unwrap();
 
         let mut wsl_team = Team::default();
@@ -685,7 +685,7 @@ mod tests {
         // Simulate a WSL home catalogue path directly: `is_global_team_config_path` returns true
         // for `/home/<user>/.hadron/team.json` and `\\wsl.localhost\<distro>\home\<user>\.hadron\team.json`.
         assert!(hadron_lattice::is_global_team_config_path(std::path::Path::new(
-            r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
+            r"\\wsl.localhost\Ubuntu\home\user\.hadron\team.json"
         )));
 
         // Calling migrate_repo_to_catalogue with `repo_path == global_path` is a no-op

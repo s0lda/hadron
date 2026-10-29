@@ -1150,7 +1150,7 @@ impl super::Chamber {
                 // Every vertical lane quad then had height 0 and vanished, every diagonal
                 // flattened to a horizontal dash, and each node dot centred on the row's
                 // top edge and got clipped to a semicircle — the "graph is still dashes"
-                // Jake kept reporting. The canvas must carry the row's size itself.
+                // regression. The canvas must carry the row's size itself.
                 .w(px(gutter_w))
                 .h(px(row_h)),
             )
@@ -2616,7 +2616,7 @@ mod tests {
     /// "before", and a `hadron`-authored commit that is real work, must both survive.
     #[test]
     fn only_hadron_authored_before_commits_are_snapshots() {
-        assert!(!Chamber::is_swarm_snapshot(&authored("Jake", "before we ship, fix this")));
+        assert!(!Chamber::is_swarm_snapshot(&authored("Alice", "before we ship, fix this")));
         assert!(!Chamber::is_swarm_snapshot(&authored("hadron", "feat(chamber): real work")));
         assert!(!Chamber::is_swarm_snapshot(&crate::vcs::GraphRow::default()));
     }

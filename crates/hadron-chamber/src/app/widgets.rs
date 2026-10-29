@@ -1091,7 +1091,7 @@ pub(super) fn mode_tag_label(mode: Mode, is_default: bool) -> &'static str {
 /// A permission-mode badge. When `is_default` (no per-quark override), a neutral
 /// GREY outlined "Default" chip — the quark is on the global mode. Otherwise the
 /// actual mode in its risk colour (Ask muted → Bypass danger). All variants are
-/// `outline` (Jake's request) so the tags read as light chips, not solid fills.
+/// `outline` so the tags read as light chips, not solid fills.
 /// Kept `xsmall` so it doesn't crowd the name/model column of the roster row.
 pub(super) fn mode_tag(mode: Mode, is_default: bool) -> gpui::AnyElement {
     let label = mode_tag_label(mode, is_default);
@@ -2199,8 +2199,8 @@ mod tests {
             "an empty selection is a cancel, not a missing picker"
         );
         assert_eq!(
-            classify_pick(Some(Some(vec![PathBuf::from("/home/jake/dev")]))),
-            Picked::Path("/home/jake/dev".to_string())
+            classify_pick(Some(Some(vec![PathBuf::from("/home/user/dev")]))),
+            Picked::Path("/home/user/dev".to_string())
         );
     }
 
@@ -2258,7 +2258,7 @@ mod draft_tests {
         }
     }
 
-    /// **The split Jake asked for.** A streaming reply becomes a chat draft; a thought,
+    /// **Chat draft vs. live card split.** A streaming reply becomes a chat draft; a thought,
     /// a tool call and a plan step stay in the Live card and produce no draft at all.
     /// `Activity::full` is what separates them, and only `Activity::speaking` sets it.
     #[test]

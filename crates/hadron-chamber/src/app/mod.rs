@@ -2320,7 +2320,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // The navigation chords are bound with `None` (global) so they dispatch
         // regardless of which sub-context holds focus — `content` (which carries
         // `KEY_CONTEXT`) is always their ancestor, so a global binding still reaches
-        // its handler. Jake's requested scheme is modifier + arrows:
+        // its handler. The navigation scheme is modifier + arrows:
         //   ctrl-tab           chat input  <-> terminal (reuses `ToggleFocus`)
         //   alt-left/right     chat column tabs   (Chat / Log / Stats)
         //   alt-pageup/pagedn  right-rail tabs     (Terminal / Files / Changes / Plan)

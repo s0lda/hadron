@@ -589,7 +589,7 @@ impl super::Chamber {
                     .overflow_y_scroll()
                     // Flat #101010 field colour — opaque, so the bright field can't
                     // bleed through, and matches the Quark Info panel to the solid
-                    // background (Jake's request).
+                    // background.
                     .bg(theme::glass_card())
                     .border_1()
                     .border_color(theme::glass_highlight())

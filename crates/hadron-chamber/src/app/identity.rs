@@ -161,16 +161,16 @@ mod tests {
 
         // The bug: the old `.src(path.clone())` (a String) treats a local file as a
         // bundled asset (Resource::Embedded), whose lookup misses → blank grey avatar.
-        let buggy: ImageSource = String::from("/home/jake/me.png").into();
+        let buggy: ImageSource = String::from("/home/user/me.png").into();
         assert!(
             matches!(buggy, ImageSource::Resource(Resource::Embedded(_))),
             "a bare String path is looked up in the bundled asset source, which a user file misses"
         );
 
         // The fix: a filesystem path becomes a Resource::Path (fs::read).
-        match avatar_source("/home/jake/me.png") {
+        match avatar_source("/home/user/me.png") {
             ImageSource::Resource(r) => {
-                assert_eq!(r, Resource::Path(PathBuf::from("/home/jake/me.png").into()))
+                assert_eq!(r, Resource::Path(PathBuf::from("/home/user/me.png").into()))
             }
             _ => panic!("expected a Resource source"),
         }

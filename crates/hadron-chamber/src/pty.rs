@@ -798,8 +798,7 @@ mod tests {
     /// one row with no keystroke. `pump_terminal` relies on exactly this — it
     /// keeps resizing the PTY to the settled screen width — so if this ever stops
     /// holding, the on-screen glitch returns. Uses bash explicitly: the redraw is
-    /// a readline behaviour and `sh`/dash does not guarantee it (and Jake's shell
-    /// is bash).
+    /// a readline behaviour and `sh`/dash does not guarantee it.
     #[test]
     fn widening_the_pty_redraws_a_wrapped_prompt_onto_one_row() {
         if !std::path::Path::new("/bin/bash").exists() {

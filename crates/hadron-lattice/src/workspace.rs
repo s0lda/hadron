@@ -44,8 +44,8 @@ mod tests {
 
     #[test]
     fn the_repo_root_is_the_parent_of_the_hadron_dir() {
-        let field = PathBuf::from("/home/jake/dev/hadron/.hadron/field.jsonl");
-        assert_eq!(repo_root_of(&field), Path::new("/home/jake/dev/hadron"));
+        let field = PathBuf::from("/home/user/project/.hadron/field.jsonl");
+        assert_eq!(repo_root_of(&field), Path::new("/home/user/project"));
     }
 
     #[test]
@@ -62,8 +62,8 @@ mod tests {
 
     #[test]
     fn hadron_dir_of_resolves_to_hadron_subdir() {
-        let field_in_hadron = PathBuf::from("/home/jake/dev/hadron/.hadron/field.jsonl");
-        assert_eq!(hadron_dir_of(&field_in_hadron), PathBuf::from("/home/jake/dev/hadron/.hadron"));
+        let field_in_hadron = PathBuf::from("/home/user/project/.hadron/field.jsonl");
+        assert_eq!(hadron_dir_of(&field_in_hadron), PathBuf::from("/home/user/project/.hadron"));
 
         let field_bare = PathBuf::from("field.jsonl");
         assert_eq!(hadron_dir_of(&field_bare), PathBuf::from("./.hadron"));

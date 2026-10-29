@@ -823,7 +823,7 @@ mod tests {
         comm(1002, "sshd");
         assert!(!pid_names_a_live_gluon(proc_root.path(), 1002));
 
-        // A PID with no process at all — the stale-lock case Jake's my-cloud hit.
+        // A PID with no process at all — the stale-lock case.
         assert!(!pid_names_a_live_gluon(proc_root.path(), 1003));
 
         // No `/proc` to consult (non-Linux unix): behave as before and signal.

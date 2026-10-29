@@ -266,7 +266,7 @@ fn plan_heading_for<'h>(
     plan_headings: &'h [String],
 ) -> Option<&'h str> {
     // Compare by file name: a dispatch may name the plan absolutely
-    // (`/home/Jake/dev/hadron/.hadron/docs/plans/….md`) while the active path is
+    // (`/home/user/project/.hadron/docs/plans/….md`) while the active path is
     // repo-relative, and both are the same file.
     let named = hadron_gluon::skills::plan_ref(body)?;
     if file_name_of(&named) != file_name_of(plan_path) {

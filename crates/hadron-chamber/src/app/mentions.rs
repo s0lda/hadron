@@ -760,7 +760,7 @@ mod tests {
 ### Task 2: Second
 - [x] Step 4: No commit hash (defaults to landed)
 ";
-        let repo = std::path::Path::new("/home/Jake/dev/hadron");
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let (total, landed, branch, items) = parse_plan_progress_with_status(repo, content);
         assert_eq!(total, 4);
         assert_eq!(landed, 2);
@@ -962,8 +962,8 @@ Some table notes.
         );
         // Mentioning @human resolves to the human's display name when provided.
         assert_eq!(
-            resolve_mention_names_with_human("Hi @human, @acp-claude-2 is ready.", &roster, None, Some("Jake")),
-            "Hi @Jake, @Sonnet is ready."
+            resolve_mention_names_with_human("Hi @human, @acp-claude-2 is ready.", &roster, None, Some("Alice")),
+            "Hi @Alice, @Sonnet is ready."
         );
     }
 
@@ -1007,8 +1007,8 @@ Some table notes.
 
         // Absolute path
         assert_eq!(
-            resolve_mention_names("@/home/Jake/dev/hadron/Cargo.lock", &[], Some(root)),
-            format!("[<span style=\"color: {hex}\">Cargo.lock</span>](file:///home/Jake/dev/hadron/Cargo.lock \"/home/Jake/dev/hadron/Cargo.lock\")")
+            resolve_mention_names("@/home/user/project/Cargo.lock", &[], Some(root)),
+            format!("[<span style=\"color: {hex}\">Cargo.lock</span>](file:///home/user/project/Cargo.lock \"/home/user/project/Cargo.lock\")")
         );
 
         // Directory mention

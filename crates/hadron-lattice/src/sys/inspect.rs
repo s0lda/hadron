@@ -110,15 +110,15 @@ mod tests {
     #[test]
     fn matches_windows_process_image_including_renamed_old_binaries() {
         assert!(matches_process_image_name(
-            r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-gluon.exe",
+            r"C:\Users\user\AppData\Local\Programs\Hadron\hadron-gluon.exe",
             "hadron-gluon"
         ));
         assert!(matches_process_image_name(
-            r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-gluon.exe.old",
+            r"C:\Users\user\AppData\Local\Programs\Hadron\hadron-gluon.exe.old",
             "hadron-gluon"
         ));
         assert!(matches_process_image_name(
-            r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-gluon.exe.old.4120",
+            r"C:\Users\user\AppData\Local\Programs\Hadron\hadron-gluon.exe.old.4120",
             "hadron-gluon.exe"
         ));
         assert!(!matches_process_image_name(
