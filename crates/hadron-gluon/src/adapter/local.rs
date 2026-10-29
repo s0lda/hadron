@@ -317,11 +317,19 @@ struct OpenAiChoice {
 }
 
 #[derive(Debug, Deserialize, Default)]
+struct OpenAiPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 struct OpenAiUsage {
     #[serde(default)]
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAiPromptTokensDetails>,
 }
 
 #[derive(Deserialize)]
@@ -553,7 +561,12 @@ async fn stream_chat(
                 }
                 if let Ok(chunk) = serde_json::from_str::<OpenAiChatChunk>(data) {
                     if let Some(u) = chunk.usage {
-                        usage.spend = hadron_lattice::TokenSpend { input: Some(u.prompt_tokens), output: Some(u.completion_tokens), ..Default::default() };
+                        usage.spend = hadron_lattice::TokenSpend {
+                            input: Some(u.prompt_tokens),
+                            output: Some(u.completion_tokens),
+                            cache_read: u.prompt_tokens_details.and_then(|d| d.cached_tokens),
+                            cache_write: None,
+                        };
                     }
                     if let Some(c) = chunk.choices.into_iter().next() {
                         if let Some(content) = present(&c.delta.content) {
@@ -611,6 +624,9 @@ pub struct LocalQuark {
     /// (tests, and any quark this daemon is not watching) — mirrors
     /// `adapter::acp::AcpQuark`'s same-shaped field.
     live_dir: Option<PathBuf>,
+    /// Where this quark's per-section prompt-size breakdown is persisted (see
+    /// `hadron_lattice::prompt_cost`). Same absence rule as `live_dir`.
+    prompt_cost_dir: Option<PathBuf>,
 }
 
 impl LocalQuark {
@@ -627,11 +643,18 @@ impl LocalQuark {
             energy_limit: None,
             deny_skills: Vec::new(),
             live_dir: None,
+            prompt_cost_dir: None,
         }
     }
 
     pub fn watching(mut self, dir: PathBuf) -> Self {
+        self.prompt_cost_dir = dir.parent().map(|p| p.join("prompt-cost"));
         self.live_dir = Some(dir);
+        self
+    }
+
+    pub fn with_prompt_cost_dir(mut self, dir: PathBuf) -> Self {
+        self.prompt_cost_dir = Some(dir);
         self
     }
 
@@ -693,16 +716,24 @@ impl Quark for LocalQuark {
     }
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
-        let mut prompt = crate::adapter::prompt::build(&turn, &self.id);
+        let system_prompt = crate::adapter::prompt::build_cache_stable_prefix(&turn);
+        let mut user_prompt = crate::adapter::prompt::build_dynamic_suffix(&turn, &self.id);
         let root = hadron_forge::file::Root::new(turn.cwd.clone());
         let quark_id = self.id.clone();
         let dir = self.live_dir.clone();
         let mode = turn.mode;
         let tools = crate::adapter::local_tools::declarations_for_mode(mode);
         if mode == hadron_lattice::Mode::Auto {
-            prompt.push_str(crate::adapter::local_tools::AUTO_MODE_EXEC_NOTE);
+            user_prompt.push_str(crate::adapter::local_tools::AUTO_MODE_EXEC_NOTE);
         }
-        let mut messages = vec![json!({ "role": "user", "content": prompt })];
+        if let Some(dir) = &self.prompt_cost_dir {
+            let breakdown = crate::adapter::prompt::measure(&turn, &self.id);
+            let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
+        }
+        let mut messages = vec![
+            json!({ "role": "system", "content": system_prompt }),
+            json!({ "role": "user", "content": user_prompt }),
+        ];
         let mut spend = hadron_lattice::TokenSpend::default();
 
         for round in 0..MAX_TOOL_ROUNDS {
@@ -827,6 +858,12 @@ fn accumulate_spend(spend: &mut hadron_lattice::TokenSpend, round: &hadron_latti
     }
     if let Some(o) = round.output {
         spend.output = Some(spend.output.unwrap_or(0).saturating_add(o));
+    }
+    if let Some(r) = round.cache_read {
+        spend.cache_read = Some(spend.cache_read.unwrap_or(0).saturating_add(r));
+    }
+    if let Some(w) = round.cache_write {
+        spend.cache_write = Some(spend.cache_write.unwrap_or(0).saturating_add(w));
     }
 }
 
@@ -1583,6 +1620,99 @@ mod tests {
         q.excite(turn).await.expect("turn");
         let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
         assert!(!request.contains("jailed"), "Bypass's guidance is already accurate, no note needed: {request}");
+    }
+
+    #[test]
+    fn accumulate_spend_includes_cache_columns_and_respects_none() {
+        let mut spend = hadron_lattice::TokenSpend::default();
+        assert_eq!(spend.input, None);
+        assert_eq!(spend.output, None);
+        assert_eq!(spend.cache_read, None);
+        assert_eq!(spend.cache_write, None);
+
+        // First round: reports input and cache_read
+        let round1 = hadron_lattice::TokenSpend {
+            input: Some(100),
+            output: None,
+            cache_read: Some(500),
+            cache_write: None,
+        };
+        accumulate_spend(&mut spend, &round1);
+        assert_eq!(spend.input, Some(100));
+        assert_eq!(spend.output, None);
+        assert_eq!(spend.cache_read, Some(500));
+        assert_eq!(spend.cache_write, None);
+
+        // Second round: reports input, output, and cache_write
+        let round2 = hadron_lattice::TokenSpend {
+            input: Some(20),
+            output: Some(45),
+            cache_read: Some(100),
+            cache_write: Some(30),
+        };
+        accumulate_spend(&mut spend, &round2);
+        assert_eq!(spend.input, Some(120));
+        assert_eq!(spend.output, Some(45));
+        assert_eq!(spend.cache_read, Some(600));
+        assert_eq!(spend.cache_write, Some(30));
+    }
+
+    #[tokio::test]
+    async fn local_quark_splits_prompt_into_system_and_user_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let (base, rx) = serve_once_capturing(
+            "200 OK",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\ndata: [DONE]\n",
+        );
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let mut q = LocalQuark::new(QuarkId::new("t"), Flavor::Worker, "m", target);
+
+        let turn = Projection {
+            task: "do specific dynamic task".into(),
+            invariants: "never violate invariants".into(),
+            ..tool_loop_turn(dir.path().to_path_buf())
+        };
+        q.excite(turn).await.expect("turn");
+        let request = rx.recv_timeout(Duration::from_secs(2)).expect("request");
+
+        // Verify request carries system message and user message separately
+        assert!(request.contains(r#""content":"#), "request must carry content: {request}");
+        assert!(request.contains(r#""role":"system""#), "request must have a role: system message: {request}");
+        assert!(request.contains(r#""role":"user""#), "request must have a role: user message: {request}");
+        assert!(
+            request.contains("never violate invariants"),
+            "system message must carry invariants: {request}"
+        );
+        assert!(
+            request.contains("do specific dynamic task"),
+            "user message must carry task: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_quark_saves_prompt_cost_breakdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let prompt_cost_dir = tempfile::tempdir().unwrap();
+        let (base, _rx) = serve_once_capturing(
+            "200 OK",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\ndata: [DONE]\n",
+        );
+        let target = HttpTarget { vendor: HttpVendor::OpenAiCompatible, base_url: base, api_key: None };
+        let q_id = QuarkId::new("cost_quark");
+        let mut q = LocalQuark::new(q_id.clone(), Flavor::Worker, "m", target)
+            .with_prompt_cost_dir(prompt_cost_dir.path().to_path_buf());
+
+        let turn = Projection {
+            task: "profile prompt cost".into(),
+            invariants: "rule 1: prove it runs".into(),
+            ..tool_loop_turn(dir.path().to_path_buf())
+        };
+        q.excite(turn).await.expect("turn");
+
+        let breakdown = hadron_lattice::prompt_cost::load(prompt_cost_dir.path(), &q_id)
+            .expect("prompt cost must be saved on disk");
+        assert!(breakdown.standard_model > 0, "standard_model must be positive");
+        assert!(breakdown.task > 0, "task bytes must be positive");
     }
 }
 

@@ -312,12 +312,16 @@ pub fn parse_agy_statusline(json: &str) -> serde_json::Result<AgyTelemetry> {
             .unwrap_or(0) as u32
     };
 
-    // agy's statusline has no cache columns at all, so `cache_read`/`cache_write` stay
-    // `None` — *unknown*, not zero. Reporting 0 would assert a fact we do not have.
+    let cu = cw.and_then(|c| c.get("current_usage"));
+    let cache_read = cu
+        .and_then(|u| u.get("cache_read_input_tokens"))
+        .and_then(|n| n.as_u64())
+        .map(|v| v as u32);
+
     let spend = cw.map(|_| TokenSpend {
         input: Some(num(cw, "total_input_tokens")),
         output: Some(num(cw, "total_output_tokens")),
-        cache_read: None,
+        cache_read,
         cache_write: None,
     });
 
@@ -396,8 +400,9 @@ mod tests {
 
         // Turn cost: total_input + total_output (cache excluded, as in claude).
         assert_eq!(t.usage.spend.fresh(), Some(635 + 292));
-        // agy has no cache columns: absent, not zero.
-        assert_eq!(t.usage.spend.cached(), None);
+        // agy reports cache_read_input_tokens under current_usage:
+        assert_eq!(t.usage.spend.cache_read, Some(12187));
+        assert_eq!(t.usage.spend.cached(), Some(12187));
         assert_eq!(t.conversation_id.as_deref(), Some("b66f1126-aa1f-4b87-832a-e3779e49bd71"));
         assert_eq!(t.model.as_deref(), Some("Gemini 3.1 Pro (High)"));
 
@@ -416,6 +421,19 @@ mod tests {
             weekly.reset_time.unwrap().to_rfc3339(),
             "2026-07-13T13:12:03+00:00"
         );
+    }
+
+    #[test]
+    fn parse_agy_statusline_reads_cache_read_input_tokens() {
+        let payload = r#"{"context_window":{"total_input_tokens":100,"total_output_tokens":50,"context_window_size":1000,"current_usage":{"cache_read_input_tokens":42}}}"#;
+        let t = parse_agy_statusline(payload).unwrap();
+        assert_eq!(t.usage.spend.cache_read, Some(42));
+        assert_eq!(t.usage.spend.cached(), Some(42));
+
+        let payload_no_cache = r#"{"context_window":{"total_input_tokens":100,"total_output_tokens":50,"context_window_size":1000}}"#;
+        let t2 = parse_agy_statusline(payload_no_cache).unwrap();
+        assert_eq!(t2.usage.spend.cache_read, None);
+        assert_eq!(t2.usage.spend.cached(), None);
     }
 
     /// PRIVACY. The payload carries the human's email and plan tier. The parser must
