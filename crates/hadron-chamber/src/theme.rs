@@ -28,6 +28,7 @@ use hadron_lattice::QuarkState;
 static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0); // 0: Obsidian, 1: Oled, 2: Midnight, 3: Tokyo, 4: Nord, 5: Catppuccin, 6: Gruvbox
 static ACTIVE_ACCENT: AtomicU32 = AtomicU32::new(0xa87ffb); // 0xRRGGBB (warm violet default)
 static ACTIVE_CUSTOM_THEME: std::sync::RwLock<Option<ResolvedTheme>> = std::sync::RwLock::new(None);
+static ACTIVE_WORKSPACE_PATH: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
 
 /// Fully resolved, GPU-ready theme colors parsed from a `ThemeDefinition`.
 #[derive(Debug, Clone, PartialEq)]
@@ -189,8 +190,38 @@ pub fn active_custom_theme() -> Option<ResolvedTheme> {
 
 pub use crate::config::THEME_SCHEMA_VERSION;
 
+pub fn set_active_workspace(path: Option<std::path::PathBuf>) {
+    if let Ok(mut lock) = ACTIVE_WORKSPACE_PATH.write() {
+        *lock = path;
+    }
+}
+
+pub fn active_workspace() -> Option<std::path::PathBuf> {
+    ACTIVE_WORKSPACE_PATH.read().ok().and_then(|lock| lock.clone())
+}
+
 pub fn custom_themes_dir() -> Option<std::path::PathBuf> {
     Some(hadron_lattice::user_hadron_dir()?.join("themes"))
+}
+
+pub fn custom_themes_dirs() -> Vec<std::path::PathBuf> {
+    custom_themes_dirs_for_field(None)
+}
+
+pub fn custom_themes_dirs_for_field(field_path: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = custom_themes_dir() {
+        dirs.push(dir);
+    }
+    let ws = field_path.map(|p| p.to_path_buf()).or_else(active_workspace);
+    if let Some(ws) = ws {
+        if let Some(wsl_themes) = hadron_lattice::wsl::wsl_themes_dir_for_field(&ws) {
+            if !dirs.contains(&wsl_themes) {
+                dirs.push(wsl_themes);
+            }
+        }
+    }
+    dirs
 }
 
 /// Disambiguate a base theme name if it already exists, appending incremental variant numbers
@@ -233,10 +264,25 @@ pub fn next_available_theme_name(base_name: &str, existing: &[crate::config::The
 }
 
 pub fn load_custom_themes() -> Vec<crate::config::ThemeDefinition> {
-    let Some(dir) = custom_themes_dir() else {
+    load_custom_themes_for_field(None)
+}
+
+pub fn load_custom_themes_for_field(field_path: Option<&std::path::Path>) -> Vec<crate::config::ThemeDefinition> {
+    let dirs = custom_themes_dirs_for_field(field_path);
+    if dirs.is_empty() {
         return Vec::new();
-    };
-    load_custom_themes_from_dir(&dir)
+    }
+    let mut all_themes = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+    for dir in &dirs {
+        for theme in load_custom_themes_from_dir(dir) {
+            if seen_ids.insert(theme.id.clone()) {
+                all_themes.push(theme);
+            }
+        }
+    }
+    all_themes.sort_by(|a, b| a.name.cmp(&b.name));
+    all_themes
 }
 
 /// Load all custom themes from `dir`, transparently migrating legacy `v0` files to
@@ -328,12 +374,11 @@ pub fn save_custom_theme_to_dir(
 }
 
 pub fn delete_custom_theme(id: &str) -> std::io::Result<()> {
-    let Some(dir) = custom_themes_dir() else {
-        return Ok(());
-    };
-    let file_path = dir.join(format!("{id}.json"));
-    if file_path.exists() {
-        std::fs::remove_file(file_path)?;
+    for dir in custom_themes_dirs() {
+        let file_path = dir.join(format!("{id}.json"));
+        if file_path.exists() {
+            let _ = std::fs::remove_file(file_path);
+        }
     }
     Ok(())
 }
@@ -1449,6 +1494,16 @@ mod tests {
 
         // Verify future v99 file on disk was NOT overwritten
         assert_eq!(std::fs::read_to_string(&future_path).unwrap(), future_v99_json);
+    }
+
+    #[test]
+    fn test_custom_themes_dirs_for_field_resolves_wsl_unc_path() {
+        let unc_field = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
+        let dirs = custom_themes_dirs_for_field(Some(unc_field));
+        assert!(
+            dirs.iter().any(|d| d.to_string_lossy().contains("themes")),
+            "expected themes dir in custom_themes_dirs, got: {dirs:?}"
+        );
     }
 }
 

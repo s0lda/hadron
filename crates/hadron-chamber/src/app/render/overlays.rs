@@ -1734,7 +1734,7 @@ impl super::Chamber {
         if let Ok(content) = std::fs::read_to_string(&lock_path) {
             if let Some(first_line) = content.lines().next() {
                 if let Ok(pid) = first_line.trim().parse::<u32>() {
-                    if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                    if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
                         return true;
                     }
                 }

@@ -784,7 +784,7 @@ pub fn doctor_body(repo_root: &std::path::Path, roster: &[crate::model::RosterRo
     // 1. Daemon lock check
     let lock_path = repo_root.join(".hadron").join("gluon.lock");
     let daemon_status = match std::fs::read_to_string(&lock_path).ok().and_then(|c| c.trim().parse::<u32>().ok()) {
-        Some(pid) if hadron_lattice::sys::is_process_alive(pid, "hadron-gluon") => format!("[ok] Daemon PID `{pid}` running (`gluon.lock`)"),
+        Some(pid) if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, repo_root) => format!("[ok] Daemon PID `{pid}` running (`gluon.lock`)"),
         Some(pid) => format!("[warn] Stale daemon PID `{pid}` in `gluon.lock` (process inactive)"),
         None => format!("[warn] No active daemon PID found in `gluon.lock`"),
     };

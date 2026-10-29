@@ -727,29 +727,27 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
         }
     }
 
-    if !hadron_lattice::wsl::is_wsl_unc_path(repo) {
-        let trees_dir = repo.join(".hadron").join("trees");
-        if let Ok(tree_entries) = std::fs::read_dir(&trees_dir) {
-            for tree_entry in tree_entries.flatten() {
-                if tree_entry.path().is_dir() {
-                    let tree_path = tree_entry.path();
-                    let tree_plan_dirs = [
-                        tree_path.join(".hadron").join("docs").join("plans"),
-                        tree_path.join("docs").join("plans"),
-                    ];
-                    for dir in &tree_plan_dirs {
-                        if let Ok(entries) = std::fs::read_dir(dir) {
-                            for entry in entries.flatten() {
-                                let path = entry.path();
-                                if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-                                    let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-                                    if file_name.starts_with('.') {
-                                        continue;
-                                    }
-                                    let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                                    if let Ok(rel) = path.strip_prefix(repo) {
-                                        candidates.push((mtime, rel.to_string_lossy().to_string()));
-                                    }
+    let trees_dir = repo.join(".hadron").join("trees");
+    if let Ok(tree_entries) = std::fs::read_dir(&trees_dir) {
+        for tree_entry in tree_entries.flatten() {
+            if tree_entry.path().is_dir() {
+                let tree_path = tree_entry.path();
+                let tree_plan_dirs = [
+                    tree_path.join(".hadron").join("docs").join("plans"),
+                    tree_path.join("docs").join("plans"),
+                ];
+                for dir in &tree_plan_dirs {
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                                let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                                if file_name.starts_with('.') {
+                                    continue;
+                                }
+                                let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                if let Ok(rel) = path.strip_prefix(repo) {
+                                    candidates.push((mtime, rel.to_string_lossy().to_string()));
                                 }
                             }
                         }
@@ -1398,5 +1396,22 @@ mod tests {
         let resolved_typo = resolve_active_plan(root, &messages_typo);
         assert!(resolved_typo.is_some());
         assert!(resolved_typo.unwrap().contains("2026-08-21-swarm-orchestration-and-teamwork/master.md"));
+    }
+
+    #[test]
+    fn test_scan_all_plan_paths_includes_worktree_plans() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+
+        let wt_plan_dir = root.join(".hadron").join("trees").join("quark-1").join("docs").join("plans");
+        std::fs::create_dir_all(&wt_plan_dir).unwrap();
+        let plan_file = wt_plan_dir.join("2026-10-29-quark-plan.md");
+        std::fs::write(&plan_file, "# Worktree Plan\n").unwrap();
+
+        let plans = scan_all_plan_paths(root);
+        assert!(
+            plans.iter().any(|(_, path)| path.contains("2026-10-29-quark-plan.md")),
+            "expected worktree plan to be scanned, got: {plans:?}"
+        );
     }
 }

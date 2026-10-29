@@ -112,22 +112,61 @@ pub fn resolve_wsl_home_unc_path(distro: &str) -> PathBuf {
 }
 
 /// Given a WSL UNC workspace path (e.g. `\\wsl.localhost\Ubuntu\home\Jake\dev\hadron`),
-/// infer the in-distro user's `~/.hadron/team.json` UNC path
-/// (`\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json`).
-pub fn wsl_catalogue_path_for_field(field_path: &Path) -> Option<PathBuf> {
+/// Given a workspace or field path on Windows WSL UNC (`\\wsl.localhost\<distro>\home\<user>\...`),
+/// infer the in-distro user's `~/.hadron` directory UNC path
+/// (`\\wsl.localhost\<distro>\home\<user>\.hadron`).
+fn wsl_user_subpath_for_field(field_path: &Path, sub: &str) -> Option<PathBuf> {
     let (distro, linux_path) = parse_wsl_unc_path(field_path)?;
     let path_str = linux_path.to_string_lossy();
     let mut parts = path_str.split('/').filter(|p| !p.is_empty());
     let first = parts.next()?;
-    let user_home = match first {
+    let linux_sub = match first {
         "home" => {
             let user = parts.next()?;
-            PathBuf::from(format!("/home/{user}/.hadron/team.json"))
+            if sub.is_empty() {
+                format!("/home/{user}/.hadron")
+            } else {
+                format!("/home/{user}/.hadron/{sub}")
+            }
         }
-        "root" => PathBuf::from("/root/.hadron/team.json"),
+        "root" => {
+            if sub.is_empty() {
+                "/root/.hadron".to_string()
+            } else {
+                format!("/root/.hadron/{sub}")
+            }
+        }
         _ => return None,
     };
-    Some(format_wsl_unc_path(&distro, &user_home))
+    Some(format_wsl_unc_path(&distro, Path::new(&linux_sub)))
+}
+
+/// Given a workspace or field path on Windows WSL UNC (`\\wsl.localhost\<distro>\home\<user>\...`),
+/// infer the in-distro user's `~/.hadron` directory UNC path
+/// (`\\wsl.localhost\<distro>\home\<user>\.hadron`).
+pub fn wsl_user_hadron_dir_for_field(field_path: &Path) -> Option<PathBuf> {
+    wsl_user_subpath_for_field(field_path, "")
+}
+
+/// Given a workspace or field path on Windows WSL UNC (`\\wsl.localhost\<distro>\home\<user>\...`),
+/// infer the in-distro user's `~/.hadron/team.json` UNC path
+/// (`\\wsl.localhost\<distro>\home\<user>\.hadron\team.json`).
+pub fn wsl_catalogue_path_for_field(field_path: &Path) -> Option<PathBuf> {
+    wsl_user_subpath_for_field(field_path, "team.json")
+}
+
+/// Given a workspace or field path on Windows WSL UNC (`\\wsl.localhost\<distro>\home\<user>\...`),
+/// infer the in-distro user's `~/.hadron/themes` directory UNC path
+/// (`\\wsl.localhost\<distro>\home\<user>\.hadron\themes`).
+pub fn wsl_themes_dir_for_field(field_path: &Path) -> Option<PathBuf> {
+    wsl_user_subpath_for_field(field_path, "themes")
+}
+
+/// Given a workspace or field path on Windows WSL UNC (`\\wsl.localhost\<distro>\home\<user>\...`),
+/// infer the in-distro user's `~/.hadron/skills` directory UNC path
+/// (`\\wsl.localhost\<distro>\home\<user>\.hadron\skills`).
+pub fn wsl_skills_dir_for_field(field_path: &Path) -> Option<PathBuf> {
+    wsl_user_subpath_for_field(field_path, "skills")
 }
 
 /// Decode raw bytes from CLI command output (e.g. `wsl.exe -l -q`) into strings,
@@ -603,6 +642,18 @@ mod tests {
                 r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\team.json"
             ))
         );
+        assert_eq!(
+            wsl_themes_dir_for_field(field),
+            Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\themes"
+            ))
+        );
+        assert_eq!(
+            wsl_skills_dir_for_field(field),
+            Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\skills"
+            ))
+        );
         let verbatim_field = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
         assert_eq!(
             wsl_catalogue_path_for_field(verbatim_field),
@@ -611,7 +662,27 @@ mod tests {
             ))
         );
         assert_eq!(
+            wsl_themes_dir_for_field(verbatim_field),
+            Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\themes"
+            ))
+        );
+        assert_eq!(
+            wsl_skills_dir_for_field(verbatim_field),
+            Some(PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\Jake\.hadron\skills"
+            ))
+        );
+        assert_eq!(
             wsl_catalogue_path_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
+            None
+        );
+        assert_eq!(
+            wsl_themes_dir_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
+            None
+        );
+        assert_eq!(
+            wsl_skills_dir_for_field(Path::new(r"C:\Users\Jake\dev\hadron")),
             None
         );
     }

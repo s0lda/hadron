@@ -747,6 +747,7 @@ impl Chamber {
         cx: &mut Context<Self>,
     ) -> Self {
         let repo_root = crate::vcs::repo_root_of(&path).to_path_buf();
+        crate::theme::set_active_workspace(Some(path.clone()));
         let is_wsl = crate::wsl::is_wsl_unc_path(&repo_root);
         let files = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             Vec::new()

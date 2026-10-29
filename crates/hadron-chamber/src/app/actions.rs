@@ -314,7 +314,41 @@ impl Chamber {
             .join(".hadron")
             .join("skills");
         let global_dir = hadron_lattice::user_hadron_dir().map(|d| d.join("skills"));
-        hadron_gluon::skills::load_skills(global_dir.as_deref(), Some(&repo_dir))
+        let wsl_dir = hadron_lattice::wsl::wsl_skills_dir_for_field(&self.path);
+
+        match (global_dir, wsl_dir) {
+            (Some(g), Some(w)) if g != w => {
+                let mut base = hadron_gluon::skills::load_skills(Some(&g), Some(&w));
+                let mut repo_skill_names = std::collections::HashSet::new();
+                if let Ok(entries) = std::fs::read_dir(&repo_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_file() && p.extension().and_then(|ext| ext.to_str()) == Some("md") {
+                            if let Ok(content) = std::fs::read_to_string(&p) {
+                                let (front, _) = hadron_gluon::skills::split_front_matter(&content);
+                                if let Some(id) = front.and_then(|f| hadron_gluon::skills::front_matter_value(f, "name")) {
+                                    repo_skill_names.insert(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                let repo_skills = hadron_gluon::skills::load_skills(None, Some(&repo_dir));
+                for s in repo_skills {
+                    if repo_skill_names.contains(&s.id) {
+                        if let Some(pos) = base.iter().position(|existing| existing.id == s.id) {
+                            base[pos] = s;
+                        } else {
+                            base.push(s);
+                        }
+                    }
+                }
+                base
+            }
+            (Some(g), _) => hadron_gluon::skills::load_skills(Some(&g), Some(&repo_dir)),
+            (None, Some(w)) => hadron_gluon::skills::load_skills(Some(&w), Some(&repo_dir)),
+            (None, None) => hadron_gluon::skills::load_skills(None, Some(&repo_dir)),
+        }
     }
 }
 
@@ -1366,7 +1400,7 @@ impl Chamber {
                     Some(p) => p.to_path_buf(),
                     None => std::path::PathBuf::from(".hadron"),
                 };
-                let ledger_path = hadron_dir.join("ledger.db");
+                let ledger_path = hadron_lattice::ledger::resolve_sqlite_db_path(&hadron_dir.join("ledger.db"));
                 if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
                     if target.is_empty() || target == "all" {
                         let _ = conn.execute("DELETE FROM usage", []);
@@ -1639,7 +1673,7 @@ impl Chamber {
                     .ok()
                     .and_then(|c| c.trim().parse::<u32>().ok());
                 let pid_alive = daemon_pid.map_or(false, |pid| {
-                    hadron_lattice::sys::is_process_alive(pid, "hadron-gluon")
+                    hadron_lattice::sys::is_process_alive_in_dir(pid, &self.path)
                 });
 
                 let trees_dir = hadron_gluon::worktree::trees_dir(&repo_root);
@@ -4381,5 +4415,15 @@ mod tests {
 
         assert!(parse_schedule_add_args("").is_err());
         assert!(parse_schedule_add_args("only-id").is_err());
+    }
+
+    #[test]
+    fn test_wsl_skills_dir_resolution_for_unc_path() {
+        let unc_path = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\field.jsonl");
+        let wsl_skills = hadron_lattice::wsl::wsl_skills_dir_for_field(unc_path);
+        assert!(wsl_skills.is_some());
+        let s = wsl_skills.unwrap().to_string_lossy().to_string();
+        assert!(s.contains("skills"));
+        assert!(s.contains("Ubuntu"));
     }
 }

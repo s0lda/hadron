@@ -154,7 +154,7 @@ fn main() {
         let mut gluon_running = false;
         if gluon_lock_path.exists() {
             if let Some(pid) = read_lock_pid(&gluon_lock_path) {
-                if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
                     gluon_running = true;
                     gluon_pid = Some(pid);
                 }
@@ -236,10 +236,11 @@ fn main() {
         // toggle behaves identically. SIGTERM (not SIGKILL) lets gluon flush the field
         // and drop its lock cleanly before it exits.
         if should_close_gluon(config::load().close_gluon_on_exit, restarting) {
-            if let Some(ref p) = path {
-                let field_dir = std::path::Path::new(p)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."));
+            let field_dir = path
+                .as_ref()
+                .and_then(|p| std::path::Path::new(p).parent())
+                .unwrap_or(std::path::Path::new("."));
+            if path.is_some() {
                 let lock_pid = read_lock_pid(&field_dir.join("gluon.lock"));
                 if lock_pid.is_some() {
                     gluon_pid = lock_pid;
@@ -249,7 +250,7 @@ fn main() {
                 // The PID may have come out of `gluon.lock`, which outlives the daemon
                 // that wrote it — so check the kernel still calls that process a
                 // `hadron-gluon` before signalling it.
-                if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
                     term::info(
                         Source::Chamber,
                         &format!("closing hadron-gluon (PID {}) on exit...", pid),
@@ -263,13 +264,13 @@ fn main() {
                             let _ = libc::kill(pid as i32, libc::SIGTERM);
                         }
                         for _ in 0..30 {
-                            if !hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                            if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
                                 break;
                             }
                             std::thread::sleep(std::time::Duration::from_millis(50));
                         }
                     }
-                    if hadron_lattice::sys::inspect::is_process_alive(pid, "hadron-gluon") {
+                    if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
                         hadron_lattice::sys::process::kill_process_group(pid);
                     }
                 } else {
