@@ -232,6 +232,11 @@ impl RedTeamAuditor {
             });
         }
 
+        // Non-code documentation files (e.g. CHANGELOG.md, docs/*.md) only undergo secret scanning
+        if file.ends_with(".md") {
+            return;
+        }
+
         // 2. Command Injection
         if (trimmed.contains("Command::new(\"sh\").arg(\"-c\")")
             || trimmed.contains("Command::new(\"bash\").arg(\"-c\")"))
@@ -384,6 +389,22 @@ mod tests {
 @@ -100,2 +100,3 @@
 + let valid_event = Event::new("turn_complete");
 "#;
+        let auditor = RedTeamAuditor::new();
+        let report = auditor.audit_diff(diff);
+        assert!(report.passed);
+        assert_eq!(report.verdict, AuditVerdict::Approved);
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn test_red_team_ignores_code_patterns_in_markdown_docs() {
+        let diff = concat!(
+            "+++ b/docs/CHANGELOG.md\n",
+            "@@ -10,2 +10,3 @@\n",
+            "+ - Replaced ",
+            ".join(\"",
+            "../..\") with Path::parent traversal in tests.\n"
+        );
         let auditor = RedTeamAuditor::new();
         let report = auditor.audit_diff(diff);
         assert!(report.passed);

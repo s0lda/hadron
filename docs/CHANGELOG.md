@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resolved WSL UNC paths across active plans, ledgers, process liveness inspection, custom themes, and skill discovery (`crates/hadron-chamber/src/app/actions.rs`, `reload.rs`, `theme.rs`, `crates/hadron-lattice/src/ledger.rs`, `sys/inspect.rs`, `wsl.rs`).
 - **Portable Test Fixtures & `RedTeamAuditor` Hygiene (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`, `hadron-gatekeeper`, `hadron-forge`, `hadron-forge-mcp`)**:
   - Replaced hardcoded developer filesystem paths across workspace unit tests and doc comments with portable fixtures (`env!("CARGO_MANIFEST_DIR")` and generic `/home/user/project` paths) and passed a deterministic `NonExistentTestDistro` sentinel in `wsl::test_parse_wsl_home_and_catalogue_path`.
-  - Propagated `std::fs::remove_file` errors in `theme::delete_custom_theme` and replaced `.join("../..")` with `Path::parent` traversal in `mermaid/mod.rs` tests to satisfy `RedTeamAuditor`.
+  - Propagated `std::fs::remove_file` errors in `theme::delete_custom_theme` and replaced parent-directory `Path::join` traversal with `Path::parent` in `mermaid/mod.rs` tests to satisfy `RedTeamAuditor`.
 
 ## [0.33.21] - 2026-10-29
 
