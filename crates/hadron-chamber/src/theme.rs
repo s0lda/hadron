@@ -377,7 +377,7 @@ pub fn delete_custom_theme(id: &str) -> std::io::Result<()> {
     for dir in custom_themes_dirs() {
         let file_path = dir.join(format!("{id}.json"));
         if file_path.exists() {
-            let _ = std::fs::remove_file(file_path);
+            std::fs::remove_file(file_path)?;
         }
     }
     Ok(())
