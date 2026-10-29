@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn test_screenshot_jail_enforcement() {
-        let repo_root = PathBuf::from("/home/Jake/dev/hadron");
+        let repo_root = PathBuf::from("/home/user/project");
         let valid_path = repo_root.join(".hadron/screenshots/view.png");
         let invalid_path = PathBuf::from("/tmp/view.png");
 

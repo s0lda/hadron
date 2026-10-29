@@ -1070,7 +1070,7 @@ mod tests {
 
     #[test]
     fn an_lm_studio_base_missing_its_v1_suffix_is_anchored_to_the_openai_surface() {
-        // Jake typed `http://10.5.0.2:1234` — the host alone. LM Studio's OpenAI
+        // User typed `http://10.5.0.2:1234` — the host alone. LM Studio's OpenAI
         // surface is under `/v1`, so without this the GET went to `/models`.
         let bare = HttpTarget {
             vendor: HttpVendor::LmStudio,
@@ -1218,7 +1218,7 @@ mod tests {
         assert_eq!(full.0, "only thoughts");
     }
 
-    /// Jake's Ollama seat died with a bare `403 Forbidden` that named no reason —
+    /// The Ollama seat died with a bare `403 Forbidden` that named no reason —
     /// the body says which model or key was refused and we were throwing it away.
     #[tokio::test]
     async fn a_refused_chat_request_reports_the_servers_own_explanation() {

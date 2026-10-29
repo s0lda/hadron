@@ -350,7 +350,7 @@ mod tests {
                 {
                     "name": "hadron-forge",
                     "version": "0.1.0",
-                    "id": "hadron-forge 0.1.0 (path+file:///home/Jake/dev/hadron/crates/hadron-forge)",
+                    "id": "hadron-forge 0.1.0 (path+file:///home/user/project/crates/hadron-forge)",
                     "dependencies": [
                         {
                             "name": "blake3",
@@ -372,7 +372,7 @@ mod tests {
                 }
             ],
             "workspace_members": [
-                "hadron-forge 0.1.0 (path+file:///home/Jake/dev/hadron/crates/hadron-forge)"
+                "hadron-forge 0.1.0 (path+file:///home/user/project/crates/hadron-forge)"
             ]
         }"#;
 

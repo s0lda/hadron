@@ -1014,8 +1014,8 @@ fn a_preset_that_cannot_resolve_here_is_listed_but_not_seatable() {
 
 #[test]
 fn is_repo_relative_treats_windows_absolute_paths_as_not_relative() {
-    assert!(!is_repo_relative("C:\\Users\\Komputer\\.hadron\\bridges\\agy\\venv\\Scripts\\python.exe"));
-    assert!(!is_repo_relative("C:/Users/Komputer/.hadron/bridges/agy/venv/Scripts/python.exe"));
+    assert!(!is_repo_relative("C:\\Users\\user\\.hadron\\bridges\\agy\\venv\\Scripts\\python.exe"));
+    assert!(!is_repo_relative("C:/Users/user/.hadron/bridges/agy/venv/Scripts/python.exe"));
     assert!(!is_repo_relative("/home/user/.hadron/bridges/agy/venv/bin/python"));
     assert!(is_repo_relative("crates/hadron-gluon/src/lib.rs"));
     assert!(is_repo_relative("crates\\hadron-gluon\\src\\lib.rs"));
@@ -1035,8 +1035,8 @@ fn the_agy_preset_is_still_seatable_from_a_checkout() {
 /// An ACP seat whose boot command cannot resolve must be refused where the seat is
 /// BUILT, not where it takes a turn: the seating loops in `cli.rs` report and skip a
 /// seat that fails to build, so one line of stderr replaces an errored turn per
-/// dispatch, forever. (Jake's global `team.json` seats `acp-agy` for every project;
-/// in a project with no checkout it errored on every single turn.)
+/// dispatch, forever. (A global `team.json` seating `acp-agy` for every project
+/// in a project with no checkout would otherwise error on every single turn.)
 #[test]
 fn an_acp_seat_that_resolves_still_builds() {
     let s = acp_seat("acp-claude", "claude");

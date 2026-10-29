@@ -800,7 +800,7 @@ mod tests {
             program: "cargo".to_string(),
             args: vec!["check".to_string()],
             stdin: String::new(),
-            cwd: PathBuf::from("/home/Jake/dev/hadron/.hadron/trees/test"),
+            cwd: PathBuf::from("/home/user/project/.hadron/trees/test"),
             env: RedactedEnv::default(),
             stream: None,
             sandbox: hadron_gatekeeper::SandboxMode::WorktreeOnly,
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn test_cli_invocation_cross_platform_sandbox_builders() {
-        let cwd = PathBuf::from("/home/Jake/dev/hadron/.hadron/trees/test");
+        let cwd = PathBuf::from("/home/user/project/.hadron/trees/test");
         let mac_args = hadron_gatekeeper::build_macos_sandbox_args(
             &cwd,
             "cargo",

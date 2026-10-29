@@ -282,7 +282,7 @@ mod tests {
     fn browser_bridge_enforces_local_origin_boundary() {
         assert!(is_allowed_browser_target("http://localhost:3000"));
         assert!(is_allowed_browser_target("http://127.0.0.1:8080"));
-        assert!(is_allowed_browser_target("file:///home/Jake/index.html"));
+        assert!(is_allowed_browser_target("file:///home/user/index.html"));
         assert!(is_allowed_browser_target("http://0.0.0.0:4000"));
         assert!(!is_allowed_browser_target("http://example.com"));
         assert!(!is_allowed_browser_target("https://api.external.com/v1"));

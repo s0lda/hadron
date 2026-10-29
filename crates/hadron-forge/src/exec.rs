@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn build_exec_command_routes_wsl_unc_to_wsl_exe() {
-        let unc = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron");
+        let unc = Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\user\project");
         let cmd = build_exec_command(unc, Program::Cargo, &["check".to_string()]);
         assert_eq!(cmd.get_program(), "wsl.exe");
         let args: Vec<String> = cmd
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(args[0], "-d");
         assert_eq!(args[1], "Ubuntu");
         assert_eq!(args[2], "--cd");
-        assert_eq!(args[3], "/home/Jake/dev/hadron");
+        assert_eq!(args[3], "/home/user/project");
         assert_eq!(args[4], "--exec");
         assert_eq!(args[5], "sh");
         assert!(args.contains(&"cargo".to_string()));

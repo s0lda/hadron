@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn test_build_bwrap_args_jails_to_worktree_and_masks_home() {
         use std::path::Path;
-        let work_dir = Path::new("/home/Jake/dev/hadron/.hadron/trees/test-quark");
+        let work_dir = Path::new("/home/user/project/.hadron/trees/test-quark");
         let program = "cargo";
         let args = vec!["test".to_string()];
         let bwrap_args = build_bwrap_args(work_dir, program, &args, SandboxMode::WorktreeOnly, false);
@@ -664,7 +664,7 @@ mod tests {
     #[test]
     fn test_windows_sandbox_args_and_script() {
         use std::path::Path;
-        let work_dir = Path::new("C:\\Users\\Jake\\hadron\\.hadron\\trees\\test-quark");
+        let work_dir = Path::new("C:\\Users\\user\\project\\.hadron\\trees\\test-quark");
         let (prog, args) = build_windows_sandbox_args(work_dir, "cargo.exe", &["check".to_string()], SandboxMode::WorktreeOnly, false);
         assert_eq!(prog, "powershell.exe");
         assert!(args.contains(&"-NoProfile".to_string()));
@@ -674,7 +674,7 @@ mod tests {
 
         let script = build_windows_sandbox_script(work_dir, "cargo.exe", &["check".to_string()], SandboxMode::Strict, true);
         assert!(script.contains("Set-Location -LiteralPath"));
-        assert!(script.contains("C:\\Users\\Jake\\hadron\\.hadron\\trees\\test-quark"));
+        assert!(script.contains("C:\\Users\\user\\project\\.hadron\\trees\\test-quark"));
         assert!(script.contains("HTTP_PROXY"));
         assert!(script.contains("cargo.exe"));
     }
@@ -726,12 +726,12 @@ mod tests {
 
         // Trailing backslashes in an argument WITHOUT whitespace are not wrapped in `"..."` by PowerShell, so keep as-is.
         assert_eq!(
-            escape_powershell_native_arg(r"\\wsl.localhost\Ubuntu\home\Jake\"),
-            r"\\wsl.localhost\Ubuntu\home\Jake\"
+            escape_powershell_native_arg(r"\\wsl.localhost\Ubuntu\home\user\"),
+            r"\\wsl.localhost\Ubuntu\home\user\"
         );
 
         // Verify build_windows_sandbox_script escapes `--print <prompt>` properly for agy.
-        let work_dir = Path::new(r"C:\Users\Jake\repo");
+        let work_dir = Path::new(r"C:\Users\user\repo");
         let script = build_windows_sandbox_script(
             work_dir,
             "agy",
@@ -755,39 +755,39 @@ mod tests {
     fn test_bwrap_worktree_and_wsl_unc_resolution_never_uses_powershell() {
         use std::path::{Path, PathBuf};
 
-        let wt = Path::new("/home/Jake/dev/my-cloud/.hadron/trees/cli-agy");
+        let wt = Path::new("/home/user/dev/my-cloud/.hadron/trees/cli-agy");
         assert_eq!(
             infer_repo_root_from_worktree(wt),
-            Some(PathBuf::from("/home/Jake/dev/my-cloud"))
+            Some(PathBuf::from("/home/user/dev/my-cloud"))
         );
 
-        let unc_wt = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\my-cloud\.hadron\trees\cli-agy");
+        let unc_wt = Path::new(r"\\wsl.localhost\Ubuntu\home\user\dev\my-cloud\.hadron\trees\cli-agy");
         let bwrap_args = build_bwrap_args(
             unc_wt,
-            "/home/Jake/.local/bin/agy",
+            "/home/user/.local/bin/agy",
             &["--version".to_string()],
             SandboxMode::WorktreeOnly,
             false,
         );
         // Must normalize WSL UNC work_dir to Linux path inside bwrap
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/trees/cli-agy".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/.hadron/trees/cli-agy".to_string()));
         // Must mount /run and /mnt/wsl BEFORE /etc so symlinked /etc/resolv.conf resolves
         let run_idx = bwrap_args.iter().position(|a| a == "/run").expect("/run mounted");
         let etc_idx = bwrap_args.iter().position(|a| a == "/etc").expect("/etc mounted");
         assert!(run_idx < etc_idx, "/run must be mounted before /etc");
         // Must bind user toolchains/auth and parent git/nucleus/docs/skills/preons/target
-        assert!(bwrap_args.contains(&"/home/Jake/.local".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/.gemini".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.git".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/nucleus".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/docs".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/skills".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/.hadron/preons".to_string()));
-        assert!(bwrap_args.contains(&"/home/Jake/dev/my-cloud/target".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/.local".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/.gemini".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/.git".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/.hadron/nucleus".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/.hadron/docs".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/.hadron/skills".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/.hadron/preons".to_string()));
+        assert!(bwrap_args.contains(&"/home/user/dev/my-cloud/target".to_string()));
 
         let macos_profile = build_macos_sandbox_profile(wt, SandboxMode::WorktreeOnly, false);
-        assert!(macos_profile.contains("/home/Jake/dev/my-cloud/.hadron/skills"));
-        assert!(macos_profile.contains("/home/Jake/dev/my-cloud/.hadron/preons"));
+        assert!(macos_profile.contains("/home/user/dev/my-cloud/.hadron/skills"));
+        assert!(macos_profile.contains("/home/user/dev/my-cloud/.hadron/preons"));
 
         // WSL UNC path must NEVER select WindowsHarness / powershell.exe
         let platform = detect_sandbox_platform_for_path(unc_wt);

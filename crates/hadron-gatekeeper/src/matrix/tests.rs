@@ -89,7 +89,7 @@ fn latest_per_quark_override_wins() {
     assert_eq!(resolve_mode(&evs, &q("agy")), Mode::Write);
 }
 
-/// Jake's exact requirement: "I allow Opus to Bypass because he is smart, but I keep
+/// User requirement: "I allow Opus to Bypass because he is smart, but I keep
 /// all on Ask or Write." Pinning one quark and THEN moving the global must not move the
 /// pinned quark — only the ones that never got their own setting follow the global.
 #[test]

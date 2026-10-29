@@ -28,7 +28,7 @@ pub(super) struct AcpAgentSpec {
 /// `-acp` suffix from the registry id. That rule matched `claude-acp`→`claude` and
 /// `pi-acp`→`pi` and nothing else, so every agent whose publisher spells its id
 /// differently from our vendor landed as a SECOND row: `github-copilot-cli`
-/// alongside `copilot` is the one Jake reported, and there were six.
+/// alongside `copilot` was the first duplicate caught, and there were six.
 ///
 /// Keyed by the registry id because that is the string that varies — the vendor is
 /// ours and stable. Guarded by `tests::no_two_catalogue_rows_name_the_same_agent`,

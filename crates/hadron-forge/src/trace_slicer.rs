@@ -306,7 +306,7 @@ stack backtrace:
    0: rust_begin_unwind
    1: core::panicking::panic_fmt
    2: hadron_chamber::app::render::chat::render_message
-      at /home/Jake/dev/hadron/crates/hadron-chamber/src/app/render/chat.rs:42
+      at /home/user/project/crates/hadron-chamber/src/app/render/chat.rs:42
    3: <hadron_chamber::app::App as gpui::View>::render
    4: gpui::window::Window::draw
    5: std::sys_common::backtrace::__rust_begin_short_backtrace

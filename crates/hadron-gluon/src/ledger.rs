@@ -133,9 +133,9 @@ mod tests {
 
     #[test]
     fn wsl_unc_ledger_path_routes_to_host_local_and_opens_cleanly() {
-        let wsl_path = Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\ledger.db");
+        let wsl_path = Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\ledger.db");
         let verbatim_wsl_path =
-            Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\ledger.db");
+            Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\user\project\.hadron\ledger.db");
         assert_eq!(
             host_local_ledger_path(wsl_path),
             host_local_ledger_path(verbatim_wsl_path)

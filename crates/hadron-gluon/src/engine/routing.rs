@@ -195,7 +195,7 @@ impl super::Engine {
     /// the human speaks while the quark is already working.** The quark finishes the turn
     /// it was on, its reply lands after the newer message, and that reply gets counted as
     /// an answer to a message it could not possibly have seen. The newer message is then
-    /// dropped, silently and permanently. Jake hit exactly this by typing twice.
+    /// dropped, silently and permanently when a user types twice in quick succession.
     ///
     /// So an event answers a message only if it **says** it does: the engine stamps
     /// `answers` with the assignment the turn was dispatched for.

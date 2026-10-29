@@ -432,7 +432,7 @@ mod tests {
     /// refuses EVERY absolute path when no external root is granted. Live cost
     /// on 2026-08-02: `http-openai-compatible` burned all 24 tool rounds and
     /// answered nothing, narrating "I'm in a git worktree at
-    /// /home/Jake/dev/hadron/.hadron/trees/http-openai-compatible" as it went.
+    /// /home/user/project/.hadron/trees/http-openai-compatible" as it went.
     #[test]
     fn an_absolute_path_inside_the_worktree_is_accepted() {
         let dir = tempfile::tempdir().unwrap();

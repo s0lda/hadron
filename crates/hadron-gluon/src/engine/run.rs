@@ -514,7 +514,7 @@ impl super::Engine {
                     // message. Every other reroute tells the human something they did
                     // not already know; this one restates a switch they flipped
                     // themselves, and it fires once per disabled seat on every `@team`
-                    // broadcast, which is pure noise (Jake's ask).
+                    // broadcast, which is pure noise.
                     //
                     // It is NOT a silent drop, which is the failure mode this codebase
                     // keeps rediscovering: `park_blocked` still writes `Status{Blocked}`,

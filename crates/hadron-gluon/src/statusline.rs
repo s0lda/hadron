@@ -215,7 +215,7 @@ mod tests {
     use super::*;
     use hadron_lattice::{ContextUsage, QuotaBucket, Usage};
 
-    const LIVE_PAYLOAD: &str = r#"{"cwd":"/home/Jake/dev/hadron","session_id":"b66f1126","conversation_id":"b66f1126-aa1f-4b87-832a-e3779e49bd71","model":{"id":"Gemini 3.1 Pro (High)"},"context_window":{"total_input_tokens":635,"total_output_tokens":292,"context_window_size":1048576,"used_percentage":0.0605},"quota":{"3p-5h":{"remaining_fraction":0.980418,"reset_time":"2026-07-12T20:42:57Z"},"3p-weekly":{"remaining_fraction":0.7435596,"reset_time":"2026-07-18T19:20:41Z"},"gemini-5h":{"remaining_fraction":0.7873184,"reset_time":"2026-07-12T16:23:06Z"},"gemini-weekly":{"remaining_fraction":0.0517783,"reset_time":"2026-07-13T13:12:03Z"}},"plan_tier":"Google AI Ultra","email":"secret.human@gmail.com"}"#;
+    const LIVE_PAYLOAD: &str = r#"{"cwd":"/home/user/project","session_id":"b66f1126","conversation_id":"b66f1126-aa1f-4b87-832a-e3779e49bd71","model":{"id":"Gemini 3.1 Pro (High)"},"context_window":{"total_input_tokens":635,"total_output_tokens":292,"context_window_size":1048576,"used_percentage":0.0605},"quota":{"3p-5h":{"remaining_fraction":0.980418,"reset_time":"2026-07-12T20:42:57Z"},"3p-weekly":{"remaining_fraction":0.7435596,"reset_time":"2026-07-18T19:20:41Z"},"gemini-5h":{"remaining_fraction":0.7873184,"reset_time":"2026-07-12T16:23:06Z"},"gemini-weekly":{"remaining_fraction":0.0517783,"reset_time":"2026-07-13T13:12:03Z"}},"plan_tier":"Google AI Ultra","email":"secret.human@gmail.com"}"#;
 
     fn telemetry() -> AgyTelemetry {
         parse_agy_statusline(LIVE_PAYLOAD).unwrap()
@@ -224,8 +224,8 @@ mod tests {
     /// Two quarks in two worktrees must not overwrite each other's captures.
     #[test]
     fn cwd_key_is_filesystem_safe_and_distinct_per_tree() {
-        let a = cwd_key(Path::new("/home/Jake/dev/hadron/.hadron/trees/agy"));
-        let b = cwd_key(Path::new("/home/Jake/dev/hadron/.hadron/trees/opus"));
+        let a = cwd_key(Path::new("/home/user/project/.hadron/trees/agy"));
+        let b = cwd_key(Path::new("/home/user/project/.hadron/trees/opus"));
         assert_ne!(a, b, "different worktrees, different capture files");
         assert!(!a.contains('/'), "a key is a filename, not a path: {a}");
         assert!(!a.contains('.'), "no dot-segments to escape the dir: {a}");

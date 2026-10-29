@@ -114,7 +114,7 @@ fn orchestrator_alias_follows_the_role_across_a_reflavour() {
     );
 }
 
-/// Jake types `@Opus` as often as `@opus`; a mention that misses on case would
+/// Users type `@Opus` as often as `@opus`; a mention that misses on case would
 /// silently route nowhere rather than fail loudly, so pin both ids and aliases.
 #[test]
 fn mentions_resolve_regardless_of_case() {
@@ -220,7 +220,7 @@ fn a_reboot_is_not_a_pending_turn() {
 /// single-`rposition` scan therefore stopped at the grant, saw it answered, and
 /// returned `None`: the orchestrator's still-unanswered message was never even looked
 /// at. Live symptom — "Sonnet reported to @orchestrator and Claude never got excited";
-/// Claude only woke when Jake typed again (that path is `unaddressed_message_targets`,
+/// Claude only woke when the human typed again (that path is `unaddressed_message_targets`,
 /// which is unaffected).
 #[test]
 fn an_answered_merge_grant_does_not_mask_an_older_unanswered_handoff() {
@@ -345,7 +345,7 @@ fn human_mentions_finds_every_mention_anywhere_deduped_in_order() {
     assert_eq!(human_mentions("hey @orch, thanks!", &roster(), &[]), vec![QuarkId::new("orch")]);
     assert_eq!(human_mentions("@ghost @nobody nothing here", &roster(), &[]), Vec::<QuarkId>::new());
     // An '@' not starting a word (an email) is not a mention.
-    assert_eq!(human_mentions("mail me at jake@orch.dev", &roster(), &[]), Vec::<QuarkId>::new());
+    assert_eq!(human_mentions("mail me at user@orch.dev", &roster(), &[]), Vec::<QuarkId>::new());
 }
 
 /// Phase 1 soft `@role` routing: a token that is neither a quark id nor a

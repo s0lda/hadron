@@ -104,7 +104,7 @@ fn peers_are_named_by_display_name_not_raw_id() {
 fn a_quark_in_the_shared_tree_is_told_to_commit_its_own_work() {
     let mut proj = projection("Build login");
     proj.isolated = false;
-    proj.cwd = std::path::PathBuf::from("/home/jake/dev/hadron");
+    proj.cwd = std::path::PathBuf::from("/home/user/project");
     let p = build(&proj, &QuarkId::new("agy"));
 
     assert!(p.contains("shared checkout"), "it must know it shares the tree");
@@ -493,7 +493,7 @@ fn the_working_diff_is_attributed_to_the_tree_it_came_from() {
     assert!(shared.contains("do not commit any part of it you did not author"));
 }
 
-/// Jake's ask, made structural: the orchestrator is the human's narrator, so a
+/// Design requirement, made structural: the orchestrator is the human's narrator, so a
 /// worker's claim must be checked against the repo before it is relayed as fact.
 /// This was my habit; a habit is not architecture.
 #[test]
@@ -526,7 +526,7 @@ fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
     assert!(worker.contains("do NOT stall on the small ones"));
 }
 
-/// The asymmetry Jake named: one quark arrives with weeks of accumulated context,
+/// The context asymmetry: one quark arrives with weeks of accumulated context,
 /// another with nothing, and we mistake persistence for intelligence. A quark must
 /// be shown the nucleus index AND told where to write it — "remember this" without
 /// a path is an instruction it cannot obey. It must also be told where the NOTES

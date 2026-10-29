@@ -146,7 +146,7 @@ mod tests {
         assert!(plan(&t, &t).is_empty(), "an identical team must be a no-op");
     }
 
-    /// Jake's case: the Settings wizard appends a seat. Only that seat is added; the
+    /// Wizard append case: the Settings wizard appends a seat. Only that seat is added; the
     /// two quarks already working are not mentioned, so they are not touched.
     #[test]
     fn a_seat_the_wizard_added_is_the_only_work_in_the_plan() {

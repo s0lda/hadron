@@ -1521,8 +1521,8 @@ async fn unaddressed_human_message_routes_to_the_orchestrator() {
     assert!(next_pending(&events).is_none());
 }
 
-/// **THE HUMAN TYPED WHILE THE ORCHESTRATOR WAS WORKING.** Jake asked whether his
-/// messages stack if he speaks while a quark is mid-turn. They must — a chat where
+/// **THE HUMAN TYPED WHILE THE ORCHESTRATOR WAS WORKING.** Messages must stack
+/// if the human speaks while a quark is mid-turn — a chat where
 /// the second thing you say is thrown away is not a chat.
 ///
 /// The trap this pins: "has the quark answered the human?" used to mean *"has it
@@ -2906,7 +2906,7 @@ async fn a_message_arriving_mid_turn_is_dispatched_without_waiting() {
 /// message to a quark that is already mid-turn must, for an
 /// `Orchestrator`-flavoured seat that has been given a chat lane
 /// (`Engine::seat_chat_lane`), be able to start running on that lane *while
-/// the work lane is still going* (Jake's "orchestrator never blocks"). A
+/// the work lane is still going* ("orchestrator never blocks"). A
 /// `Worker`-flavoured seat — which never gets a chat lane — keeps today's
 /// behaviour exactly: its second turn does not start until the first
 /// resolves.
@@ -3857,7 +3857,7 @@ async fn a_rebase_conflict_sends_the_quark_back_to_resolve_it() {
 /// will not heal must escalate to a human rather than loop. Two repair turns, then the
 /// gate stops spending and says so — the quark is left `Blocked` with its branch intact.
 ///
-/// Run **with an orchestrator seated** — Jake's live topology, and the only shape where
+/// Run **with an orchestrator seated** — the live swarm topology, and the only shape where
 /// the escalation is actually routed rather than left as a bare notice. It is also the
 /// shape with two ways to loop: the escalation body gains an `@orchestrator` prefix while
 /// still naming `@w` in its text, and the orchestrator's own turn adds a second addressed
@@ -5219,7 +5219,7 @@ async fn projection_marks_a_specifically_named_worker() {
     assert!(proj.named_specifically, "a direct @Sonnet mention must be named specifically");
 }
 
-/// The gap this closes: `@team` expands to the whole roster (Jake's ruling — the
+/// The gap this closes: `@team` expands to the whole roster (the
 /// fan-out itself is non-negotiable), so a worker reached ONLY that way used to
 /// get the identical "go implement this" prompt as one directly assigned, and a
 /// `@team` brainstorm read as a work order. `named_specifically` is what the

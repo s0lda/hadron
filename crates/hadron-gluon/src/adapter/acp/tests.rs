@@ -302,7 +302,7 @@ fn a_seat_resolves_its_model_against_what_the_agent_offers() {
     assert_eq!(resolve_model(&s, "claude-opus-4-8").as_deref(), Some("claude-opus-4-8"));
     // The human label.
     assert_eq!(resolve_model(&s, "Opus 4.8").as_deref(), Some("claude-opus-4-8"));
-    // A bare family name — what Jake actually types in `team.json`.
+    // A bare family name — what a user actually types in `team.json`.
     assert_eq!(resolve_model(&s, "opus").as_deref(), Some("claude-opus-4-8"));
     assert_eq!(resolve_model(&s, "HAIKU").as_deref(), Some("claude-haiku-4-5"));
 
@@ -431,11 +431,11 @@ fn acp_stdio_descriptor_translates_wsl_env_and_injects_wslenv() {
     }
     .resolved()
     .expect("bare program needs no repo root");
-    let work_dir = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\trees\acp-agy");
+    let work_dir = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\trees\acp-agy");
     let env = vec![
         (
             "CARGO_TARGET_DIR".to_string(),
-            r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\target".to_string(),
+            r"\\wsl.localhost\Ubuntu\home\user\project\target".to_string(),
         ),
         ("CARGO_INCREMENTAL".to_string(), "0".to_string()),
     ];
@@ -455,7 +455,7 @@ fn acp_stdio_descriptor_translates_wsl_env_and_injects_wslenv() {
         .iter()
         .find(|e| e.name == "CARGO_TARGET_DIR")
         .expect("CARGO_TARGET_DIR present");
-    assert_eq!(target_dir.value, "/home/Jake/dev/hadron/target");
+    assert_eq!(target_dir.value, "/home/user/project/target");
     let wslenv = stdio
         .env
         .iter()
@@ -828,7 +828,7 @@ async fn live_acp_round_trip_against_the_claude_adapter() {
 fn the_antigravity_seat_names_the_credential_it_lacks() {
     // The SDK authenticates by API key ONLY — it has no OAuth path, so it cannot
     // reuse the agy CLI's login. Guarantee the key is absent: that is the state
-    // Jake's daemon is actually in.
+    // the daemon is actually in without an explicit API key.
     unsafe { std::env::remove_var("GEMINI_API_KEY") };
 
     // The catalogue owns the command. But it stores a path RELATIVE to the
@@ -1482,7 +1482,7 @@ fn a_granted_root_reaches_forge_as_a_flag_carrying_its_access() {
 
 /// **The bubble used to flicker.** The live file is a single overwritten slot, so a
 /// tool call landing after a message chunk erased `full` and the chamber's chat draft
-/// vanished until the next chunk arrived — which is what Jake saw as "the preview did
+/// vanished until the next chunk arrived — which appeared as "the preview did
 /// not land". The draft belongs to the TURN, so every activity carries it, and it is
 /// dropped at both edges of the turn so a stale reply never reappears next turn.
 #[test]
