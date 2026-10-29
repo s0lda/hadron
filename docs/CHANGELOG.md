@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.23] - 2026-10-29
+
+### Added
+- **Gluon Daemon Restart Controls (`hadron-chamber`)**:
+  - Added `Restart` and `Start` daemon controls to the Process Manager overlay and the `Gluon stopped` toast banner (`crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/render/overlays.rs`, `crates/hadron-chamber/src/sys.rs`).
+
+### Fixed
+- **Host PID Liveness Priority on WSL UNC Workspaces (`hadron-lattice`)**:
+  - Updated `is_process_alive_named_in_dir` (`crates/hadron-lattice/src/sys/inspect.rs`) to check `is_process_alive` on the local host before falling back to WSL `/proc/<pid>/comm`, so Windows-spawned `hadron-gluon.exe` PIDs are recognized when running against WSL UNC (`\\wsl.localhost\...` / `\\wsl$\...`) workspaces.
+- **Markdown Documentation Exemption in `RedTeamAuditor` Code Rules (`hadron-gatekeeper`)**:
+  - Updated `RedTeamAuditor::scan_line` (`crates/hadron-gatekeeper/src/red_team.rs`) to skip Rust code-pattern rules (`RTA-001`..`RTA-004`) on `.md` documentation files while preserving secret scanning (`RTA-005`..`RTA-006`).
+
 ## [0.33.22] - 2026-10-29
 
 ### Fixed

@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.23",
+        date: Some("2026-10-29"),
+        added: &[
+            "Gluon Daemon Restart Controls: Added Restart and Start daemon controls to the Process Manager overlay and the Gluon stopped toast banner",
+        ],
+        changed: &[],
+        fixed: &[
+            "Host PID Liveness Priority on WSL UNC Workspaces: Checked local host PID liveness before WSL /proc/<pid>/comm in is_process_alive_named_in_dir so Windows-spawned hadron-gluon.exe PIDs are recognized on WSL UNC workspaces",
+            "Markdown Documentation Exemption in RedTeamAuditor Code Rules: Skipped Rust code-pattern rules on .md documentation files while preserving secret scanning",
+        ],
+    },
+    Release {
         version: "0.33.22",
         date: Some("2026-10-29"),
         added: &[],
