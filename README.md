@@ -4,7 +4,7 @@
 
 **The Native Desktop Workspace for Multi-Provider LLM Swarms**
 
-*Orchestrate Claude, Antigravity, OpenAI, Ollama, and CLI Agents in One Workspace*
+*Orchestrate Frontier LLMs (Claude, Antigravity, OpenAI, Grok) and Local/OpenRouter Agents in Isolated Git Worktrees with Automated Merge Gating*
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/Language-Rust_2021-orange.svg)](https://www.rust-lang.org/)
@@ -22,7 +22,7 @@
 
 ## ⚡ What is Hadron?
 
-**Hadron** is a native, GPU-accelerated desktop workspace built in Rust for **orchestrated multi-provider LLM swarms**. It brings models from **Anthropic (Claude)**, **Google Antigravity**, **OpenAI**, **Ollama**, **OpenRouter**, and custom **coding CLIs** into a unified room where agents collaborate, exchange context, and delegate tasks using `@mentions`.
+**Hadron** is a native, GPU-accelerated desktop workspace built in Rust for **orchestrated multi-provider LLM swarms**. It brings frontier models (**Anthropic Claude**, **Google Antigravity**, **OpenAI**, **xAI Grok**) together with **OpenRouter**, local **Ollama / vLLM**, and any custom **ACP or coding CLI agent** in a unified room where agents collaborate, exchange context, and delegate tasks using `@mentions`.
 
 Behind the interface, agents (called **Quarks**) execute concurrently over a zero-CPU filesystem event bus (`field.jsonl`), work safely in isolated git worktrees, and submit code changes through an automated **Merge Gate** that runs tests before landing anything on `main`.
 
@@ -30,14 +30,12 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 
 ## 💡 Key Superpowers
 
-- 💬 **Collaborative Multi-LLM Chat**: Mix models in a single thread — `@claude`, `@ollama`, `@agy`, `@openai`, and many more see each other's output, share context, and execute parallel sub-tasks via Hub-and-Spoke orchestration.
-- 🛡️ **Git Worktrees & Automated Merge Gate**: Agents work in isolated git worktree branches. The Merge Gate automatically rebases onto `main` and runs your test suite before clean code lands — with **Hadron Lab** high-scale orchestration for concurrent merge gates, speculative batch evaluation, and docs/asset fast-paths.
-- 🔒 **Cross-Platform Process Sandboxing**: Zero-overhead native OS jailing across Linux/WSL (Bubblewrap), macOS (Apple Seatbelt), and Windows (PowerShell & Job Objects) with worktree write confinement, credential scrubbing, and interactive chat badge toggles.
-- ⚡ **Native GPUI Desktop App**: GPU-accelerated workspace featuring a Project Selector, Windows-to-WSL remote execution, interactive File Tree Explorer with CRUD & context menus, multi-tab PTY terminals, universal code syntax highlighting across diffs and scrubbers, interactive Git & Wave DAG visualizers, native Mermaid diagrams, and real-time token telemetry.
-- 🛠️ **Hadron Forge & Developer Power Tools**: 50+ built-in MCP developer capabilities — AST precision edits via `blake3`, isolated PTY terminals, headless browser testing, LSP code intelligence, background process supervision, automated git bisect, and flamegraph profiling. Detailed in [`Power Tools Suite`](docs/forge/power-tools.md).
-- 🧠 **Persistent Nucleus Memory & Universal Absorption**: Cross-session shared memory within a configurable budget (16/32/64/128 KiB), plus `/absorb` to seamlessly import memories, invariants, skills, and plans from `.agents/`, `.claude/`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`, and many more.
-- 🤖 **Autonomous Headless Swarm Runner**: Standalone non-interactive CLI runner (`hadron run` / `hadron ci`) for CI/CD automation, speculative shadow pre-testing, AST-aware rebase healing, and tiled multi-PTY terminals.
-- 🎯 **Autonomous Swarm Control & Architectural Dialectic**: Built-in slash commands (`/goal`, `/loop`, `/schedule`, `/absorb`, `/release`, `/projects`, `/open`, `/git-init`, `/resume`, `/clear`, `/home`, `/canvas`, `/intercom`, `/dream`, `/timelapse`, `/radar`, `/baseline`, `/preview-rebase`, `/steer`, `/scout`, `/debate`, `/team-debate`, `/settle`) and 29 bundled workflow & engineering skills (TDD, security review, architecture audit, debate, migration-deprecation, benchmarking, doc-drift audit, systematic debugging, design specs).
+- 💬 **Universal Multi-Model Swarms**: Mix frontier models (`@claude`, `@agy`, `@openai`, `@grok`), OpenRouter, local `@ollama`, and custom CLI agents in one thread via Hub-and-Spoke `@mention` orchestration over a zero-CPU `field.jsonl` bus.
+- 🛡️ **Collision-Proof Worktrees & Merge Gate**: Quarks work in isolated git worktree branches. The automated **Merge Gate** rebases onto `main` and runs your real test suite before clean code lands — with **Hadron Lab** concurrent merge gates, speculative batch evaluation, and docs/asset fast-paths.
+- 💰 **Token-Efficient Swarm Economics**: Cuts multi-agent input token spend by **80–90%** via resident prompt caching (`cache_read`), Hub-and-Spoke context isolation (preventing $O(N^2)$ sibling log broadcasts), `ContextGovernor` output elision, lazy pointer-based Nucleus memory, and live 4-way USD/quota telemetry.
+- 🔒 **Cross-Platform Process Sandboxing**: Zero-overhead native OS containment across Linux/WSL (Bubblewrap), macOS (Apple Seatbelt), and Windows (PowerShell & Job Objects) with worktree write confinement, credential scrubbing, and interactive chat badge toggles.
+- 🛠️ **AST Edit-by-Hash (`blake3`) & 50+ MCP Forge Tools**: Eliminates LLM line-drift corruption via content-addressed AST precision edits, plus isolated PTY terminals, headless browser testing, LSP code intelligence, automated `git bisect`, and flamegraph profiling ([`Power Tools Suite`](docs/forge/power-tools.md)).
+- ⚡ **120 FPS GPUI Desktop, Headless CI & `/absorb` Memory**: Native Rust workspace with interactive File Tree CRUD, multi-tab PTY terminals, Git & Wave DAG visualizers, standalone `hadron run` / `hadron ci` runners, 29 bundled engineering skills, and `/absorb` to import rules from `.claude/`, `.cursor/`, `.windsurf/`, and `.agents/`.
 
 ---
 
