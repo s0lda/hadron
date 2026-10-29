@@ -122,6 +122,92 @@ pub fn distill_lesson(
 }
 
 
+/// Construct a `git` command in `cwd` that routes WSL UNC paths (`\\wsl.localhost\<distro>\...`)
+/// through [`hadron_lattice::wsl::git_command`] on Windows and translates to the in-distro Linux
+/// path when already running on non-Windows.
+pub(crate) fn git_in_dir(cwd: &Path) -> std::process::Command {
+    #[cfg(not(windows))]
+    if let Some((_distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(cwd) {
+        let mut c = std::process::Command::new("git");
+        c.current_dir(linux_cwd);
+        return c;
+    }
+    hadron_lattice::wsl::git_command(cwd)
+}
+
+/// Parse `git rev-parse --path-format=absolute --git-common-dir` stdout into the main
+/// repository checkout root, stripping WSL diagnostic noise and preserving WSL UNC paths.
+pub fn parse_git_common_repo_root(project: &Path, git_common_stdout: &str) -> Result<PathBuf, ForgeError> {
+    let cleaned = hadron_lattice::wsl::strip_wsl_noise(git_common_stdout);
+    let raw = cleaned.trim();
+    if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(project) {
+        if raw.starts_with('/') {
+            let linux_common = Path::new(raw);
+            let linux_root = linux_common.parent().ok_or_else(|| {
+                ForgeError::Io(format!("git common dir has no parent: {}", linux_common.display()))
+            })?;
+            return Ok(hadron_lattice::wsl::format_wsl_unc_path(&distro, linux_root));
+        }
+    }
+    let git_common = PathBuf::from(raw);
+    let repo_root = git_common
+        .parent()
+        .ok_or_else(|| ForgeError::Io(format!("git common dir has no parent: {}", git_common.display())))?;
+    Ok(repo_root.to_path_buf())
+}
+
+/// Resolve the main repository checkout root from any worktree or project path,
+/// routing through [`hadron_lattice::wsl::git_command`] and preserving WSL UNC path format.
+pub fn derive_repo_root(project: &Path) -> Result<PathBuf, ForgeError> {
+    let output = git_in_dir(project)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .map_err(|e| ForgeError::Io(e.to_string()))?;
+
+    if !output.status.success() {
+        return Err(ForgeError::Io(format!(
+            "failed to find main git repo root from {}: {}",
+            project.display(),
+            hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stderr))
+        )));
+    }
+
+    parse_git_common_repo_root(project, &String::from_utf8_lossy(&output.stdout))
+}
+
+/// Resolve the shared `<repo_root>/.hadron` directory from `project`.
+///
+/// When `project` is inside `<repo_root>/.hadron/trees/<id>` or a linked git worktree,
+/// returns the main checkout's `<repo_root>/.hadron` instead of a nested worktree-local
+/// `.hadron` directory. Falls back to `project.join(".hadron")` for standalone directories.
+pub fn derive_shared_hadron_dir(project: &Path) -> PathBuf {
+    if let Some((distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(project) {
+        for ancestor in linux_path.ancestors() {
+            if ancestor.file_name().and_then(|n| n.to_str()) == Some("trees") {
+                if let Some(hadron_dir) = ancestor.parent() {
+                    if hadron_dir.file_name().and_then(|n| n.to_str()) == Some(".hadron") {
+                        return hadron_lattice::wsl::format_wsl_unc_path(&distro, hadron_dir);
+                    }
+                }
+            }
+        }
+    } else {
+        for ancestor in project.ancestors() {
+            if ancestor.file_name().and_then(|n| n.to_str()) == Some("trees") {
+                if let Some(hadron_dir) = ancestor.parent() {
+                    if hadron_dir.file_name().and_then(|n| n.to_str()) == Some(".hadron") {
+                        return hadron_dir.to_path_buf();
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(repo_root) = derive_repo_root(project) {
+        return repo_root.join(".hadron");
+    }
+    project.join(".hadron")
+}
+
 /// Derive a project's `.hadron/nucleus` directory as a [`Root`].
 ///
 /// `project` is the directory forge-mcp was given as `argv[1]` — the cwd of the turn.
@@ -133,26 +219,7 @@ pub fn distill_lesson(
 /// BINARY was built in. That is not a hypothetical: in-repo the git call succeeds and
 /// silently returns a different project's nucleus.
 pub fn derive_nucleus_root(project: &Path) -> Result<Root, ForgeError> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(project)
-        .args(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .map_err(|e| ForgeError::Io(e.to_string()))?;
-
-    if !output.status.success() {
-        return Err(ForgeError::Io(format!(
-            "failed to find main git repo root from {}: {}",
-            project.display(),
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    let git_common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    let repo_root = git_common
-        .parent()
-        .ok_or_else(|| ForgeError::Io(format!("git common dir has no parent: {}", git_common.display())))?;
-
+    let repo_root = derive_repo_root(project)?;
     let nucleus_dir = repo_root.join(".hadron").join("nucleus");
     Ok(Root::new(nucleus_dir))
 }
@@ -362,6 +429,56 @@ mod tests {
         // Verify index.md has exactly one line pointer
         let index_content = std::fs::read_to_string(dir.path().join("index.md")).unwrap();
         assert!(index_content.contains("- [test-distill-lesson](notes/test-distill-lesson.md) — Test description retrieval key"));
+    }
+
+    #[test]
+    fn wsl_unc_linked_worktree_resolves_to_main_checkout_nucleus() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main-checkout");
+        std::fs::create_dir_all(&main).unwrap();
+        let git = |args: &[&str], cwd: &std::path::Path| {
+            assert!(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(cwd)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git {args:?} failed"
+            );
+        };
+        git(&["init", "-q"], &main);
+        git(&["config", "user.email", "t@t"], &main);
+        git(&["config", "user.name", "t"], &main);
+        std::fs::write(main.join("f"), "x").unwrap();
+        git(&["add", "f"], &main);
+        git(&["commit", "-qm", "one"], &main);
+        let tree = main.join(".hadron").join("trees").join("cli-agy");
+        std::fs::create_dir_all(tree.parent().unwrap()).unwrap();
+        git(&["worktree", "add", "-q", tree.to_str().unwrap()], &main);
+
+        let unc_tree = hadron_lattice::wsl::format_wsl_unc_path("Ubuntu", &tree);
+        let expected_unc_main = hadron_lattice::wsl::format_wsl_unc_path("Ubuntu", &main);
+
+        // Also verify WSL noise stripping in parse_git_common_repo_root
+        let noisy_out = format!(
+            "wsl: Failed to mount Z:\\, see dmesg for more details.\r\n{}/.git\r\n",
+            main.display()
+        );
+        let parsed_root = parse_git_common_repo_root(&unc_tree, &noisy_out).unwrap();
+        assert_eq!(parsed_root, expected_unc_main);
+
+        let root = derive_nucleus_root(&unc_tree).expect("WSL UNC linked worktree resolves");
+        assert_eq!(
+            root.path(),
+            expected_unc_main.join(".hadron").join("nucleus")
+        );
+
+        assert_eq!(
+            derive_shared_hadron_dir(&tree),
+            main.join(".hadron"),
+            "worktree inside .hadron/trees/<id> resolves shared .hadron"
+        );
     }
 }
 

@@ -37,12 +37,9 @@ pub struct PeerConflictsArgs {}
 pub struct PeerListLeasesArgs {}
 
 fn lock_file_path(root: &std::path::Path) -> std::path::PathBuf {
-    if let Ok(trees_dir) = hadron_forge::peers::derive_trees_dir(root) {
-        if let Some(hadron_dir) = trees_dir.parent() {
-            return hadron_dir.join("locks").join("intent_locks.json");
-        }
-    }
-    root.join(".hadron").join("locks").join("intent_locks.json")
+    hadron_forge::nucleus::derive_shared_hadron_dir(root)
+        .join("locks")
+        .join("intent_locks.json")
 }
 
 #[tool_router(router = peers_router, vis = "pub(super)")]

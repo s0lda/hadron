@@ -65,7 +65,8 @@ impl ForgeMcpServer {
     pub async fn edit(&self, Parameters(args): Parameters<EditArgs>) -> Json<ToolResponse> {
         let res = apply_block_edit(&self.root, &args.path, &args.target_hash, &args.new_text);
         if res.is_ok() {
-            if let Ok(bus) = hadron_lattice::GossipBus::new(&self.root.path().join(".hadron")) {
+            let hadron_dir = hadron_forge::nucleus::derive_shared_hadron_dir(self.root.path());
+            if let Ok(bus) = hadron_lattice::GossipBus::new(&hadron_dir) {
                 let msg = hadron_lattice::GossipMessage {
                     quark: "mcp-forge".to_string(),
                     timestamp: chrono::Utc::now(),
@@ -105,7 +106,8 @@ impl ForgeMcpServer {
 
         let res = write_file_cas(&self.root, &args.path, &args.content, args.expected_hash.as_deref());
         if res.is_ok() {
-            if let Ok(bus) = hadron_lattice::GossipBus::new(&self.root.path().join(".hadron")) {
+            let hadron_dir = hadron_forge::nucleus::derive_shared_hadron_dir(self.root.path());
+            if let Ok(bus) = hadron_lattice::GossipBus::new(&hadron_dir) {
                 let msg = hadron_lattice::GossipMessage {
                     quark: "mcp-forge".to_string(),
                     timestamp: chrono::Utc::now(),
@@ -274,5 +276,30 @@ mod tests {
         assert!(res.0.ok);
         assert!(dir.path().join("batch_a.rs").exists());
         assert!(dir.path().join("batch_b.rs").exists());
+    }
+
+    #[tokio::test]
+    async fn worktree_edit_and_write_publish_gossip_to_shared_repo_hadron() {
+        let repo = tempfile::tempdir().unwrap();
+        let wt = repo.path().join(".hadron").join("trees").join("cli-agy");
+        std::fs::create_dir_all(&wt).unwrap();
+        let server = ForgeMcpServer::new(&wt);
+
+        let res = server
+            .write_file(Parameters(WriteFileArgs {
+                path: "lib.rs".into(),
+                content: "pub fn hello() {}\n".into(),
+                expected_hash: None,
+            }))
+            .await;
+        assert!(res.0.ok);
+        assert!(
+            !wt.join(".hadron").exists(),
+            "worktree must not grow a nested .hadron from GossipBus"
+        );
+        assert!(
+            repo.path().join(".hadron").join("gossip").join("bus.ndjson").is_file(),
+            "GossipBus must publish to shared <repo_root>/.hadron/gossip/bus.ndjson"
+        );
     }
 }

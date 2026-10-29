@@ -29,12 +29,7 @@ pub struct ScratchReadArgs {
 pub struct ScratchListArgs {}
 
 fn scratch_dir_for_root(root: &Path) -> PathBuf {
-    if let Ok(trees_dir) = hadron_forge::peers::derive_trees_dir(root) {
-        if let Some(hadron_dir) = trees_dir.parent() {
-            return hadron_dir.join("scratch");
-        }
-    }
-    root.join(".hadron").join("scratch")
+    hadron_forge::nucleus::derive_shared_hadron_dir(root).join("scratch")
 }
 
 #[tool_router(router = scratch_router, vis = "pub(super)")]

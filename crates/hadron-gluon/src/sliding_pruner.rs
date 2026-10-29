@@ -131,7 +131,9 @@ impl SlidingContextPruner {
 
     /// Compact a projection's field window in place using the sliding pruner.
     pub fn prune_projection(projection: &mut Projection, config: &SlidingPrunerConfig) -> bool {
-        let scratch_dir = projection.cwd.join(".hadron").join("scratch");
+        let base_root = hadron_gatekeeper::infer_repo_root_from_worktree(&projection.cwd)
+            .unwrap_or_else(|| projection.cwd.clone());
+        let scratch_dir = base_root.join(".hadron").join("scratch");
         let _ = std::fs::create_dir_all(&scratch_dir);
         let mut folded_any = false;
         for ev in &mut projection.field_window {
@@ -250,5 +252,58 @@ mod tests {
         assert!(did_fold);
         assert!(folded.contains("[Folded test output: 62 lines. Full log saved to"));
         assert!(folded.contains("test result: ok. 45 passed; 0 failed"));
+    }
+
+    #[test]
+    fn test_prune_projection_resolves_shared_scratch_dir_from_worktree_cwd() {
+        let repo = tempfile::tempdir().unwrap();
+        let wt_cwd = repo.path().join(".hadron").join("trees").join("cli-agy");
+        std::fs::create_dir_all(&wt_cwd).unwrap();
+
+        let mut lines = vec!["running 35 tests".to_string()];
+        for i in 0..35 {
+            lines.push(format!("test case_{i} ... ok"));
+        }
+        lines.push("test result: ok. 35 passed; 0 failed; 0 ignored".to_string());
+        let events = vec![Event::new(
+            Actor::Human,
+            Some(QuarkId::new("cli-agy")),
+            Kind::Message {
+                body: lines.join("\n"),
+            },
+        )];
+        let mut proj = Projection {
+            task: "test".into(),
+            invariants: String::new(),
+            available_invariants: vec![],
+            nucleus_digest: String::new(),
+            nucleus_index: String::new(),
+            nucleus_index_path: std::path::PathBuf::new(),
+            nucleus_index_truncated: false,
+            nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
+            nucleus_notes_dir: std::path::PathBuf::new(),
+            live_activities: vec![],
+            roster: vec![],
+            field_window: events,
+            field_truncated: false,
+            git_diff: String::new(),
+            isolated: true,
+            cwd: wt_cwd.clone(),
+            mode: hadron_lattice::Mode::default(),
+            role_body: None,
+            active_skill: None,
+            named_specifically: true,
+            has_forge_tools: false,
+        };
+        let changed = SlidingContextPruner::prune_projection(&mut proj, &SlidingPrunerConfig::default());
+        assert!(changed);
+        assert!(
+            !wt_cwd.join(".hadron").exists(),
+            "prune_projection must not create nested <worktree>/.hadron/scratch"
+        );
+        assert!(
+            repo.path().join(".hadron").join("scratch").is_dir(),
+            "prune_projection must write folded logs into shared <repo_root>/.hadron/scratch"
+        );
     }
 }

@@ -10,6 +10,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+hadron-lattice = { path = "../hadron-lattice" }
 tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 tree-sitter-python = "0.23"

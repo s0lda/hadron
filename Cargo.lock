@@ -2962,6 +2962,7 @@ name = "hadron-forge"
 version = "0.33.21"
 dependencies = [
  "blake3",
+ "hadron-lattice",
  "libc",
  "rusqlite",
  "serde",

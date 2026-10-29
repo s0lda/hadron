@@ -5,7 +5,6 @@
 //! metadata, dirty file status, and commits ahead of base.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use serde::{Deserialize, Serialize};
 
 use crate::file::{ForgeError, Root};
@@ -53,27 +52,16 @@ pub struct PeerConflictReport {
 
 /// Derive the `.hadron/trees` directory from any worktree or project path.
 pub fn derive_trees_dir(project: &Path) -> Result<PathBuf, ForgeError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(project)
-        .args(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .map_err(|e| ForgeError::Io(e.to_string()))?;
-
-    if !output.status.success() {
-        return Err(ForgeError::Io(format!(
-            "failed to find main git repo root from {}: {}",
-            project.display(),
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    let git_common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    let repo_root = git_common
-        .parent()
-        .ok_or_else(|| ForgeError::Io(format!("git common dir has no parent: {}", git_common.display())))?;
-
+    let repo_root = crate::nucleus::derive_repo_root(project)?;
     Ok(repo_root.join(".hadron").join("trees"))
+}
+
+fn host_accessible_dir(path: &Path) -> PathBuf {
+    #[cfg(not(windows))]
+    if let Some((_distro, linux_path)) = hadron_lattice::wsl::parse_wsl_unc_path(path) {
+        return linux_path;
+    }
+    path.to_path_buf()
 }
 
 /// Inspect a specific peer worktree by its peer_id.
@@ -83,7 +71,7 @@ pub fn inspect_peer_worktree(project_root: &Root, peer_id: &str) -> Result<PeerW
         return Err(ForgeError::Rejected(format!("invalid peer_id: {peer_id:?}")));
     }
 
-    let trees_dir = derive_trees_dir(project_root.path())?;
+    let trees_dir = host_accessible_dir(&derive_trees_dir(project_root.path())?);
     let peer_dir = trees_dir.join(clean_id);
 
     if !peer_dir.is_dir() {
@@ -96,7 +84,7 @@ pub fn inspect_peer_worktree(project_root: &Root, peer_id: &str) -> Result<PeerW
 /// List and inspect all sibling peer worktrees under `.hadron/trees/`.
 pub fn list_peer_worktrees(project_root: &Root) -> Result<Vec<PeerWorktreeInfo>, ForgeError> {
     let trees_dir = match derive_trees_dir(project_root.path()) {
-        Ok(dir) => dir,
+        Ok(dir) => host_accessible_dir(&dir),
         Err(_) => return Ok(Vec::new()),
     };
 
@@ -137,15 +125,14 @@ pub fn detect_cross_worktree_conflicts(project_root: &Root) -> Result<PeerConfli
 
         // Check committed files ahead of base if commits_ahead_base > 0
         if peer.commits_ahead_base > 0 {
-            let log_out = Command::new("git")
-                .arg("-C")
-                .arg(&peer.worktree_path)
-                .args(&["diff", "--name-only", "main..HEAD"])
+            let log_out = crate::nucleus::git_in_dir(Path::new(&peer.worktree_path))
+                .args(["diff", "--name-only", "main..HEAD"])
                 .output();
 
             if let Ok(out) = log_out {
                 if out.status.success() {
-                    for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout));
+                    for line in cleaned.lines() {
                         let f = line.trim();
                         if !f.is_empty() {
                             let entry = file_to_peers.entry(f.to_string()).or_default();
@@ -200,25 +187,23 @@ pub fn detect_cross_worktree_conflicts(project_root: &Root) -> Result<PeerConfli
 
 fn inspect_single_peer_dir(peer_id: &str, peer_dir: &Path) -> Result<PeerWorktreeInfo, ForgeError> {
     // 1. Branch name
-    let branch_out = Command::new("git")
-        .arg("-C")
-        .arg(peer_dir)
-        .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+    let branch_out = crate::nucleus::git_in_dir(peer_dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
         .map_err(|e| ForgeError::Io(e.to_string()))?;
 
-    let branch = String::from_utf8_lossy(&branch_out.stdout).trim().to_string();
+    let branch = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&branch_out.stdout))
+        .trim()
+        .to_string();
 
     // 2. Latest commit
-    let log_out = Command::new("git")
-        .arg("-C")
-        .arg(peer_dir)
-        .args(&["log", "-1", "--format=%H%x1f%s%x1f%an"])
+    let log_out = crate::nucleus::git_in_dir(peer_dir)
+        .args(["log", "-1", "--format=%H%x1f%s%x1f%an"])
         .output();
 
     let (latest_commit_hash, latest_commit_subject, latest_commit_author) = match log_out {
         Ok(out) if out.status.success() => {
-            let s = String::from_utf8_lossy(&out.stdout);
+            let s = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout));
             let mut parts = s.trim().split('\x1f');
             let hash = parts.next().filter(|h| !h.is_empty()).map(ToString::to_string);
             let subj = parts.next().map(ToString::to_string);
@@ -229,15 +214,13 @@ fn inspect_single_peer_dir(peer_id: &str, peer_dir: &Path) -> Result<PeerWorktre
     };
 
     // 3. Status & dirty files
-    let status_out = Command::new("git")
-        .arg("-C")
-        .arg(peer_dir)
-        .args(&["status", "--porcelain"])
+    let status_out = crate::nucleus::git_in_dir(peer_dir)
+        .args(["status", "--porcelain"])
         .output();
 
     let (is_dirty, modified_files) = match status_out {
         Ok(out) if out.status.success() => {
-            let s = String::from_utf8_lossy(&out.stdout);
+            let s = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout));
             let files: Vec<String> = s
                 .lines()
                 .filter(|l| !l.trim().is_empty())
@@ -250,15 +233,16 @@ fn inspect_single_peer_dir(peer_id: &str, peer_dir: &Path) -> Result<PeerWorktre
     };
 
     // 4. Commits ahead of base
-    let count_out = Command::new("git")
-        .arg("-C")
-        .arg(peer_dir)
-        .args(&["rev-list", "--count", "main..HEAD"])
+    let count_out = crate::nucleus::git_in_dir(peer_dir)
+        .args(["rev-list", "--count", "main..HEAD"])
         .output();
 
     let commits_ahead_base = match count_out {
         Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
+            hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout))
+                .trim()
+                .parse()
+                .unwrap_or(0)
         }
         _ => 0,
     };
@@ -279,6 +263,7 @@ fn inspect_single_peer_dir(peer_id: &str, peer_dir: &Path) -> Result<PeerWorktre
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     fn fixture_multitree_repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
@@ -363,6 +348,26 @@ mod tests {
         assert_eq!(report.conflicts[0].conflicting_peers.len(), 2);
         assert!(report.conflicts[0].conflicting_peers.contains(&"peer-alpha".to_string()));
         assert!(report.conflicts[0].conflicting_peers.contains(&"peer-beta".to_string()));
+    }
+
+    #[test]
+    fn wsl_unc_project_root_lists_and_inspects_peer_worktrees() {
+        let (_tmp, main, peer_a) = fixture_multitree_repo();
+        let peer_b = main.join(".hadron").join("trees").join("peer-beta");
+        std::fs::write(peer_a.join("shared.rs"), "pub fn shared_fn() -> i32 { 1 }\n").unwrap();
+        std::fs::write(peer_b.join("shared.rs"), "pub fn shared_fn() -> i32 { 2 }\n").unwrap();
+
+        let unc_peer_a = hadron_lattice::wsl::format_wsl_unc_path("Ubuntu", &peer_a);
+        let root = Root::new(&unc_peer_a);
+
+        let peer_info = inspect_peer_worktree(&root, "peer-alpha").unwrap();
+        assert_eq!(peer_info.peer_id, "peer-alpha");
+        assert_eq!(peer_info.branch, "quark/peer-alpha/feat1");
+        assert!(peer_info.is_dirty);
+
+        let report = detect_cross_worktree_conflicts(&root).unwrap();
+        assert_eq!(report.conflicts_detected, 1);
+        assert_eq!(report.conflicts[0].file_path, "shared.rs");
     }
 }
 
