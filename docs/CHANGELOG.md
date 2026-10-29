@@ -5,6 +5,17 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.22] - 2026-10-29
+
+### Fixed
+- **WSL UNC Path Resolution, Shared `.hadron` Worktree Routing & ACP `WSLENV` Forwarding (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`, `hadron-forge`, `hadron-forge-mcp`)**:
+  - Swept WSL UNC (`\\wsl.localhost\...` / `\\wsl$\...`) and orphaned worktree targets in `hadron-gluon::worktree`, rescued `screenshots/` and `scratch/` subdirectories during `reconcile_worktree_dot_hadron`, and forwarded `WSLENV` across ACP session spawns (`crates/hadron-gluon/src/worktree.rs`, `crates/hadron-gluon/src/adapter/acp/session.rs`).
+  - Routed `hadron-forge` nucleus and peer git probes through WSL-aware `git_command` and `format_wsl_unc_path`, added `derive_shared_hadron_dir` for `GossipBus`, scratch bus, and peer locks across `hadron-forge` and `hadron-forge-mcp`, and resolved `<repo_root>/.hadron/scratch` in `SlidingContextPruner::prune_projection` when executing inside `.hadron/trees/<id>`.
+  - Resolved WSL UNC paths across active plans, ledgers, process liveness inspection, custom themes, and skill discovery (`crates/hadron-chamber/src/app/actions.rs`, `reload.rs`, `theme.rs`, `crates/hadron-lattice/src/ledger.rs`, `sys/inspect.rs`, `wsl.rs`).
+- **Portable Test Fixtures & `RedTeamAuditor` Hygiene (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`, `hadron-gatekeeper`, `hadron-forge`, `hadron-forge-mcp`)**:
+  - Replaced hardcoded developer filesystem paths across workspace unit tests and doc comments with portable fixtures (`env!("CARGO_MANIFEST_DIR")` and generic `/home/user/project` paths) and passed a deterministic `NonExistentTestDistro` sentinel in `wsl::test_parse_wsl_home_and_catalogue_path`.
+  - Propagated `std::fs::remove_file` errors in `theme::delete_custom_theme` and replaced `.join("../..")` with `Path::parent` traversal in `mermaid/mod.rs` tests to satisfy `RedTeamAuditor`.
+
 ## [0.33.21] - 2026-10-29
 
 ### Added

@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.22",
+        date: Some("2026-10-29"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "WSL UNC Path Resolution, Shared .hadron Worktree Routing & ACP WSLENV Forwarding: Resolved WSL UNC paths across worktree cleanup, forge/MCP shared .hadron buses, plans, ledgers, liveness, themes, and skills, and forwarded WSLENV to ACP sessions",
+            "Portable Test Fixtures & RedTeamAuditor Hygiene: Replaced hardcoded developer paths across workspace tests with portable fixtures, propagated remove_file errors in delete_custom_theme, and used Path::parent in mermaid tests",
+        ],
+    },
+    Release {
         version: "0.33.21",
         date: Some("2026-10-29"),
         added: &[
