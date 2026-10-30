@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.26",
+        date: Some("2026-10-30"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "WSL UNC Tool & ACP Bridge Resolution and cli-agy Authentication Fix: Added fast-path WSL UNC binary discovery in resolve_wsl_program_path, stopped caching transient None/false lookups in should_run_in_wsl and is_wsl_bwrap_available, routed bare POSIX tools (agy, claude, codex, git) and in-distro .hadron/bridges/ targets through wsl.exe so Windows host agy.exe never triggers an OAuth browser timeout on WSL repos, and ran probe_cli_models in std::env::temp_dir()",
+            "Plan List Date-Prefix Sort Alignment: Updated newest_plan_from_list_with_mtime to sort plan files by leading YYYY-MM-DD- date prefix before falling back to modification time",
+        ],
+    },
+    Release {
         version: "0.33.25",
         date: Some("2026-10-30"),
         added: &[],

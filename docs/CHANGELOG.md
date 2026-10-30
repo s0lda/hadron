@@ -5,6 +5,17 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.26] - 2026-10-30
+
+### Fixed
+- **WSL UNC Tool & ACP Bridge Resolution and `cli-agy` Authentication Fix (`hadron-lattice`, `hadron-gatekeeper`, `hadron-gluon`)**:
+  - Added fast-path WSL UNC binary discovery (`wsl_unc_entry_exists`) in `resolve_wsl_program_path` (`crates/hadron-lattice/src/wsl.rs`), stripped `<3>WSL` relay lines in `decode_wsl_output` and `strip_wsl_noise`, and stopped caching transient `None`/`false` lookups in `resolve_wsl_program_path`, `is_wsl_bwrap_available`, and `should_run_in_wsl`.
+  - Updated `should_run_in_wsl` so bare POSIX tool names (`agy`, `claude`, `codex`, `git`) on WSL UNC workspaces always route through `wsl.exe` using the Linux file-based OAuth token instead of falling back to Windows host binaries via `where.exe` and opening a browser OAuth prompt that times out.
+  - Added `rewrite_windows_bridge_path_to_linux` in `acp_stdio_descriptor_sandboxed` (`crates/hadron-gluon/src/adapter/acp/session.rs`) so `.hadron/bridges/...` ACP targets on WSL UNC workspaces resolve to the in-distro Linux bridge when present, and set `.current_dir(std::env::temp_dir())` on host model probes in `probe_cli_models` (`crates/hadron-gluon/src/adapter/cli.rs`).
+  - Updated `build_bwrap_args` (`crates/hadron-gatekeeper/src/sandbox.rs`) to pre-create `.hadron/{nucleus,docs,skills,preons,live}` via the host/UNC repository root before mounting into `bwrap`, and gated `effort` in `spec_for_seat` (`crates/hadron-gluon/src/adapter/registry/mod.rs`) on `Seat::supports_effort()`.
+- **Plan List Date-Prefix Sort Alignment (`hadron-chamber`)**:
+  - Updated `newest_plan_from_list_with_mtime` (`crates/hadron-chamber/src/text.rs`) to sort plan files by leading `YYYY-MM-DD-` date prefix before falling back to file modification time, matching `newest_plan`'s selection order.
+
 ## [0.33.25] - 2026-10-30
 
 ### Fixed
