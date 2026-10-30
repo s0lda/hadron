@@ -804,15 +804,9 @@ mod tests {
         if !std::path::Path::new("/bin/bash").exists() {
             return; // readline-specific; skip where bash is unavailable
         }
-        let prev_shell = std::env::var("SHELL").ok();
-        std::env::set_var("SHELL", "/bin/bash");
         let dir = tempdir().unwrap();
-        let mut term = PtyTerminal::new(dir.path(), 12, 24).unwrap();
-        // Restore immediately so a concurrent test's spawn is unaffected.
-        match prev_shell {
-            Some(s) => std::env::set_var("SHELL", s),
-            None => std::env::remove_var("SHELL"),
-        }
+        let mut term =
+            PtyTerminal::new_with_options(dir.path(), 12, 24, Some("/bin/bash"), 5000).unwrap();
 
         // A fixed prompt 18 cols wide — wider than the 12-col grid, so it wraps.
         term.send_input(b"PS1='PROMPTABCDEFGHIJ> '\n");
@@ -995,9 +989,17 @@ mod tests {
         for _ in 0..10 {
             terms.push(PtyTerminal::new(dir.path(), 80, 24).expect("spawn PTY"));
         }
+        let mut active_threads = count_pty_reader_threads();
+        for _ in 0..100 {
+            if active_threads >= 10 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+            active_threads = count_pty_reader_threads();
+        }
         assert!(
-            count_pty_reader_threads() >= 10,
-            "Expected at least 10 live hadron-pty-reader threads while 10 PTYs are open"
+            active_threads >= 10,
+            "Expected at least 10 live hadron-pty-reader threads while 10 PTYs are open, got {active_threads}"
         );
         drop(terms);
 

@@ -226,8 +226,33 @@ impl MergeRunner for CargoMergeRunner {
 const TAIL_BYTES: usize = 4000;
 
 fn tail(s: &str) -> String {
-    let start = s.len().saturating_sub(TAIL_BYTES);
-    s[start..].to_string()
+    tail_str(s, TAIL_BYTES).to_string()
+}
+
+fn tail_str(s: &str, max_bytes: usize) -> &str {
+    let mut start = s.len().saturating_sub(max_bytes);
+    while start < s.len() && !s.is_char_boundary(start) {
+        start += 1;
+    }
+    &s[start..]
+}
+
+fn combine_output_tails(stdout: &str, stderr: &str) -> String {
+    let stdout_budget = if stderr.len() < TAIL_BYTES / 2 {
+        TAIL_BYTES.saturating_sub(stderr.len())
+    } else {
+        TAIL_BYTES / 2
+    };
+    let stdout_tail = tail_str(stdout, stdout_budget);
+    let stderr_budget = TAIL_BYTES.saturating_sub(stdout_tail.len());
+    let stderr_tail = tail_str(stderr, stderr_budget);
+    let mut text = String::with_capacity(stdout_tail.len() + stderr_tail.len() + 1);
+    text.push_str(stdout_tail);
+    if !stdout_tail.is_empty() && !stderr_tail.is_empty() && !stdout_tail.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(stderr_tail);
+    tail(&text)
 }
 
 /// How long the gate will wait for a project's test suite before cutting it off.
@@ -365,9 +390,9 @@ pub async fn run_tests_within(
             ));
         }
     };
-    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
-    Ok((out.status.success(), tail(&text)))
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Ok((out.status.success(), combine_output_tails(&stdout, &stderr)))
 }
 
 /// SIGKILL the whole process group led by `pid` — the launcher *and* everything it
@@ -1028,6 +1053,28 @@ mod tests {
             .unwrap();
         assert!(!passed, "a nonzero exit is a red suite");
         assert!(out.contains("boom"), "the human gets the output: {out}");
+    }
+
+    #[test]
+    fn combine_output_tails_preserves_stdout_failure_summary_when_stderr_is_verbose() {
+        let stdout = format!(
+            "{}\nfailures:\n    pty::tests::test_pty_resource_cleanup_under_load\ntest result: FAILED. 572 passed; 1 failed\n",
+            "ok line\n".repeat(400)
+        );
+        let stderr = format!(
+            "{}error: test failed, to rerun pass `-p hadron --bin hadron`\n",
+            "14:37:37  chamber  pty: reader thread EOF → '/bin/bash'\n".repeat(150)
+        );
+        let combined = combine_output_tails(&stdout, &stderr);
+        assert!(combined.len() <= TAIL_BYTES);
+        assert!(
+            combined.contains("pty::tests::test_pty_resource_cleanup_under_load"),
+            "stdout failure summary must not be pushed out by verbose stderr logs: {combined}"
+        );
+        assert!(
+            combined.contains("error: test failed, to rerun pass `-p hadron --bin hadron`"),
+            "stderr tail must also be preserved: {combined}"
+        );
     }
 
     #[test]
