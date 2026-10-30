@@ -514,6 +514,31 @@ impl super::Chamber {
                 changed = true;
             }
 
+            // While any quark turn, merge gate, or working task is in flight, tick
+            // the live elapsed timer once per second so the badge advances smoothly
+            // even between 5s heartbeats — with zero repaints when the swarm is idle.
+            let any_live_timer = !self.last_gate_activities.is_empty()
+                || self.last_live_activities.values().any(|a| a.is_some())
+                || self.view.roster.iter().any(|r| {
+                    r.adopted
+                        && r.enabled
+                        && matches!(r.state, QuarkState::Excited | QuarkState::Thinking)
+                })
+                || self
+                    .view
+                    .tasks
+                    .iter()
+                    .any(|t| t.state == crate::model::tasks::TaskState::Working);
+            if any_live_timer {
+                let now_sec = chrono::Utc::now().timestamp();
+                if self.last_live_timer_sec != Some(now_sec) {
+                    self.last_live_timer_sec = Some(now_sec);
+                    changed = true;
+                }
+            } else {
+                self.last_live_timer_sec = None;
+            }
+
             if self.right_rail_tab == RightRailTab::Git
                 && self.git_subtab == GitSubtab::Remote
                 && self.github_issues.is_none()

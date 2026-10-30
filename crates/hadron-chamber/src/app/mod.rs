@@ -662,6 +662,9 @@ struct Chamber {
     /// activity does — the Tasks tab reads `live::gates` at render time and nothing
     /// else would notice it changed (nucleus `live-activity-needs-notify-repaint`).
     pub(super) last_gate_activities: Vec<hadron_lattice::live::Activity>,
+    /// Last wall-clock second for which a live turn timer repaint was emitted while at
+    /// least one quark/task/gate was active (`None` when the swarm is idle).
+    pub(super) last_live_timer_sec: Option<i64>,
     /// The `gluon.lock` flock reading from the previous poll — compared against the
     /// fresh reading each tick so a toast fires only on the running→stopped edge,
     /// not on every tick gluon happens to still be down. Starts optimistic (running)
@@ -1858,6 +1861,7 @@ impl Chamber {
             terminal_grid_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
             last_gate_activities: Vec::new(),
+            last_live_timer_sec: None,
             last_gluon_running: true,
             nucleus_over_budget: if workspace_mode == WorkspaceMode::Selector || is_wsl {
                 false

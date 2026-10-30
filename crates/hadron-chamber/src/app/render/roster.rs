@@ -279,8 +279,17 @@ impl super::Chamber {
             .tasks
             .iter()
             .find(|t| t.to == r.id && t.state == crate::model::tasks::TaskState::Working);
-        let latest_task = active_task.or_else(|| self.view.tasks.iter().find(|t| t.to == r.id));
-        let excited_secs = latest_task.map(|t| t.elapsed_secs(now)).unwrap_or(0);
+        let latest_task = active_task.or_else(|| self.view.tasks.iter().rev().find(|t| t.to == r.id));
+        let excited_secs = latest_task
+            .map(|t| t.elapsed_secs(now))
+            .or_else(|| {
+                activity.as_ref().and_then(|act| {
+                    act.started
+                        .or(Some(act.at))
+                        .map(|st| (now - st).num_seconds().max(0))
+                })
+            })
+            .unwrap_or(0);
 
         let quark_wt_prefix = format!("quark/{}/", r.id);
         let wt_info = self.git_worktrees.as_ref().and_then(|wts| {
@@ -339,7 +348,7 @@ impl super::Chamber {
             let raw = act.detail.trim();
             let detail_str = if raw.is_empty() || raw == "thinking" {
                 active_task
-                    .map(|t| t.title.clone())
+                    .map(|t| widgets::humanize_activity_detail(&t.title))
                     .unwrap_or_else(|| act.doing.label().to_string())
             } else {
                 widgets::humanize_activity_detail(raw)
@@ -375,6 +384,7 @@ impl super::Chamber {
                             .min_w_0()
                             .text_xs()
                             .text_color(theme::text_secondary())
+                            .whitespace_nowrap()
                             .truncate()
                             .child(detail_str),
                     ),
@@ -383,7 +393,7 @@ impl super::Chamber {
             || active_task.is_some()
         {
             let detail_str = active_task
-                .map(|t| t.title.clone())
+                .map(|t| widgets::humanize_activity_detail(&t.title))
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "starting turn…".to_string());
             let badge_color = theme::halo_reasoning();
@@ -411,6 +421,7 @@ impl super::Chamber {
                             .min_w_0()
                             .text_xs()
                             .text_color(theme::text_secondary())
+                            .whitespace_nowrap()
                             .truncate()
                             .child(detail_str),
                     ),
@@ -419,18 +430,7 @@ impl super::Chamber {
             None
         };
 
-        let excited_time_str = super::chat::format_duration(excited_secs);
-
-        let time_part = if let Some(act) = &activity {
-            let task_secs = (now - act.at).num_seconds().max(0);
-            if excited_secs > task_secs && task_secs > 0 {
-                format!("{} ({})", excited_time_str, super::chat::format_duration(task_secs))
-            } else {
-                excited_time_str
-            }
-        } else {
-            excited_time_str
-        };
+        let time_part = super::chat::format_duration(excited_secs);
 
         let ctx_opt = self.latest_context(&r.id);
         let context_str = if let Some(ctx) = ctx_opt {

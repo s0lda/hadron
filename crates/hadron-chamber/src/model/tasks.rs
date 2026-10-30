@@ -343,11 +343,16 @@ fn strip_dispatch_scaffolding(raw: &str) -> String {
     format!("{head} {tail}").trim().to_string()
 }
 
-/// The first sentence of `raw`, trimmed to [`TITLE_MAX_CHARS`] **characters**.
+/// The first sentence of `raw`, trimmed to [`TITLE_MAX_CHARS`] **characters** on a single line.
 fn trim_title(raw: &str) -> String {
-    let sentence = match raw.find('.') {
-        Some(byte_ix) => &raw[..=byte_ix],
-        None => raw,
+    let first_line = raw
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let sentence = match first_line.find('.') {
+        Some(byte_ix) => &first_line[..=byte_ix],
+        None => first_line,
     };
     if sentence.chars().count() <= TITLE_MAX_CHARS {
         return sentence.to_string();
@@ -819,5 +824,21 @@ mod tests {
 
         assert_eq!(tasks[0].title, "Dynamic Theme Architecture Investigation");
         assert_eq!(tasks[1].title, "Other task");
+    }
+
+    #[test]
+    fn multiline_dispatch_produces_single_line_task_title() {
+        let evs = vec![msg(
+            Actor::Human,
+            Some("cli-agy"),
+            "@Agy\nQuark cli-agy turn errored: agy exited with 1\nSecond line with a period.\nThird line",
+        )];
+        let tasks = swarm_tasks(&evs);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].title,
+            "Quark cli-agy turn errored: agy exited with 1"
+        );
+        assert!(!tasks[0].title.contains('\n'));
     }
 }

@@ -329,38 +329,57 @@ pub(super) struct QuarkLiveCapsule {
 }
 
 /// Humanize verbose raw tool step strings into concise, scannable command-plane labels.
+/// Collapses embedded newlines and caps length on a character boundary so live capsules
+/// and roster rows remain strictly single-line.
 pub(super) fn humanize_activity_detail(raw: &str) -> String {
-    let s = raw.trim();
-    if let Some(rest) = s.strip_prefix("run_command:").or_else(|| s.strip_prefix("execute_command:")) {
-        return format!("$ {}", rest.trim());
-    }
-    if let Some(rest) = s
+    const MAX_DETAIL_CHARS: usize = 120;
+    let collapsed: String = raw
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let s = collapsed.as_str();
+    let formatted = if let Some(rest) =
+        s.strip_prefix("run_command:").or_else(|| s.strip_prefix("execute_command:"))
+    {
+        format!("$ {}", rest.trim())
+    } else if let Some(rest) = s
         .strip_prefix("read_file:")
         .or_else(|| s.strip_prefix("view_file:"))
         .or_else(|| s.strip_prefix("view_file_outline:"))
     {
-        return format!("read {}", rest.trim());
-    }
-    if let Some(rest) = s
+        format!("read {}", rest.trim())
+    } else if let Some(rest) = s
         .strip_prefix("edit_file:")
         .or_else(|| s.strip_prefix("replace_file_content:"))
         .or_else(|| s.strip_prefix("multi_replace_file_content:"))
     {
-        return format!("edit {}", rest.trim());
-    }
-    if let Some(rest) = s.strip_prefix("write_file:").or_else(|| s.strip_prefix(" write_to_file:")) {
-        return format!("write {}", rest.trim());
-    }
-    if let Some(rest) = s.strip_prefix("grep_search:").or_else(|| s.strip_prefix("find_by_name:")) {
-        return format!("search {}", rest.trim());
-    }
-    if let Some(rest) = s.strip_prefix("thinking:") {
+        format!("edit {}", rest.trim())
+    } else if let Some(rest) =
+        s.strip_prefix("write_file:").or_else(|| s.strip_prefix("write_to_file:"))
+    {
+        format!("write {}", rest.trim())
+    } else if let Some(rest) =
+        s.strip_prefix("grep_search:").or_else(|| s.strip_prefix("find_by_name:"))
+    {
+        format!("search {}", rest.trim())
+    } else if let Some(rest) = s.strip_prefix("thinking:") {
         let t = rest.trim();
         if !t.is_empty() {
-            return t.to_string();
+            t.to_string()
+        } else {
+            s.to_string()
         }
+    } else {
+        s.to_string()
+    };
+    if formatted.chars().count() > MAX_DETAIL_CHARS {
+        let truncated: String = formatted.chars().take(MAX_DETAIL_CHARS).collect();
+        format!("{truncated}…")
+    } else {
+        formatted
     }
-    s.to_string()
 }
 
 #[cfg(test)]
@@ -389,10 +408,11 @@ pub(super) fn active_quarks_rich_with_tasks(
                 let raw = act.detail.trim();
                 let detail = if raw.is_empty() || raw == "thinking" {
                     if let Some(t) = active_task {
+                        let clean_title = humanize_activity_detail(&t.title);
                         if act.doing == hadron_lattice::live::Doing::Speaking {
-                            format!("writing reply · {}", t.title)
+                            format!("writing reply · {clean_title}")
                         } else {
-                            t.title.clone()
+                            clean_title
                         }
                     } else if raw.is_empty() {
                         act.doing.label().to_string()
@@ -402,9 +422,10 @@ pub(super) fn active_quarks_rich_with_tasks(
                 } else {
                     humanize_activity_detail(raw)
                 };
-                let elapsed_secs = act
-                    .started
-                    .or_else(|| active_task.map(|t| t.asked_at))
+                let elapsed_secs = active_task
+                    .map(|t| t.asked_at)
+                    .or(act.started)
+                    .or(Some(act.at))
                     .map(|st| (now - st).num_seconds().max(0) as u64);
                 Some(QuarkLiveCapsule {
                     quark_id: act.quark.as_str().to_string(),
@@ -421,7 +442,7 @@ pub(super) fn active_quarks_rich_with_tasks(
                     hadron_lattice::live::Doing::Working
                 };
                 let detail = active_task
-                    .map(|t| t.title.clone())
+                    .map(|t| humanize_activity_detail(&t.title))
                     .filter(|title| !title.trim().is_empty())
                     .unwrap_or_else(|| "working…".to_string());
                 let elapsed_secs = active_task
@@ -2181,6 +2202,28 @@ mod tests {
         assert_eq!(rich.len(), 1);
         assert_eq!(rich[0].detail, "Task 1: Upgrade live activity");
         assert!(rich[0].elapsed_secs.unwrap_or(0) >= 42);
+
+        // When a live activity appears later in the turn (e.g. 12s after asked_at),
+        // elapsed_secs stays anchored to asked_at (42s) instead of jumping backwards to 30s.
+        let mut later_act = hadron_lattice::live::Activity::new(
+            hadron_lattice::QuarkId::new("cli-agy"),
+            hadron_lattice::live::Doing::Thinking,
+            "First line of thought\nSecond line of thought\nThird line",
+        );
+        later_act.started = Some(now - chrono::Duration::seconds(30));
+        let rich_live = active_quarks_rich_with_tasks(
+            &roster,
+            &tasks,
+            |_| Some(later_act.clone()),
+            now,
+        );
+        assert_eq!(rich_live.len(), 1);
+        assert_eq!(rich_live[0].elapsed_secs, Some(42));
+        assert!(!rich_live[0].detail.contains('\n'));
+        assert_eq!(
+            rich_live[0].detail,
+            "First line of thought Second line of thought Third line"
+        );
     }
 
     /// **The double-dialog bug.** Cancelling gpui's picker used to be indistinguishable

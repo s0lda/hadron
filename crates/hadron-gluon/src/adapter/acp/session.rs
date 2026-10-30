@@ -252,7 +252,7 @@ pub(super) fn tool_call_detail(call: &ToolCall) -> String {
     match (verb, target, command) {
         (Some(verb), Some(target), _) => format!("{verb} {target}"),
         (Some(verb), None, Some(command)) => format!("{verb} `{command}`"),
-        _ => call.title.clone(),
+        _ => first_line_truncated(&call.title),
     }
 }
 
@@ -266,7 +266,10 @@ pub(super) fn tool_call_update_detail(update: &ToolCallUpdate) -> Option<String>
         match last {
             ToolCallContent::Content(c) => {
                 if let ContentBlock::Text(t) = &c.content {
-                    return Some(t.text.clone());
+                    let line = first_line_truncated(&t.text);
+                    if !line.is_empty() {
+                        return Some(line);
+                    }
                 }
             }
             ToolCallContent::Diff(d) => {
@@ -282,14 +285,23 @@ pub(super) fn tool_call_update_detail(update: &ToolCallUpdate) -> Option<String>
             _ => {}
         }
     }
-    update.fields.title.clone()
+    update
+        .fields
+        .title
+        .as_deref()
+        .map(first_line_truncated)
+        .filter(|s| !s.is_empty())
 }
 
-/// First line only, cut at 80 **chars** (never bytes — a mid-character byte cut
-/// panics the chamber's label rendering).
+/// First non-empty line only, cut at 80 **chars** (never bytes — a mid-character
+/// byte cut panics the chamber's label rendering).
 fn first_line_truncated(s: &str) -> String {
     const MAX: usize = 80;
-    let line = s.lines().next().unwrap_or("");
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     if line.chars().count() > MAX {
         let cut: String = line.chars().take(MAX).collect();
         format!("{cut}…")
@@ -710,7 +722,10 @@ impl super::AcpQuark {
                                             if let (Some(feed), ContentBlock::Text(t)) =
                                                 (&live, chunk.content)
                                             {
-                                                feed.publish(Doing::Thinking, &t.text);
+                                                let line = first_line_truncated(&t.text);
+                                                if !line.is_empty() {
+                                                    feed.publish(Doing::Thinking, &line);
+                                                }
                                             }
                                         }
                                         // A tool call is the update the human is actually
@@ -741,7 +756,10 @@ impl super::AcpQuark {
                                                     })
                                                     .or_else(|| plan.entries.first());
                                                 if let Some(step) = step {
-                                                    feed.publish(Doing::Planning, &step.content);
+                                                    let line = first_line_truncated(&step.content);
+                                                    if !line.is_empty() {
+                                                        feed.publish(Doing::Planning, &line);
+                                                    }
                                                 }
                                             }
                                         }

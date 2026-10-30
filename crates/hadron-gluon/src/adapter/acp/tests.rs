@@ -970,10 +970,11 @@ fn tool_call_update_detail_prefers_streamed_content_over_the_title() {
         serde_json::from_str(json).expect("test ToolCallUpdate")
     };
 
-    // Streamed stdout content beats a title that didn't change.
+    // Streamed stdout content beats a title that didn't change, and multiline stdout
+    // is truncated to its first non-empty line so live cards never stretch vertically.
     let stdout = update(
         r#"{"toolCallId":"1","title":"Terminal",
-            "content":[{"type":"content","content":{"type":"text","text":"Compiling hadron-gluon..."}}]}"#,
+            "content":[{"type":"content","content":{"type":"text","text":"\nCompiling hadron-gluon...\nFinished dev profile"}}]}"#,
     );
     assert_eq!(
         session::tool_call_update_detail(&stdout).as_deref(),

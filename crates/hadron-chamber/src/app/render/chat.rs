@@ -29,9 +29,12 @@ impl super::Chamber {
             let detail = if gate_act.detail.is_empty() {
                 format!("merging `{}`", gate_act.quark.as_str())
             } else {
-                gate_act.detail.clone()
+                widgets::humanize_activity_detail(&gate_act.detail)
             };
-            let elapsed_secs = gate_act.started.map(|st| (now - st).num_seconds().max(0) as u64);
+            let elapsed_secs = gate_act
+                .started
+                .or(Some(gate_act.at))
+                .map(|st| (now - st).num_seconds().max(0) as u64);
             active.push(widgets::QuarkLiveCapsule {
                 quark_id: "gluon".to_string(),
                 doing: hadron_lattice::live::Doing::Gating,
@@ -45,9 +48,12 @@ impl super::Chamber {
                 let detail = if gluon_act.detail.is_empty() {
                     gluon_act.doing.label().to_string()
                 } else {
-                    gluon_act.detail
+                    widgets::humanize_activity_detail(&gluon_act.detail)
                 };
-                let elapsed_secs = gluon_act.started.map(|st| (now - st).num_seconds().max(0) as u64);
+                let elapsed_secs = gluon_act
+                    .started
+                    .or(Some(gluon_act.at))
+                    .map(|st| (now - st).num_seconds().max(0) as u64);
                 active.push(widgets::QuarkLiveCapsule {
                     quark_id: "gluon".to_string(),
                     doing: gluon_act.doing,
@@ -197,7 +203,7 @@ impl super::Chamber {
                         .tasks
                         .iter()
                         .find(|t| t.to == cap.quark_id && t.state == crate::model::tasks::TaskState::Working)
-                        .map(|t| t.title.clone())
+                        .map(|t| widgets::humanize_activity_detail(&t.title))
                         .filter(|title| !title.is_empty() && title != &cap.detail);
 
                     h_flex()
@@ -236,6 +242,7 @@ impl super::Chamber {
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(identity.color)
+                                        .whitespace_nowrap()
                                         .truncate()
                                         .child(name),
                                 ),
@@ -272,6 +279,7 @@ impl super::Chamber {
                                 .min_w_0()
                                 .text_xs()
                                 .text_color(theme::text_secondary())
+                                .whitespace_nowrap()
                                 .truncate()
                                 .child(cap.detail),
                         )
@@ -288,6 +296,7 @@ impl super::Chamber {
                                     .border_color(theme::hairline_border())
                                     .text_xs()
                                     .text_color(theme::text_muted())
+                                    .whitespace_nowrap()
                                     .truncate()
                                     .child(t_title),
                             )
@@ -295,8 +304,10 @@ impl super::Chamber {
                         .when_some(cap.elapsed_secs, |el, secs| {
                             el.child(
                                 h_flex()
+                                    .min_w(px(48.0))
                                     .flex_none()
                                     .items_center()
+                                    .justify_center()
                                     .px_1p5()
                                     .py_0p5()
                                     .rounded_sm()
@@ -308,6 +319,7 @@ impl super::Chamber {
                                             .text_xs()
                                             .font_family(cx.theme().mono_font_family.clone())
                                             .text_color(theme::text_muted())
+                                            .whitespace_nowrap()
                                             .child(format_duration(secs as i64)),
                                     ),
                             )
