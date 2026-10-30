@@ -1209,6 +1209,7 @@ mod cli_spec_tests {
             args: vec!["--flag".into()],
             prompt: PromptChannel::Arg { flag: Some("--print".into()) },
             model_flag: Some("--model".into()),
+            effort_flag: Some("--effort".into()),
             temperature_flag: Some("--temperature".into()),
             top_p_flag: Some("--top-p".into()),
             max_tokens_flag: Some("--max-tokens".into()),
@@ -1526,3 +1527,42 @@ fn team_schema_v0_migration_v1_roundtrip_and_forward_guard() {
     let future_json = r#"{"schema_version":99,"quarks":[]}"#;
     assert!(parse_team(future_json).is_err());
 }
+
+#[test]
+fn seat_supports_effort_per_transport_and_vendor() {
+    let mut cli_agy = seat("cli-agy", "agy", "gemini-4-argon-medium", Flavor::Orchestrator);
+    cli_agy.transport = Transport::Cli;
+    assert!(
+        !cli_agy.supports_effort(),
+        "cli-agy encodes effort in the model string and has effort_flag: None"
+    );
+
+    let mut cli_claude = seat("cli-claude", "claude", "opus", Flavor::Worker);
+    cli_claude.transport = Transport::Cli;
+    assert!(
+        cli_claude.supports_effort(),
+        "cli-claude preset declares effort_flag: Some(\"--effort\")"
+    );
+
+    let mut acp_agy = seat("acp-agy", "agy", "gemini-3.8-flash", Flavor::Worker);
+    acp_agy.transport = Transport::Acp;
+    assert!(
+        !acp_agy.supports_effort(),
+        "acp-agy offers no standalone ThoughtLevel selector"
+    );
+
+    let mut acp_claude = seat("acp-claude", "claude", "opus", Flavor::Worker);
+    acp_claude.transport = Transport::Acp;
+    assert!(
+        acp_claude.supports_effort(),
+        "acp-claude supports ThoughtLevel effort selector"
+    );
+
+    let mut http_seat = seat("http-ollama", "ollama", "llama3", Flavor::Worker);
+    http_seat.transport = Transport::Http;
+    assert!(
+        !http_seat.supports_effort(),
+        "HTTP transport does not support a standalone effort selector"
+    );
+}
+

@@ -271,6 +271,35 @@ impl Seat {
         }
     }
 
+    /// Whether this seat natively supports a separate reasoning effort selector.
+    ///
+    /// - `Transport::Cli`: supported only when the seat's [`CliSpec`] (explicit or
+    ///   vendor preset) declares `effort_flag: Some(_)` (e.g. `claude` CLI's `--effort`;
+    ///   `agy` CLI encodes effort in the model identifier and has `effort_flag: None`).
+    /// - `Transport::Acp`: supported before probe completion only for ACP vendors known
+    ///   to advertise `ThoughtLevel` config options (`claude`, `codex`, `anthropic`,
+    ///   `openai`), never for `agy`/`antigravity`/`gemini` where effort is part of the
+    ///   model id or unsupported. Once probed, the live `selectors.effort` is authoritative.
+    /// - `Transport::Http` / `Transport::Sdk`: unsupported.
+    pub fn supports_effort(&self) -> bool {
+        match self.transport {
+            Transport::Cli => {
+                if let Some(spec) = &self.cli {
+                    spec.supports_effort()
+                } else if let Some(preset) = CliSpec::preset(&self.vendor) {
+                    preset.supports_effort()
+                } else {
+                    false
+                }
+            }
+            Transport::Acp => matches!(
+                self.vendor.as_str(),
+                "claude" | "codex" | "anthropic" | "openai"
+            ),
+            Transport::Http | Transport::Sdk => false,
+        }
+    }
+
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
     /// (and tests) from having to spell out two ACP fields they do not care about.
     pub fn cli(id: QuarkId, vendor: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {

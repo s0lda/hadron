@@ -790,7 +790,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         s.model.clone(),
                         Some(s.flavor.clone()),
                         s.transport,
-                        s.effort.clone(),
+                        s.supports_effort().then(|| s.effort.clone()).flatten(),
                         s.enabled,
                         true,
                     ),
@@ -800,7 +800,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         g.model.clone(),
                         Some(g.flavor.clone()),
                         g.transport,
-                        g.effort.clone(),
+                        g.supports_effort().then(|| g.effort.clone()).flatten(),
                         false, // not adopted here → inert, greyed like a disabled seat
                         false,
                     ),

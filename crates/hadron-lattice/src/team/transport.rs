@@ -184,6 +184,11 @@ pub struct CliSpec {
     /// a model argument.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_flag: Option<String>,
+    /// The flag that carries the reasoning effort level, e.g. `"--effort"`; `None` =
+    /// this CLI offers no separate effort flag (e.g. `agy`, where effort is encoded in
+    /// the model identifier itself).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort_flag: Option<String>,
     /// Optional CLI flags for model parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature_flag: Option<String>,
@@ -243,6 +248,10 @@ impl CliSpec {
         self.temperature_flag.is_some() || self.top_p_flag.is_some() || self.max_tokens_flag.is_some()
     }
 
+    pub fn supports_effort(&self) -> bool {
+        self.effort_flag.is_some()
+    }
+
     /// The built-in `agy` preset. Mirrors `crates/hadron-gluon/src/adapter/agy.rs`
     /// exactly, so an existing `cli-agy` seat (no explicit `cli` spec, `vendor:
     /// "agy"`) behaves byte-for-byte once seats resolve through this type.
@@ -258,6 +267,7 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Arg { flag: Some("--print".to_string()) },
             model_flag: Some("--model".to_string()),
+            effort_flag: None,
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,
@@ -297,6 +307,7 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Stdin,
             model_flag: Some("--model".to_string()),
+            effort_flag: Some("--effort".to_string()),
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,
@@ -330,6 +341,7 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Stdin,
             model_flag: Some("--model".to_string()),
+            effort_flag: None,
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,
@@ -370,6 +382,7 @@ impl CliSpec {
             args,
             prompt: PromptChannel::Stdin,
             model_flag: None,
+            effort_flag: None,
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,

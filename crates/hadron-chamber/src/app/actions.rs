@@ -417,6 +417,12 @@ pub(super) fn perform_clear_field(
         }
     }
 
+    // Detach any quark worktrees from their pre-clear assignment branches and
+    // archive+prune those branches so the fresh session never gates stale
+    // pre-clear worktree branches on the first turn.
+    let repo_root = crate::vcs::repo_root_of(field_path);
+    let _ = hadron_gluon::worktree::reset_worktrees_on_clear(repo_root);
+
     Ok(())
 }
 

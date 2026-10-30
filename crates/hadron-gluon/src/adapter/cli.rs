@@ -292,6 +292,8 @@ pub struct CliQuark<R: CliRunner> {
     /// The model to run, in whatever form the CLI's `--model`-equivalent expects.
     /// Empty → the CLI's default (never passed).
     model: String,
+    /// Optional reasoning effort level, passed via `spec.effort_flag` when both are set.
+    effort: Option<String>,
     spec: CliSpec,
     /// This quark's `@role` roles (see [`Quark::roles`]); empty = no roles.
     roles: Vec<String>,
@@ -329,6 +331,7 @@ impl<R: CliRunner> CliQuark<R> {
             flavor,
             display_name: None,
             model: model.into(),
+            effort: None,
             spec,
             resident: false,
             runner,
@@ -346,6 +349,11 @@ impl<R: CliRunner> CliQuark<R> {
 
     pub fn with_sandbox(mut self, sandbox: hadron_gatekeeper::SandboxMode) -> Self {
         self.sandbox = sandbox;
+        self
+    }
+
+    pub fn with_effort(mut self, effort: Option<String>) -> Self {
+        self.effort = effort;
         self
     }
 
@@ -428,6 +436,13 @@ impl<R: CliRunner> CliQuark<R> {
             if !self.model.is_empty() {
                 args.push(model_flag.clone());
                 args.push(self.model.clone());
+            }
+        }
+        if let (Some(effort_flag), Some(effort)) = (&self.spec.effort_flag, &self.effort) {
+            let trimmed = effort.trim();
+            if !trimmed.is_empty() {
+                args.push(effort_flag.clone());
+                args.push(trimmed.to_string());
             }
         }
         args.extend(self.spec.posture.for_mode(mode).iter().cloned());
@@ -1223,6 +1238,7 @@ mod tests {
             args: vec![],
             prompt: PromptChannel::Stdin,
             model_flag: None,
+            effort_flag: None,
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,
@@ -1340,6 +1356,49 @@ mod tests {
         assert!(
             recorded[0].stdin.contains("Sliding Context Pruner: compacted"),
             "oversized stdin prompt must compact older field events via SlidingContextPruner"
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_quark_passes_effort_flag_only_when_spec_and_seat_define_it() {
+        let runner_claude = FakeRunner::with_stdout(vec!["ok"]);
+        let claude_spec = CliSpec::claude();
+        let mut q_claude = CliQuark::new(
+            QuarkId::new("cli-claude"),
+            Flavor::Worker,
+            "claude-opus-4-6",
+            claude_spec,
+            runner_claude,
+        )
+        .with_effort(Some("high".to_string()));
+        q_claude.excite(projection("do task")).await.unwrap();
+
+        let runner_agy = FakeRunner::with_stdout(vec!["ok"]);
+        let agy_spec = CliSpec::agy();
+        let mut q_agy = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Orchestrator,
+            "gemini-4-argon-medium",
+            agy_spec,
+            runner_agy,
+        )
+        .with_effort(Some("high".to_string()));
+        q_agy.excite(projection("do task")).await.unwrap();
+
+        let recorded_claude = q_claude.runner.recorded.lock().unwrap();
+        assert!(
+            recorded_claude[0]
+                .args
+                .windows(2)
+                .any(|w| w[0] == "--effort" && w[1] == "high"),
+            "claude CLI spec with effort_flag must pass --effort high, got: {:?}",
+            recorded_claude[0].args
+        );
+        let recorded_agy = q_agy.runner.recorded.lock().unwrap();
+        assert!(
+            !recorded_agy[0].args.iter().any(|a| a == "--effort"),
+            "agy CLI spec with effort_flag: None must never pass --effort, got: {:?}",
+            recorded_agy[0].args
         );
     }
 }

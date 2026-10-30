@@ -327,7 +327,9 @@ impl super::Chamber {
             .child(kv_row("Agent", agent_str))
             .child(make_model_row(&self.info_model_select_state))
             .child(kv_row("Transport", transport_str))
-            .child(make_effort_row(&self.info_effort_select_state));
+            .when(!available_efforts.is_empty(), |this| {
+                this.child(make_effort_row(&self.info_effort_select_state))
+            });
         // The Permission chip below is the single authority control (it replaced the
         // Claude-specific ACP `mode_config`), so `mode_config` is deliberately not shown
         // here — showing both would just relocate the duplication it was meant to remove.

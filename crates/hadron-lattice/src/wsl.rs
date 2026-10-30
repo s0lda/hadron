@@ -366,12 +366,27 @@ pub fn is_wsl_bwrap_available(distro: &str) -> bool {
     }
 }
 
+/// Whether `program` is an explicit Windows host path (drive-letter `C:\...` / `C:/...`
+/// or UNC `\\...`). Such paths always live on the Windows host and can never be
+/// `execvpe`'d verbatim inside a Linux WSL distribution.
+pub fn is_windows_host_path(program: &str) -> bool {
+    let bytes = program.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return true;
+    }
+    program.starts_with(r"\\")
+}
+
 /// Check whether `program` exists inside `distro` (checking standard system and user bin directories)
 /// or on the Windows host, and return `true` if `program` should be executed via `wsl.exe` inside `distro`,
-/// or `false` if it is only installed on the Windows host (e.g. `agy.exe` on Windows when opening a WSL repo).
+/// or `false` if it is only installed on the Windows host (e.g. `agy.exe` on Windows when opening a WSL repo,
+/// or a Windows-host venv interpreter like `C:\Users\...\.hadron\bridges\agy\venv\Scripts\python.exe`).
 ///
 /// Results are cached per `(distro, program)` for the lifetime of the process.
 pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
+    if is_windows_host_path(program) {
+        return false;
+    }
     #[cfg(windows)]
     {
         use std::collections::HashMap;
@@ -387,12 +402,13 @@ pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
         }
 
         let in_wsl = resolve_wsl_program_path(distro, program).is_some();
-        let on_host = Command::new("where.exe")
-            .arg(program)
-            .creation_flags(0x08000000)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let on_host = Path::new(program).exists()
+            || Command::new("where.exe")
+                .arg(program)
+                .creation_flags(0x08000000)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
 
         let decision = decide_wsl_vs_host(in_wsl, on_host);
         map.lock().unwrap().insert(key, decision);
@@ -793,5 +809,16 @@ mod tests {
         assert!(path_env.contains("/home/user/.local/bin"));
         assert!(path_env.contains("/home/user/.cargo/bin"));
         assert!(path_env.contains("/home/user/.gemini/antigravity-cli/bin"));
+
+        assert!(is_windows_host_path(
+            r"C:\Users\Komputer\.hadron/bridges/agy/venv/Scripts/python.exe"
+        ));
+        assert!(is_windows_host_path(r"\\server\share\tool.exe"));
+        assert!(!is_windows_host_path("npx"));
+        assert!(!is_windows_host_path("/home/user/.hadron/bridges/agy/venv/bin/python"));
+        assert!(!should_run_in_wsl(
+            "Ubuntu-24.04",
+            r"C:\Users\Komputer\.hadron/bridges/agy/venv/Scripts/python.exe"
+        ));
     }
 }

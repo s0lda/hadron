@@ -102,14 +102,72 @@ where
     }
 }
 
-/// Returns `true` when post-turn context window occupancy reaches or exceeds 70%,
-/// triggering an automatic session rotation (`reset_session`) before the next turn
-/// so long-running overnight runs do not suffer context degradation or token ballooning.
+/// Maximum resident context tokens before automatic session rotation (`reset_session`),
+/// regardless of `context_window_size`. On 2M-token models (`gemini-3.8-flash`, `gemini-4-argon`),
+/// 70% of the window is 1.4M tokens — far above the ~150k per-request context where a 10-step
+/// tool-calling turn exceeds 2,000,000 input tokens/minute (429 RESOURCE_EXHAUSTED).
+pub const MAX_RESIDENT_CONTEXT_TOKENS: u32 = 150_000;
+
+/// Returns `true` when post-turn context window occupancy reaches or exceeds 70% OR
+/// [`MAX_RESIDENT_CONTEXT_TOKENS`], triggering an automatic session rotation (`reset_session`)
+/// before the next turn so long-running sessions do not suffer context degradation or TPM rate limits.
 pub fn should_rotate_session(usage: &hadron_lattice::Usage) -> bool {
-    usage
-        .context
-        .as_ref()
-        .is_some_and(|c| c.used_percentage >= 70.0)
+    usage.context.as_ref().is_some_and(|c| {
+        c.used_percentage >= 70.0 || c.used_tokens >= MAX_RESIDENT_CONTEXT_TOKENS
+    })
+}
+
+/// Whether a quark worktree's superseded branch (`old_assignment`) should be run through
+/// `merge_gate` before cutting the next assignment's branch.
+///
+/// Returns `true` ONLY when `old_assignment` belongs to the active session (after the
+/// most recent `/clear` command in `events`), was NOT superseded by a `Kind::Reboot` of
+/// `target`, and did NOT terminate in `QuarkState::Error` (which only holds a failed turn's
+/// WIP error checkpoint, not a completed assignment). Stale pre-`/clear` or errored branches
+/// are archived (`archive/quark-...`) and detached at `base` instead of gating the new turn.
+pub fn should_gate_superseded_branch(
+    events: &[Event],
+    target: &QuarkId,
+    old_assignment: Option<ulid::Ulid>,
+) -> bool {
+    let Some(old_id) = old_assignment else {
+        return false;
+    };
+    let active_slice = match events.iter().rposition(|e| {
+        matches!(&e.kind, Kind::Command { cmd, .. } if cmd.trim() == "/clear")
+    }) {
+        Some(clear_idx) => &events[clear_idx + 1..],
+        None => events,
+    };
+
+    let Some(last_relevant_idx) = active_slice
+        .iter()
+        .rposition(|e| e.id == old_id || e.answers == Some(old_id))
+    else {
+        return false;
+    };
+
+    // If `target` was rebooted after `old_id`, the session was explicitly reset.
+    if active_slice[last_relevant_idx + 1..]
+        .iter()
+        .any(|e| matches!(e.kind, Kind::Reboot) && e.to.as_ref() == Some(target))
+    {
+        return false;
+    }
+
+    // If the last status recorded for `target` on `old_id` was `Error`, its commit is an
+    // automatic error WIP checkpoint (`run.rs`), not a completed turn ready to land.
+    let last_status = active_slice.iter().rev().find_map(|e| {
+        if e.from == Actor::Quark(target.clone())
+            && (e.answers == Some(old_id) || e.id == old_id)
+        {
+            if let Kind::Status { state } = &e.kind {
+                return Some(*state);
+            }
+        }
+        None
+    });
+    !matches!(last_status, Some(QuarkState::Error))
 }
 
 impl super::Engine {
@@ -633,30 +691,45 @@ impl super::Engine {
                                         branch: old_branch.clone(),
                                     };
                                     if crate::worktree::commits_ahead(&old_wt, &base).unwrap_or(0) > 0 {
-                                        let old_assignment = crate::worktree::parse_assignment_from_branch(&old_branch)
-                                            .unwrap_or(driver.assignment);
-                                        let old_turn_tree = TurnTree {
-                                            head_before: crate::worktree::head(&wt_dir),
-                                            wt: old_wt,
-                                            base,
-                                            assignment: old_assignment,
-                                        };
-                                        if self.merge.is_some() {
-                                            self.append(Event::new(
-                                                Actor::Gluon,
-                                                None,
-                                                Kind::Message {
-                                                    body: format!(
-                                                        "gating `{old_branch}` (a previous assignment of `{}`) \
-                                                         before its next turn — this can take minutes.",
-                                                        target.as_str(),
-                                                    ),
-                                                },
-                                            ))
-                                            .await?;
-                                            if self.merge_gate(&target, &old_turn_tree).await? {
-                                                spawned_any = true;
-                                                continue;
+                                        let parsed_old = crate::worktree::parse_assignment_from_branch(&old_branch);
+                                        if should_gate_superseded_branch(&events, &target, parsed_old) {
+                                            let old_assignment = parsed_old.unwrap_or(driver.assignment);
+                                            let old_turn_tree = TurnTree {
+                                                head_before: crate::worktree::head(&wt_dir),
+                                                wt: old_wt,
+                                                base,
+                                                assignment: old_assignment,
+                                            };
+                                            if self.merge.is_some() {
+                                                self.append(Event::new(
+                                                    Actor::Gluon,
+                                                    None,
+                                                    Kind::Message {
+                                                        body: format!(
+                                                            "gating `{old_branch}` (a previous assignment of `{}`) \
+                                                             before its next turn — this can take minutes.",
+                                                            target.as_str(),
+                                                        ),
+                                                    },
+                                                ))
+                                                .await?;
+                                                if self.merge_gate(&target, &old_turn_tree).await? {
+                                                    spawned_any = true;
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            let _ = crate::snapshot::git(&wt_dir, &["rebase", "--abort"]);
+                                            if crate::worktree::is_dirty(&wt_dir).unwrap_or(false) {
+                                                let msg = format!(
+                                                    "{}: WIP snapshot before archiving superseded branch {}",
+                                                    target.as_str(),
+                                                    old_branch
+                                                );
+                                                let _ = crate::worktree::commit_turn(&old_wt, &msg);
+                                            }
+                                            if crate::worktree::detach_at_base(&old_wt, &base).is_ok() {
+                                                let _ = crate::worktree::archive_and_prune_branch(&root, &old_branch);
                                             }
                                         }
                                     }

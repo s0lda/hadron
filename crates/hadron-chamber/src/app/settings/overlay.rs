@@ -441,10 +441,15 @@ impl super::Chamber {
                         self.general_model_select(window, cx)
                     };
 
-                    let effort_field = if acp_quark {
-                        self.acp_effort_select(window, cx)
+                    let supports_effort = !self.efforts_for_quark(target.key()).is_empty();
+                    let effort_field = if supports_effort {
+                        Some(if acp_quark {
+                            self.acp_effort_select(window, cx)
+                        } else {
+                            self.general_effort_select(window, cx)
+                        })
                     } else {
-                        self.general_effort_select(window, cx)
+                        None
                     };
 
                     let model_card_content = v_flex()
@@ -455,11 +460,13 @@ impl super::Chamber {
                             model_field,
                         ))
                         .when_some(self.agy_bridge_status_row(cx), |v, row| v.child(row))
-                        .child(settings_field(
-                            "Effort",
-                            Some("Reasoning effort spent per turn."),
-                            effort_field,
-                        ))
+                        .when_some(effort_field, |v, field| {
+                            v.child(settings_field(
+                                "Effort",
+                                Some("Reasoning effort spent per turn."),
+                                field,
+                            ))
+                        })
                         .when(self.settings_model_params_applies, |v| {
                             v.child(
                                 v_flex()

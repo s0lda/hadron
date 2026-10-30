@@ -116,6 +116,35 @@ pub(super) fn parse_claude_rate_limit(meta: &serde_json::Map<String, serde_json:
     })
 }
 
+/// Prepare a [`Projection`] for an ACP turn and render its prompt text.
+///
+/// - When `has_resident_session` is `true` and `turn.field_window` is non-empty, the
+///   resident ACP session already holds the static prefix (`invariants`, `role_body`,
+///   `has_forge_tools`, `nucleus_digest`, `nucleus_index`) from its initial turn, so
+///   [`crate::adapter::prompt::without_static_prefix`] strips those cached static sections
+///   instead of re-appending a duplicate copy to the conversation history every turn.
+/// - Applies [`crate::adapter::cli::fit_prompt_with_sliding_pruner`] so an oversized field
+///   window or git diff is compacted via `SlidingContextPruner` before sending over ACP.
+pub(super) fn prepare_acp_turn_prompt(
+    turn: Projection,
+    self_id: &QuarkId,
+    has_resident_session: bool,
+) -> (Projection, String) {
+    let resuming = has_resident_session && !turn.field_window.is_empty();
+    let effective_turn = if resuming {
+        crate::adapter::prompt::without_static_prefix(turn)
+    } else {
+        turn
+    };
+    let prompt = crate::adapter::cli::fit_prompt_with_sliding_pruner(
+        &effective_turn,
+        self_id,
+        crate::adapter::cli::SAFE_ARG_BYTES,
+        &crate::sliding_pruner::SlidingPrunerConfig::default(),
+    );
+    (effective_turn, prompt)
+}
+
 /// What a fresh session's quota accumulator starts from: whatever was last
 /// persisted for this quark (see `hadron_lattice::quota`), so a resident agent
 /// that re-boots — or a `/clear`, which drops the session outright — does not
@@ -972,17 +1001,17 @@ impl super::AcpQuark {
 
     pub(super) async fn run_turn(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
-        let prompt = crate::adapter::prompt::build(&turn, &self.id);
+        // If the chat history has been cleared/reset, discard the resident session so the agent boots fresh.
+        if turn.field_window.is_empty() {
+            self.session = None;
+        }
+
+        let (turn, prompt) = prepare_acp_turn_prompt(turn, &self.id, self.session.is_some());
         // Best-effort, same as quota's persistence right below: a failed write must
         // never fail a turn.
         if let Some(dir) = &self.prompt_cost_dir {
             let breakdown = crate::adapter::prompt::measure(&turn, &self.id);
             let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
-        }
-
-        // If the chat history has been cleared/reset, discard the resident session so the agent boots fresh.
-        if turn.field_window.is_empty() {
-            self.session = None;
         }
 
         // Boot on the first turn, in the quark's own worktree, and keep it.

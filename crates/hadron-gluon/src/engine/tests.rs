@@ -6942,15 +6942,15 @@ fn should_rotate_session_triggers_at_seventy_percent_context() {
     assert!(!super::should_rotate_session(&usage));
 
     usage.context = Some(hadron_lattice::ContextUsage {
-        used_tokens: 1_300_000,
-        context_window_size: 2_000_000,
+        used_tokens: 130_000,
+        context_window_size: 200_000,
         used_percentage: 65.0,
     });
     assert!(!super::should_rotate_session(&usage));
 
     usage.context = Some(hadron_lattice::ContextUsage {
-        used_tokens: 1_400_000,
-        context_window_size: 2_000_000,
+        used_tokens: 140_000,
+        context_window_size: 200_000,
         used_percentage: 70.0,
     });
     assert!(super::should_rotate_session(&usage));
@@ -7190,3 +7190,118 @@ fn engine_git_auto_prune_worktrees_wiring() {
     engine.set_git_auto_prune_worktrees(false);
     assert!(!engine.git_auto_prune_worktrees());
 }
+
+#[test]
+fn should_rotate_session_triggers_at_70_percent_or_150k_tokens() {
+    use hadron_lattice::{ContextUsage, Usage};
+
+    let low = Usage {
+        context: Some(ContextUsage {
+            used_tokens: 80_000,
+            context_window_size: 2_000_000,
+            used_percentage: 4.0,
+        }),
+        ..Default::default()
+    };
+    assert!(!super::run::should_rotate_session(&low));
+
+    let high_tokens_2m_window = Usage {
+        context: Some(ContextUsage {
+            used_tokens: 159_096,
+            context_window_size: 2_000_000,
+            used_percentage: 7.95,
+        }),
+        ..Default::default()
+    };
+    assert!(
+        super::run::should_rotate_session(&high_tokens_2m_window),
+        "2M window session exceeding 150k used_tokens must rotate before hitting 2M TPM rate limits"
+    );
+
+    let high_pct_small_window = Usage {
+        context: Some(ContextUsage {
+            used_tokens: 90_000,
+            context_window_size: 128_000,
+            used_percentage: 70.3,
+        }),
+        ..Default::default()
+    };
+    assert!(super::run::should_rotate_session(&high_pct_small_window));
+}
+
+#[tokio::test]
+async fn pre_clear_or_errored_superseded_worktree_branch_is_archived_and_detached_not_gated() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+
+    // Simulate a leftover pre-/clear worktree branch with an unmerged WIP commit
+    let old_ulid = ulid::Ulid::new();
+    let w_id = QuarkId::new("acp-agy");
+    let old_wt = crate::worktree::ensure(&root, &w_id, &old_ulid.to_string()).unwrap();
+    std::fs::write(old_wt.path.join("stale_wip.txt"), "stale wip from archived session").unwrap();
+    crate::worktree::checkpoint_atomic_step(&old_wt.path, &w_id, "WIP checkpoint before turn error")
+        .unwrap();
+
+    // Now start a fresh post-/clear field where `old_ulid` does not exist
+    append_event(
+        &field,
+        &Event::new(
+            Actor::Human,
+            None,
+            Kind::Command {
+                cmd: "/clear".to_string(),
+                exit: 0,
+                out_summary: "Session reset".to_string(),
+            },
+        ),
+    )
+    .unwrap();
+    seed_mode(&field, Some("acp-agy"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "@acp-agy write fresh.txt".into(),
+            },
+        ),
+    )
+    .unwrap();
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(ReportingWriter {
+            id: w_id.clone(),
+            file: "fresh.txt",
+            reply: "done fresh",
+        })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner));
+
+    engine.run_until_quiesce().await.unwrap();
+
+    let events = read_events(&field).unwrap();
+    assert!(
+        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("gating `quark/acp-agy/"))),
+        "stale pre-/clear branch must NOT trigger a superseded-branch merge gate"
+    );
+    assert!(
+        root.join("fresh.txt").exists(),
+        "new turn must cut cleanly from main and land fresh.txt"
+    );
+    assert!(
+        !root.join("stale_wip.txt").exists(),
+        "stale pre-/clear WIP commit must not land on main"
+    );
+    let tags = crate::snapshot::git(&root, &["tag", "--list", "archive/*"]).unwrap();
+    assert!(
+        tags.contains(&format!("archive/quark-acp-agy-{old_ulid}")),
+        "stale branch must be preserved under archive/ tag, got tags: {tags}"
+    );
+}
+

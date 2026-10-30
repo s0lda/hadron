@@ -360,20 +360,9 @@ impl super::Chamber {
 
     /// The ACP Effort dropdown component — over the agent's advertised `ThoughtLevel` options.
     pub(super) fn acp_effort_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let selector = match self.acp_model_probe.as_ref().map(|p| &p.state) {
-            Some(AcpModelState::Ready { selectors }) => selectors.effort.as_ref(),
-            _ => None,
-        };
+        let target_key = self.settings_target.key().to_string();
+        let available = self.efforts_for_quark(&target_key);
         let current_value = self.settings_effort.read(cx).value().trim().to_string();
-        let mut available = Vec::new();
-        if let Some(sel) = selector {
-            for m in &sel.available {
-                available.push(m.value.clone());
-            }
-        }
-        if available.is_empty() {
-            available = vec!["low".into(), "medium".into(), "high".into(), "max".into()];
-        }
         let key = (current_value.clone(), available.clone());
         if self.effort_select_key.as_ref() != Some(&key) {
             self.effort_select_key = Some(key);
@@ -395,8 +384,9 @@ impl super::Chamber {
 
     /// General Reasoning Effort dropdown for non-ACP quarks.
     pub(super) fn general_effort_select(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let target_key = self.settings_target.key().to_string();
+        let available = self.efforts_for_quark(&target_key);
         let current_value = self.settings_effort.read(cx).value().trim().to_string();
-        let available = vec!["low".to_string(), "medium".to_string(), "high".to_string(), "max".to_string()];
         let key = (current_value.clone(), available.clone());
         if self.effort_select_key.as_ref() != Some(&key) {
             self.effort_select_key = Some(key);

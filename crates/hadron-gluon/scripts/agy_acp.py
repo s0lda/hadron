@@ -13,7 +13,8 @@ import json
 import uuid
 import logging
 import asyncio
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional
 import os
 
 from google.antigravity import Agent, LocalAgentConfig
@@ -154,6 +155,23 @@ def _format_tool_call_title(call: ToolCall) -> str:
     return name
 
 
+MAX_RESIDENT_CONTEXT_TOKENS = 150000
+
+
+def _transient_tpm_retry_delay_secs(exc: Exception) -> Optional[float]:
+    msg = str(exc)
+    msg_upper = msg.upper()
+    if "429" not in msg and "RESOURCE_EXHAUSTED" not in msg_upper:
+        return None
+    if "MONTHLY SPEND CAP" in msg_upper or "BILLING" in msg_upper:
+        return None
+    m = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s", msg, re.IGNORECASE)
+    if not m:
+        m = re.search(r"'retryDelay':\s*'([0-9]+(?:\.[0-9]+)?)s'", msg)
+    delay = float(m.group(1)) + 1.0 if m else 15.0
+    return min(max(delay, 2.0), 60.0)
+
+
 async def handle_prompt(msg_id, session_id, prompt):
     session_data = sessions.get(session_id)
     if not session_data:
@@ -184,44 +202,73 @@ async def handle_prompt(msg_id, session_id, prompt):
         return
 
     try:
-        response = await agent.chat(prompt_text)
-        text_accumulated = []
-        thought_accumulated = []
-        tool_call_count = 0
-        async for chunk in response.chunks:
-            if isinstance(chunk, Text):
-                text_accumulated.append(chunk.text)
-                send_session_update(session_id, {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": {"type": "text", "text": chunk.text}
-                })
-            elif isinstance(chunk, Thought):
-                thought_accumulated.append(chunk.text)
+        for attempt in range(2):
+            try:
+                response = await agent.chat(prompt_text)
+                text_accumulated = []
+                thought_accumulated = []
+                llm_steps = 1
+                in_tool_batch = False
+                async for chunk in response.chunks:
+                    if isinstance(chunk, Text):
+                        in_tool_batch = False
+                        text_accumulated.append(chunk.text)
+                        send_session_update(session_id, {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "text", "text": chunk.text}
+                        })
+                    elif isinstance(chunk, Thought):
+                        in_tool_batch = False
+                        thought_accumulated.append(chunk.text)
+                        send_session_update(session_id, {
+                            "sessionUpdate": "agent_thought_chunk",
+                            "content": {"type": "text", "text": chunk.text}
+                        })
+                    elif isinstance(chunk, ToolCall):
+                        if not in_tool_batch:
+                            llm_steps += 1
+                            in_tool_batch = True
+                        title = _format_tool_call_title(chunk)
+                        call_id = str(getattr(chunk, "id", None) or uuid.uuid4())
+                        send_session_update(session_id, {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": call_id,
+                            "title": title,
+                            "kind": "other"
+                        })
+
+                # Fallback if no Text chunks were streamed (e.g. model generated thoughts or text only via resolve())
+                if not text_accumulated:
+                    fallback_text = await response.text()
+                    if not fallback_text and thought_accumulated:
+                        fallback_text = "".join(thought_accumulated)
+                    if fallback_text:
+                        send_session_update(session_id, {
+                            "sessionUpdate": "agent_message_chunk",
+                            "content": {"type": "text", "text": fallback_text}
+                        })
+                break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                delay = _transient_tpm_retry_delay_secs(e) if attempt == 0 else None
+                if delay is None:
+                    raise
+                logger.warning(
+                    f"session {session_id} hit transient rate limit (429); "
+                    f"rotating SDK agent and retrying in {delay:.1f}s: {e}"
+                )
                 send_session_update(session_id, {
                     "sessionUpdate": "agent_thought_chunk",
-                    "content": {"type": "text", "text": chunk.text}
+                    "content": {
+                        "type": "text",
+                        "text": f"Rate limit reached; waiting {int(delay)}s and retrying with fresh context…"
+                    }
                 })
-            elif isinstance(chunk, ToolCall):
-                tool_call_count += 1
-                title = _format_tool_call_title(chunk)
-                call_id = str(getattr(chunk, "id", None) or uuid.uuid4())
-                send_session_update(session_id, {
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": call_id,
-                    "title": title,
-                    "kind": "other"
-                })
-
-        # Fallback if no Text chunks were streamed (e.g. model generated thoughts or text only via resolve())
-        if not text_accumulated:
-            fallback_text = await response.text()
-            if not fallback_text and thought_accumulated:
-                fallback_text = "".join(thought_accumulated)
-            if fallback_text:
-                send_session_update(session_id, {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": {"type": "text", "text": fallback_text}
-                })
+                session_data["agent"] = None
+                session_data["last_used_tokens"] = 0
+                await asyncio.sleep(delay)
+                agent = await ensure_agent(session_data)
 
         usage = response.usage_metadata
         usage_payload = None
@@ -237,11 +284,13 @@ async def handle_prompt(msg_id, session_id, prompt):
                 input_tokens + output_tokens + cached_tokens
             )
             max_tokens = getattr(usage, "context_window_size", 2000000) or 2000000
-            invocations = max(1, tool_call_count + 1)
+            invocations = max(1, llm_steps)
             raw_context = input_tokens + cached_tokens
             if invocations > 1:
                 raw_context = raw_context // invocations
-            used = min(max_tokens, raw_context)
+            prev_used = session_data.get("last_used_tokens", 0) or 0
+            used = min(max_tokens, max(raw_context, prev_used))
+            session_data["last_used_tokens"] = used
 
             send_session_update(session_id, {
                 "sessionUpdate": "usage_update",
@@ -259,12 +308,14 @@ async def handle_prompt(msg_id, session_id, prompt):
                 "_meta": {"cumulative": False},
             }
 
-            if used >= int(0.75 * max_tokens):
+            rotate_ceiling = min(int(0.70 * max_tokens), MAX_RESIDENT_CONTEXT_TOKENS)
+            if used >= rotate_ceiling:
                 logger.info(
-                    f"session {session_id} context reached {used}/{max_tokens} tokens (>=75%); "
-                    "rotating resident SDK agent for next turn"
+                    f"session {session_id} context reached {used}/{max_tokens} tokens "
+                    f"(>= {rotate_ceiling} resident cap); rotating resident SDK agent for next turn"
                 )
                 session_data["agent"] = None
+                session_data["last_used_tokens"] = 0
 
         send_response(msg_id, {
             "stopReason": "end_turn",
@@ -279,6 +330,7 @@ async def handle_prompt(msg_id, session_id, prompt):
         # about why. Hand back the reason — the client turns it into a real error.
         logger.error(f"turn failed: {e}")
         session_data["agent"] = None
+        session_data["last_used_tokens"] = 0
         send_error(msg_id, f"Antigravity SDK turn failed: {e}")
     finally:
         if session_data.get("current_task") is asyncio.current_task():

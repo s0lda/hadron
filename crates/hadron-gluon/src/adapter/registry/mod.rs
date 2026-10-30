@@ -816,6 +816,7 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
         QuarkKind::Cli(cli_spec) => {
             let watch = live_dir.filter(|_| cli_spec.stream.is_some());
             let mut q = CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
+                .with_effort(spec.effort)
                 .with_sandbox(sandbox)
                 .with_display_name(name)
                 .with_roles(roles, exclusive)

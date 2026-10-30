@@ -1027,6 +1027,36 @@ pub fn detach_at_base(wt: &Worktree, base: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Reset all quark worktrees onto `base` (detached HEAD) and archive+prune any
+/// pre-clear `quark/*` branches when `/clear` starts a new session.
+///
+/// Any uncommitted edits in a worktree are snapshotted onto its current branch
+/// before detaching, and unmerged `quark/*` branches are tagged under `archive/quark-...`
+/// before deletion so no work is ever lost while ensuring the fresh session starts
+/// without stale pre-clear branches triggering superseded-assignment merge gates.
+pub fn reset_worktrees_on_clear(repo_root: &Path) -> anyhow::Result<Vec<String>> {
+    let base = default_branch(repo_root);
+    let mut archived = Vec::new();
+    for wt in list(repo_root)? {
+        let _ = git(&wt.path, &["rebase", "--abort"]);
+        if is_dirty(&wt.path).unwrap_or(false) {
+            let msg = format!(
+                "{}: WIP snapshot before /clear session reset",
+                wt.quark.as_str()
+            );
+            let _ = commit_turn(&wt, &msg);
+        }
+        let branch = wt.branch.clone();
+        if detach_at_base(&wt, &base).is_ok() && !branch.is_empty() && branch != base {
+            if let Ok(tag) = archive_and_prune_branch(repo_root, &branch) {
+                archived.push(tag);
+            }
+        }
+    }
+    let _ = prune_merged_branches(repo_root, &base);
+    Ok(archived)
+}
+
 /// Where a reap parks anything it had to move out of a tree before removing it.
 /// Gitignored like the rest of `.hadron/`, so it never dirties the human's status.
 pub fn reaped_dir(repo_root: &Path) -> PathBuf {

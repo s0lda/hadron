@@ -583,31 +583,51 @@ impl Chamber {
         models
     }
 
-    /// Combined effort options for `qid`: live ACP-probed thought levels or standard levels.
+    /// Combined effort options for `qid`: live ACP-probed thought levels when probed,
+    /// standard levels when the seat supports a standalone effort selector (`Seat::supports_effort`),
+    /// or an empty list when unsupported (e.g. `cli-agy`, `acp-agy`, `Transport::Http`),
+    /// which hides the Effort selector in both Settings and the Quark Info drawer.
     pub(super) fn efforts_for_quark(&self, qid: &str) -> Vec<String> {
-        let mut available = Vec::new();
-        if let Some(p) = &self.acp_model_probe {
-            if p.id == qid {
-                if let AcpModelState::Ready { selectors } = &p.state {
-                    if let Some(sel) = &selectors.effort {
+        let resolved = resolve_team(&self.team, &self.global);
+        let qid_obj = QuarkId::new(qid);
+        let seat = resolved
+            .get(&qid_obj)
+            .cloned()
+            .or_else(|| self.global.get(&qid_obj).cloned());
+
+        let Some(seat) = seat else {
+            return Vec::new();
+        };
+
+        if seat.transport == hadron_lattice::Transport::Acp {
+            if let Some(p) = &self.acp_model_probe {
+                if p.id == qid {
+                    if let AcpModelState::Ready { selectors } = &p.state {
+                        let Some(sel) = &selectors.effort else {
+                            return Vec::new();
+                        };
+                        let mut available = Vec::new();
                         for m in &sel.available {
                             if !m.value.is_empty() && !available.contains(&m.value) {
                                 available.push(m.value.clone());
                             }
                         }
+                        return available;
                     }
                 }
             }
         }
-        if available.is_empty() {
-            available = vec![
+
+        if seat.supports_effort() {
+            vec![
                 "low".into(),
                 "medium".into(),
                 "high".into(),
                 "max".into(),
-            ];
+            ]
+        } else {
+            Vec::new()
         }
-        available
     }
 
     /// Directly persist a new model choice for `qid_str` from the Quark Info selector.

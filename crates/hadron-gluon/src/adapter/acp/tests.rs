@@ -1607,3 +1607,107 @@ async fn test_batched_tool_call_evaluation_runs_concurrently() {
     assert!(elapsed.as_millis() < 90, "Batched tool execution must run in parallel");
 }
 
+#[test]
+fn windows_host_bridge_path_on_wsl_unc_workspace_is_never_wrapped_in_wsl_exe() {
+    let target = AcpTarget {
+        program: r"C:\Users\Komputer\.hadron\bridges\agy\venv\Scripts\python.exe".to_string(),
+        args: vec![r"C:\Users\Komputer\.hadron\bridges\agy\agy_acp.py".to_string()],
+        env: Vec::new(),
+    };
+    let resolved = target.resolved().expect("windows host path resolves");
+    let wsl_work_dir = std::path::Path::new(r"\\wsl.localhost\Ubuntu-24.04\home\Jake\dev\hadron\.hadron\trees\acp-agy");
+    let desc_json = super::session::acp_stdio_descriptor_sandboxed(
+        &resolved,
+        &[("GEMINI_API_KEY".to_string(), "secret".to_string())],
+        wsl_work_dir,
+        hadron_gatekeeper::SandboxMode::Off,
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&desc_json).unwrap();
+    assert_ne!(
+        parsed["command"].as_str(),
+        Some("wsl.exe"),
+        "Windows host python.exe must never be wrapped inside wsl.exe --exec"
+    );
+    assert!(
+        parsed["command"]
+            .as_str()
+            .is_some_and(|c| c.starts_with(r"C:\Users\Komputer\.hadron\bridges\agy")),
+        "command must remain anchored to the Windows host bridge path, got: {:?}",
+        parsed["command"]
+    );
+}
+
+#[test]
+fn prepare_acp_turn_prompt_strips_static_prefix_on_resumed_session_and_prunes_oversized_field() {
+    use hadron_lattice::{Actor, Event, Kind};
+
+    let id = QuarkId::new("acp-agy");
+    let mut turn = Projection {
+        isolated: true,
+        task: "Do work".to_string(),
+        invariants: "STATIC-INVARIANTS-CANARY".to_string(),
+        available_invariants: vec![],
+        nucleus_digest: "STATIC-DIGEST-CANARY".to_string(),
+        live_activities: vec![],
+        roster: vec![],
+        field_window: vec![Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "First user turn".to_string(),
+            },
+        )],
+        field_truncated: false,
+        nucleus_index: "STATIC-INDEX-CANARY".to_string(),
+        nucleus_index_path: std::path::PathBuf::new(),
+        nucleus_index_truncated: false,
+        nucleus_index_budget_bytes: hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES,
+        nucleus_notes_dir: std::path::PathBuf::new(),
+        git_diff: String::new(),
+        cwd: std::path::PathBuf::from("/tmp/hadron-test"),
+        mode: Mode::Bypass,
+        role_body: Some("STATIC-ROLE-CANARY".to_string()),
+        active_skill: None,
+        named_specifically: true,
+        has_forge_tools: true,
+    };
+
+    let (_, initial_prompt) = super::session::prepare_acp_turn_prompt(turn.clone(), &id, false);
+    assert!(
+        initial_prompt.contains("STATIC-INVARIANTS-CANARY"),
+        "initial turn on fresh ACP session must include static prefix"
+    );
+
+    let (resumed_turn, resumed_prompt) =
+        super::session::prepare_acp_turn_prompt(turn.clone(), &id, true);
+    assert!(resumed_turn.invariants.is_empty());
+    assert!(!resumed_prompt.contains("STATIC-INVARIANTS-CANARY"));
+    assert!(!resumed_prompt.contains("STATIC-DIGEST-CANARY"));
+    assert!(!resumed_prompt.contains("STATIC-INDEX-CANARY"));
+    assert!(resumed_prompt.contains("Do work"));
+
+    // Verify oversized field window is compacted by SlidingContextPruner
+    turn.field_window = (0..120)
+        .map(|i| {
+            Event::new(
+                Actor::Human,
+                None,
+                Kind::Message {
+                    body: format!("turn-{i}: {}", "x".repeat(1200)),
+                },
+            )
+        })
+        .collect();
+    let (_, compacted_prompt) = super::session::prepare_acp_turn_prompt(turn, &id, true);
+    assert!(
+        compacted_prompt.len() <= crate::adapter::cli::SAFE_ARG_BYTES,
+        "prepared ACP prompt must stay within SAFE_ARG_BYTES budget"
+    );
+    assert!(
+        compacted_prompt.contains("Sliding Context Pruner: compacted"),
+        "oversized ACP field window must be compacted by SlidingContextPruner"
+    );
+}
+
+
+
