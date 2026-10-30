@@ -592,7 +592,10 @@ pub(super) fn fold_preamble_into_prompt_commands(
     if body.is_none() {
         return;
     }
-    let target_cmd = cmds.iter_mut().find(|(cmd, _)| {
+    let target_cmd = cmds.iter_mut().find(|(cmd, args)| {
+        if cmd == "team" && args.trim().is_empty() {
+            return false;
+        }
         !matches!(
             cmd.as_str(),
             "add-skill"
@@ -1181,6 +1184,35 @@ mod tests {
             cmds_s,
             vec![("add-skill".to_string(), "my-skill\nthe content".to_string())]
         );
+
+        // Bare /team (roster display) does not fold preamble into a broadcast, whereas /team <msg> does.
+        let raw_team_bare = "some context\n/team";
+        let (mut cmds_tb, mut body_tb) = split_leading_commands_in(raw_team_bare, None);
+        fold_preamble_into_prompt_commands(&mut cmds_tb, &mut body_tb, None);
+        assert_eq!(body_tb.as_deref(), Some("some context"));
+        assert_eq!(cmds_tb, vec![("team".to_string(), String::new())]);
+
+        let raw_team_msg = "some context\n/team please review";
+        let (mut cmds_tm, mut body_tm) = split_leading_commands_in(raw_team_msg, None);
+        fold_preamble_into_prompt_commands(&mut cmds_tm, &mut body_tm, None);
+        assert_eq!(body_tm, None);
+        assert_eq!(
+            cmds_tm,
+            vec![("team".to_string(), "please review\n\nsome context".to_string())]
+        );
+
+        // /nucleus, /radar, and /intercom preserve their line arguments instead of leaking them into chat body.
+        let (cmds_nuc, body_nuc) = split_leading_commands_in("/nucleus search memory", None);
+        assert_eq!(cmds_nuc, vec![("nucleus".to_string(), "search memory".to_string())]);
+        assert_eq!(body_nuc, None);
+
+        let (cmds_rad, body_rad) = split_leading_commands_in("/radar @Agy", None);
+        assert_eq!(cmds_rad, vec![("radar".to_string(), "@Agy".to_string())]);
+        assert_eq!(body_rad, None);
+
+        let (cmds_int, body_int) = split_leading_commands_in("/intercom @Agy", None);
+        assert_eq!(cmds_int, vec![("intercom".to_string(), "@Agy".to_string())]);
+        assert_eq!(body_int, None);
     }
 }
 

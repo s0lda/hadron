@@ -521,19 +521,29 @@ pub fn perform_binary_install(target_version: &str, exe_path: &Path) -> UpdateSt
     curl_cmd
         .args([
             "-fsSL",
+            "--retry",
+            "2",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "30",
             &format!("https://raw.githubusercontent.com/s0lda/hadron/main/{script_filename}"),
             "-o",
         ])
         .arg(&script_path);
     hide_console_window(&mut curl_cmd);
+    let curl_shown = format!("{curl_cmd:?}");
     let curl_out = curl_cmd.output();
 
     match curl_out {
         Ok(o) if !o.status.success() => {
-            return UpdateState::Failed(format!(
-                "Failed to download installer script: {}",
-                String::from_utf8_lossy(&o.stderr)
-            ));
+            let log = write_install_log(&curl_shown, &o);
+            let msg = failure_message(
+                &o.status.to_string(),
+                &String::from_utf8_lossy(&o.stderr),
+                log.as_deref(),
+            );
+            return UpdateState::Failed(format!("Failed to download installer script: {msg}"));
         }
         Err(e) => return UpdateState::Failed(format!("Failed to invoke curl: {e}")),
         Ok(_) => {}

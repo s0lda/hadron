@@ -272,6 +272,12 @@ fn main() {
                     }
                     if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
                         hadron_lattice::sys::process::kill_process_group(pid);
+                        for _ in 0..20 {
+                            if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
                     }
                 } else {
                     term::warn(
@@ -320,6 +326,20 @@ fn main() {
                             pid, GLUON_EXIT_WAIT
                         ),
                     );
+                }
+            }
+            #[cfg(not(unix))]
+            if let Some(pid) = gluon_pid {
+                let field_dir = path
+                    .as_ref()
+                    .and_then(|p| std::path::Path::new(p).parent())
+                    .unwrap_or(std::path::Path::new("."));
+                let start = std::time::Instant::now();
+                while hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, field_dir) {
+                    if start.elapsed() >= std::time::Duration::from_secs(10) {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
             match &own_exe {

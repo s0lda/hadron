@@ -1037,20 +1037,24 @@ impl Chamber {
                     eprintln!(
                         "chamber: `/toggle` needs a quark (e.g. `/toggle @Quark`); no roster seat matches {target:?}"
                     );
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("Usage: `/toggle @Quark` (no roster seat matches `{target}`)."),
+                        cx,
+                    );
                     return true;
                 };
                 let (id, was_adopted, was_enabled) = (row.id.clone(), row.adopted, row.enabled);
                 self.toggle_quark_enabled(&id, cx);
-                eprintln!(
-                    "chamber: {id} is now {}",
-                    if !was_adopted {
-                        "adopted and enabled"
-                    } else if was_enabled {
-                        "disabled — it will not take a turn"
-                    } else {
-                        "enabled"
-                    },
-                );
+                let state_desc = if !was_adopted {
+                    "adopted and enabled"
+                } else if was_enabled {
+                    "disabled — it will not take a turn"
+                } else {
+                    "enabled"
+                };
+                eprintln!("chamber: {id} is now {state_desc}");
+                self.post_chat_message(Actor::Gluon, format!("Seat `{id}` is now {state_desc}."), cx);
                 cx.notify();
                 true
             }
@@ -1061,6 +1065,11 @@ impl Chamber {
                 let name = args.trim();
                 if name.is_empty() {
                     eprintln!("chamber: `/rename` needs a name (e.g. `/rename bugfix-router`)");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/rename <session-name>` (e.g. `/rename bugfix-router`)".to_string(),
+                        cx,
+                    );
                     return true;
                 }
                 let ev = Event::new(Actor::Human, None, Kind::SessionName { name: name.to_string() });
@@ -1079,11 +1088,21 @@ impl Chamber {
                 let target = args.trim();
                 if target.is_empty() {
                     eprintln!("chamber: `/resume` needs a session name or id (e.g. `/resume bugfix-router`)");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/resume <session-name-or-id>` (run `/sessions` to list archived sessions)".to_string(),
+                        cx,
+                    );
                     return true;
                 }
                 if crate::model::any_quark_mid_turn(&self.view.roster) {
                     eprintln!(
                         "chamber: `/resume` refused — a quark is mid-turn; wait for it to finish first"
+                    );
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "`/resume` refused — a quark is currently mid-turn; wait for it to finish first.".to_string(),
+                        cx,
                     );
                     return true;
                 }
@@ -1093,6 +1112,11 @@ impl Chamber {
                 let sessions = crate::model::list_sessions(&sessions_dir);
                 let Some(session) = crate::model::find_session(&sessions, target) else {
                     eprintln!("chamber: no session matches {target:?}");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("No archived session matches `{target}` (run `/sessions` to list available archives)."),
+                        cx,
+                    );
                     return true;
                 };
                 let chosen_dir = sessions_dir.join(&session.id);
@@ -1141,10 +1165,15 @@ impl Chamber {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
                     eprintln!("chamber: `/reboot` requires a target (e.g. `/reboot @Quark` or `/reboot all`)");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/reboot @Quark` or `/reboot all`".to_string(),
+                        cx,
+                    );
                     return true;
                 }
                 
-                let reboots = if target == "all" {
+                let reboots = if target.eq_ignore_ascii_case("all") {
                     crate::model::post_clear_reboots(&self.view.roster)
                 } else {
                     // One resolution, shared with `/toggle` (`seat_by_mention`): the old
@@ -1156,6 +1185,11 @@ impl Chamber {
                         }
                         None => {
                             eprintln!("chamber: `/reboot` target not found: {target}");
+                            self.post_chat_message(
+                                Actor::Gluon,
+                                format!("chamber: `/reboot` target not found: `{target}`"),
+                                cx,
+                            );
                             vec![]
                         }
                     }
@@ -1199,10 +1233,20 @@ impl Chamber {
                         "chamber: `/abandon` needs a quark (e.g. `/abandon @Quark`, then \
                          `/abandon @Quark confirm` to force)"
                     );
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/abandon @Quark` (or `/abandon @Quark confirm` to force-discard unmerged commits)".to_string(),
+                        cx,
+                    );
                     return true;
                 };
                 let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
                     eprintln!("chamber: `/abandon` target not found: {target}");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/abandon` target not found: `{target}`"),
+                        cx,
+                    );
                     return true;
                 };
                 let quark_id = row.id.clone();
@@ -1329,15 +1373,16 @@ impl Chamber {
                 let target = args.trim().trim_start_matches('@');
                 let parts: Vec<&str> = target.split_whitespace().collect();
                 if parts.is_empty() {
+                    let msg = format!("Usage: `/{cmd} @worker`{}", if cmd == "approve" { " or `/approve @worker remember`" } else { "" });
                     eprintln!("chamber: `/approve` or `/deny` requires a worker target");
+                    self.post_chat_message(Actor::Gluon, msg, cx);
                     return true;
                 }
                 let worker_name = parts[0];
-                let remember = parts.get(1).map(|s| *s == "remember").unwrap_or(false);
+                let remember = parts.get(1).map(|s| s.eq_ignore_ascii_case("remember")).unwrap_or(false);
                 let approved = cmd == "approve";
                 
-                let real_id = self.view.roster.iter()
-                    .find(|r| r.id == worker_name || r.display_name.as_deref() == Some(worker_name))
+                let real_id = super::mentions::seat_by_mention(&self.view.roster, worker_name)
                     .map(|r| r.id.clone());
                 
                 if let Some(worker_id) = real_id {
@@ -1351,6 +1396,11 @@ impl Chamber {
                     }
                 } else {
                     eprintln!("chamber: target worker not found on roster: {worker_name}");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/{cmd}` target worker not found on roster: `{worker_name}`"),
+                        cx,
+                    );
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.sync_view(&events);
@@ -1361,6 +1411,11 @@ impl Chamber {
                 let parts: Vec<&str> = args.trim().split_whitespace().collect();
                 if parts.is_empty() {
                     eprintln!("chamber: `/limit` usage: `/limit @target 1000000` or `/limit 1000000`");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/limit @Quark <tokens>` or `/limit <max_exchanges>`".to_string(),
+                        cx,
+                    );
                     return true;
                 }
                 let (target_str, val_str) = if parts.len() == 1 {
@@ -1372,17 +1427,27 @@ impl Chamber {
                     Ok(n) => n,
                     Err(_) => {
                         eprintln!("chamber: invalid limit number: {val_str}");
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Invalid limit number `{val_str}`. Usage: `/limit @Quark 1000000`"),
+                            cx,
+                        );
                         return true;
                     }
                 };
 
-                let target_id = target_str.and_then(|t| {
-                    self.view.roster.iter()
-                        .find(|r| r.id.eq_ignore_ascii_case(t) || r.display_name.as_deref().map_or(false, |d| d.eq_ignore_ascii_case(t)))
+                if let Some(t) = target_str {
+                    let Some(real_id) = super::mentions::seat_by_mention(&self.view.roster, t)
                         .map(|r| r.id.clone())
-                });
-
-                if let Some(real_id) = target_id {
+                    else {
+                        eprintln!("chamber: `/limit` target quark not found: {t}");
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("chamber: `/limit` target quark not found: `{t}`"),
+                            cx,
+                        );
+                        return true;
+                    };
                     let qid = QuarkId::new(&real_id);
                     let resolved = resolve_team(&self.team, &self.global);
                     if let Some(base) = resolved.get(&qid) {
@@ -1390,9 +1455,19 @@ impl Chamber {
                         desired.energy_limit = Some(limit_val);
                         self.update_seat_config(&qid, &desired, cx);
                     }
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("Energy token limit for `{real_id}` set to `{limit_val}`."),
+                        cx,
+                    );
                 } else {
                     self.team.max_exchanges = Some(limit_val as usize);
                     self.save_repo_team(cx);
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("Team max exchanges limit set to `{limit_val}`."),
+                        cx,
+                    );
                 }
 
                 let events = io::read_events(&self.path).unwrap_or_default();
@@ -1407,17 +1482,25 @@ impl Chamber {
                     None => std::path::PathBuf::from(".hadron"),
                 };
                 let ledger_path = hadron_lattice::ledger::resolve_sqlite_db_path(&hadron_dir.join("ledger.db"));
-                if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
-                    if target.is_empty() || target == "all" {
+                let reset_label = if target.is_empty() || target.eq_ignore_ascii_case("all") {
+                    if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
                         let _ = conn.execute("DELETE FROM usage", []);
-                    } else {
-                        let real_id = self.view.roster.iter()
-                            .find(|r| r.id.eq_ignore_ascii_case(target) || r.display_name.as_deref().map_or(false, |d| d.eq_ignore_ascii_case(target)))
-                            .map(|r| r.id.as_str())
-                            .unwrap_or(target);
-                        let _ = conn.execute("DELETE FROM usage WHERE quark_id = ?1", [real_id]);
                     }
-                }
+                    "all seats".to_string()
+                } else {
+                    let real_id = super::mentions::seat_by_mention(&self.view.roster, target)
+                        .map(|r| r.id.clone())
+                        .unwrap_or_else(|| target.to_string());
+                    if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
+                        let _ = conn.execute("DELETE FROM usage WHERE quark_id = ?1", [&real_id]);
+                    }
+                    format!("`{real_id}`")
+                };
+                self.post_chat_message(
+                    Actor::Gluon,
+                    format!("Reset token usage ledger for {reset_label}."),
+                    cx,
+                );
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.sync_view(&events);
                 cx.notify();
@@ -1432,6 +1515,11 @@ impl Chamber {
                 let text = args.trim();
                 if text.is_empty() {
                     eprintln!("chamber: `/{cmd}` needs text (e.g. `/{cmd} always run cargo fmt first`)");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("Usage: `/{cmd} <lesson text>` (e.g. `/{cmd} always run cargo fmt first`)"),
+                        cx,
+                    );
                     return true;
                 }
                 let hadron_dir = if cmd.ends_with("global") {
@@ -1441,16 +1529,38 @@ impl Chamber {
                 };
                 let Some(hadron_dir) = hadron_dir else {
                     eprintln!("chamber: `/{cmd}` failed — could not resolve a target directory");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("`/{cmd}` failed — could not resolve target nucleus directory."),
+                        cx,
+                    );
                     return true;
                 };
                 let nucleus = hadron_dir.join("nucleus");
                 if let Err(e) = std::fs::create_dir_all(&nucleus) {
                     eprintln!("chamber: failed to create nucleus dir: {e}");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("`/{cmd}` failed to create nucleus directory: {e}"),
+                        cx,
+                    );
                     return true;
                 }
                 if cmd.starts_with("learn-std-model") {
-                    if let Err(e) = append_line(&nucleus.join("laws.md"), &format!("- {text}\n")) {
+                    let laws_path = nucleus.join("laws.md");
+                    if let Err(e) = append_line(&laws_path, &format!("- {text}\n")) {
                         eprintln!("chamber: failed to write laws.md: {e}");
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Failed to write `{}`: {e}", laws_path.display()),
+                            cx,
+                        );
+                    } else {
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Pinned law to `{}`.", laws_path.display()),
+                            cx,
+                        );
                     }
                 } else {
                     let slug = crate::text::slugify(text);
@@ -1468,12 +1578,14 @@ impl Chamber {
                     // note at all, and refusing here makes the cliff unreachable rather
                     // than merely reported after the fact.
                     if crate::text::would_exceed_index_budget(current_len, &index_line, budget_bytes) {
-                        eprintln!(
-                            "chamber: `/{cmd}` refused — this would push index.md past its \
+                        let msg = format!(
+                            "`/{cmd}` refused — this would push `index.md` past its \
                              {budget_bytes}-byte budget ({current_len} + {} bytes). Prune \
                              `.hadron/nucleus/index.md` first, or raise the budget in Settings.",
                             index_line.len()
                         );
+                        eprintln!("chamber: {msg}");
+                        self.post_chat_message(Actor::Gluon, msg, cx);
                         return true;
                     }
 
@@ -1490,12 +1602,29 @@ impl Chamber {
                         text,
                     );
                     let notes = nucleus.join("notes");
+                    let note_path = notes.join(format!("{slug}.md"));
                     let wrote_note = std::fs::create_dir_all(&notes)
-                        .and_then(|()| std::fs::write(notes.join(format!("{slug}.md")), note));
+                        .and_then(|()| std::fs::write(&note_path, note));
                     if let Err(e) = wrote_note {
                         eprintln!("chamber: failed to write the note for `{slug}`: {e}");
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Failed to write note `{}`: {e}", note_path.display()),
+                            cx,
+                        );
                     } else if let Err(e) = append_line(&index_path, &index_line) {
                         eprintln!("chamber: failed to write index.md: {e}");
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Failed to update `{}`: {e}", index_path.display()),
+                            cx,
+                        );
+                    } else {
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("Pinned lesson `{slug}` to `{}`.", note_path.display()),
+                            cx,
+                        );
                     }
                 }
                 true
@@ -1515,6 +1644,14 @@ impl Chamber {
             "mode" => {
                 let Some((mode, seat_target)) = crate::text::parse_mode_arg(args) else {
                     eprintln!("chamber: `/mode` usage: `/mode <ask|write|auto|bypass> [@seat]`");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!(
+                            "Current global mode: `{:?}`.\nUsage: `/mode <ask|write|auto|bypass> [@seat]`",
+                            self.view.global_mode
+                        ),
+                        cx,
+                    );
                     return true;
                 };
                 if let Some(target) = seat_target {
@@ -1523,6 +1660,11 @@ impl Chamber {
                         self.set_quark_mode(&id, mode, cx);
                     } else {
                         eprintln!("chamber: `/mode` target quark not found: {target}");
+                        self.post_chat_message(
+                            Actor::Gluon,
+                            format!("chamber: `/mode` target quark not found: `{target}`"),
+                            cx,
+                        );
                     }
                 } else {
                     self.append_and_reload(
@@ -1593,9 +1735,14 @@ impl Chamber {
                 true
             }
             "team" => {
-                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let body = crate::text::whoami_body(&self.view.roster, &repo_root, &self.path);
-                self.post_chat_message(Actor::Gluon, body, cx);
+                let trimmed = args.trim();
+                if trimmed.is_empty() {
+                    let body = crate::text::team_body(&self.view.roster);
+                    self.post_chat_message(Actor::Gluon, body, cx);
+                } else {
+                    let msg = format!("@{} {trimmed}", hadron_gluon::router::TEAM_ALIAS);
+                    self.post_chat_message(Actor::Human, msg, cx);
+                }
                 true
             }
             "nucleus" => {
@@ -1659,12 +1806,15 @@ impl Chamber {
                     return true;
                 }
                 if let Some(slug) = trimmed.strip_prefix("note ") {
+                    let slug = slug.trim();
                     let runtime = tokio::runtime::Runtime::new().ok();
                     if let Some(rt) = runtime {
-                        if let Ok(content) = rt.block_on(hadron_gluon::engine::nucleus::read_nucleus_lesson(&repo_root, slug.trim())) {
-                            self.post_chat_message(Actor::Gluon, content, cx);
-                            return true;
-                        }
+                        let body = match rt.block_on(hadron_gluon::engine::nucleus::read_nucleus_lesson(&repo_root, slug)) {
+                            Ok(content) => content,
+                            Err(e) => format!("Nucleus note `{slug}` could not be read: {e}"),
+                        };
+                        self.post_chat_message(Actor::Gluon, body, cx);
+                        return true;
                     }
                 }
                 let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
@@ -1717,8 +1867,13 @@ impl Chamber {
             }
             "spend" => {
                 let (seat, window) = crate::text::parse_spend_arg(args);
+                let resolved_seat = seat.map(|s| {
+                    super::mentions::seat_by_mention(&self.view.roster, s)
+                        .map(|r| r.id.clone())
+                        .unwrap_or_else(|| s.to_string())
+                });
                 let stats = self.view.stats_for(&self.archived_messages, window, chrono::Utc::now());
-                let body = crate::text::spend_body(&stats, window.label(), seat);
+                let body = crate::text::spend_body(&stats, window.label(), resolved_seat.as_deref());
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
@@ -1726,6 +1881,11 @@ impl Chamber {
                 let query = args.trim();
                 if query.is_empty() {
                     eprintln!("chamber: `/search` needs text (e.g. `/search merge gate`)");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/search <query>` (e.g. `/search merge gate`)".to_string(),
+                        cx,
+                    );
                     return true;
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
@@ -1740,7 +1900,10 @@ impl Chamber {
                 let (label, diffs) = if target.is_empty() {
                     ("working tree".to_string(), crate::vcs::working_diff(&repo_root))
                 } else {
-                    let wt_path = hadron_gluon::worktree::trees_dir(&repo_root).join(target);
+                    let resolved_id = super::mentions::seat_by_mention(&self.view.roster, target)
+                        .map(|r| r.id.as_str())
+                        .unwrap_or(target);
+                    let wt_path = hadron_gluon::worktree::trees_dir(&repo_root).join(resolved_id);
                     match hadron_gluon::worktree::current_branch(&wt_path) {
                         Some(branch) => {
                             let base = hadron_gluon::worktree::default_branch(&repo_root);
@@ -1749,6 +1912,11 @@ impl Chamber {
                         }
                         None => {
                             eprintln!("chamber: `/diff {target}` — no worktree/branch found for that seat");
+                            self.post_chat_message(
+                                Actor::Gluon,
+                                format!("No worktree or active branch found for `{resolved_id}`."),
+                                cx,
+                            );
                             return true;
                         }
                     }
@@ -1761,6 +1929,11 @@ impl Chamber {
                 let session_arg = args.trim();
                 if !crate::text::is_safe_session_arg(session_arg) {
                     eprintln!("chamber: `/export {session_arg}` — session argument must not contain path separators or `..`");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("`/export {session_arg}` refused — session argument must not contain path separators or `..`."),
+                        cx,
+                    );
                     return true;
                 }
                 let (label, field_path) = if session_arg.is_empty() {
@@ -1772,6 +1945,11 @@ impl Chamber {
                 let messages = crate::model::project(&events).messages;
                 if messages.iter().filter(|m| m.is_chat()).count() == 0 {
                     eprintln!("chamber: `/export {session_arg}` — no messages found for `{label}`");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("No chat messages found to export for `{label}`."),
+                        cx,
+                    );
                     return true;
                 }
                 let hadron_dir = self.path.parent().map(std::path::Path::to_path_buf)
@@ -1809,6 +1987,11 @@ impl Chamber {
                         "chamber: `/add-skill` needs `@path/to/file.md`, or a name followed by \
                          the file content on the next lines"
                     );
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        "Usage: `/add-skill @path/to/file.md` or `/add-skill <name>` followed by the skill content on the next lines.".to_string(),
+                        cx,
+                    );
                     return true;
                 };
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
@@ -1825,6 +2008,11 @@ impl Chamber {
                             Ok(c) => c,
                             Err(e) => {
                                 eprintln!("chamber: `/add-skill @{path_arg}` — could not read {}: {e}", src.display());
+                                self.post_chat_message(
+                                    Actor::Gluon,
+                                    format!("`/add-skill @{path_arg}` — could not read `{}`: {e}", src.display()),
+                                    cx,
+                                );
                                 return true;
                             }
                         };
@@ -1840,12 +2028,22 @@ impl Chamber {
                                 "chamber: `/add-skill {name}` — not a valid skill name \
                                  (no `/`, `\\`, `.`, or `..`)"
                             );
+                            self.post_chat_message(
+                                Actor::Gluon,
+                                format!("`/add-skill {name}` — invalid skill name (must not contain `/`, `\\`, `.`, or `..`)."),
+                                cx,
+                            );
                             return true;
                         };
                         if content.trim().is_empty() {
                             eprintln!(
                                 "chamber: `/add-skill {name}` — no content followed the name; \
                                  paste the skill file's content on the lines after it"
+                            );
+                            self.post_chat_message(
+                                Actor::Gluon,
+                                format!("`/add-skill {name}` — no content followed the skill name; paste the skill markdown on the lines after it."),
+                                cx,
                             );
                             return true;
                         }
@@ -1876,8 +2074,18 @@ impl Chamber {
             }
             "retry" => {
                 let target = args.trim().trim_start_matches('@');
-                let target_seat = if target.is_empty() { None } else { Some(target) };
-                if let Some(body) = crate::text::find_retryable_message(&self.view.messages, target_seat) {
+                let found = if target.is_empty() {
+                    crate::text::find_retryable_message(&self.view.messages, None)
+                } else if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
+                    let mut candidates = vec![row.id.as_str()];
+                    if let Some(dn) = row.display_name.as_deref() {
+                        candidates.push(dn);
+                    }
+                    crate::text::find_retryable_message_for_targets(&self.view.messages, &candidates)
+                } else {
+                    crate::text::find_retryable_message(&self.view.messages, Some(target))
+                };
+                if let Some(body) = found {
                     self.post_chat_message(Actor::Human, body, cx);
                 } else {
                     self.post_chat_message(Actor::Gluon, "No retryable message found.".to_string(), cx);
@@ -2069,6 +2277,7 @@ impl Chamber {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
                     eprintln!("chamber: `/stop` requires a target (e.g. `/stop @Quark`)");
+                    self.post_chat_message(Actor::Gluon, "Usage: `/stop @Quark`".to_string(), cx);
                     return true;
                 }
                 if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
@@ -2081,6 +2290,11 @@ impl Chamber {
                     }
                 } else {
                     eprintln!("chamber: `/stop` target quark not found: {target}");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/stop` target quark not found: `{target}`"),
+                        cx,
+                    );
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.sync_view(&events);
@@ -2091,6 +2305,7 @@ impl Chamber {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
                     eprintln!("chamber: `/kill` requires a target (e.g. `/kill @Quark`)");
+                    self.post_chat_message(Actor::Gluon, "Usage: `/kill @Quark`".to_string(), cx);
                     return true;
                 }
                 if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
@@ -2103,6 +2318,11 @@ impl Chamber {
                     }
                 } else {
                     eprintln!("chamber: `/kill` target quark not found: {target}");
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/kill` target quark not found: `{target}`"),
+                        cx,
+                    );
                 }
                 let events = io::read_events(&self.path).unwrap_or_default();
                 self.sync_view(&events);
@@ -2111,9 +2331,18 @@ impl Chamber {
             }
             "cancel" => {
                 let target = args.trim().trim_start_matches('@');
-                let target_seat = if target.is_empty() { None } else { super::mentions::seat_by_mention(&self.view.roster, target) };
-                let target_id = target_seat.as_ref().map(|r| QuarkId::new(&r.id));
-                let label = target_seat.as_ref().map(|r| r.id.as_str()).unwrap_or("all seats");
+                let (target_id, label) = if target.is_empty() {
+                    (None, "all seats".to_string())
+                } else if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
+                    (Some(QuarkId::new(&row.id)), format!("`{}`", row.id))
+                } else {
+                    self.post_chat_message(
+                        Actor::Gluon,
+                        format!("chamber: `/cancel` target quark not found: `{target}`"),
+                        cx,
+                    );
+                    return true;
+                };
                 let ev = Event::new(Actor::Human, target_id, Kind::PermissionGrant { approved: false, remember: false });
                 if let Err(e) = io::append_event(&self.path, &ev) {
                     eprintln!("chamber: failed to append cancel event: {e}");

@@ -265,11 +265,6 @@ try {
     # Ensure target directory exists
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
-    # Clean up any unlocked stale .old binaries from prior in-place updates
-    Get-ChildItem -Path $InstallDir -Filter "*.old*" -File -ErrorAction SilentlyContinue | ForEach-Object {
-        Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
-    }
-
     # Copy binaries and icon
     $binaries = @("hadron.exe", "hadron-gluon.exe", "hadron-forge-mcp.exe")
     foreach ($bin in $binaries) {
@@ -304,6 +299,11 @@ try {
         } else {
             Write-Warning "Binary $bin was not found in release archive."
         }
+    }
+
+    # Clean up any unlocked stale .old binaries AFTER new binaries are safely copied in
+    Get-ChildItem -Path $InstallDir -Filter "*.old*" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
     }
 
     $iconSrc = Join-Path $binDir "hadron.ico"

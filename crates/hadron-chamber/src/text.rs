@@ -181,7 +181,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "status", detail: "Show status (permission mode, current-field session tokens, quota, branch state) for a seat or global", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "mode", detail: "Set permission mode (ask, write, auto, bypass) for a seat or global default", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "whoami", detail: "Show active orchestrator, workspace root, and field path", arity: Arity::None, arg: ArgSource::None, listed: true },
-    Command { name: "nucleus", detail: "Show nucleus index size vs resolved budget, lesson count, notes count, and index path", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "nucleus", detail: "Show nucleus index size vs resolved budget, or run subcommands (sync | search <query> | note <slug>)", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "health", detail: "Show daemon PID, daemon process state, repo root, and worktree count", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "sessions", detail: "List archived sessions with labels", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "clear-history", detail: "Delete all archived sessions while preserving token usage ledger", arity: Arity::None, arg: ArgSource::None, listed: true },
@@ -205,17 +205,17 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "steer", detail: "Inject mid-turn steering guidance to an active running quark", arity: Arity::Body, arg: ArgSource::Quark, listed: true },
     Command { name: "theme", detail: "Switch color theme preset (e.g. /theme oled, /theme tokyo, /theme obsidian, /theme midnight)", arity: Arity::Line, arg: ArgSource::Theme, listed: true },
     Command { name: "stats", detail: "Switch to telemetry and token spend statistics tab", arity: Arity::None, arg: ArgSource::None, listed: true },
-    Command { name: "team", detail: "Display active swarm roster, models, and seats", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "team", detail: "Display active swarm roster, models, and seats, or broadcast a prompt to @team", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "team-review", detail: "Multi-quark peer review board across security, architecture, and simplicity", arity: Arity::Body, arg: ArgSource::Quark, listed: true },
     Command { name: "bakeoff", detail: "Spawn speculative tournament bake-off across competing solutions", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "grill-me", detail: "Interactive requirement alignment interview before plan synthesis", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "research", detail: "Research a topic or architecture and save findings to .hadron/docs/research/", arity: Arity::Body, arg: ArgSource::None, listed: true },
     Command { name: "home", detail: "Open Quark personal home & telemetry dashboard (e.g. /home @Quark)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "canvas", detail: "Open interactive GPUI canvas preview", arity: Arity::None, arg: ArgSource::None, listed: true },
-    Command { name: "intercom", detail: "Toggle audio intercom voice bridge", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "intercom", detail: "Toggle audio intercom voice bridge (e.g. /intercom or /intercom @Quark)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "dream", detail: "Trigger an immediate idle workspace maintenance cycle", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "timelapse", detail: "Generate visual architectural feature time-lapse", arity: Arity::None, arg: ArgSource::None, listed: true },
-    Command { name: "radar", detail: "Run human intent drift radar against in-flight git diff", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "radar", detail: "Run human intent drift radar against in-flight git diff (e.g. /radar or /radar @Quark)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "baseline", detail: "Snapshot pre-turn baseline test health (Rule 5)", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "scout", detail: "Spawn ephemeral read-only sub-worker for zero-footprint codebase search", arity: Arity::Body, arg: ArgSource::None, listed: true },
 ];
@@ -704,6 +704,59 @@ pub fn whoami_body(
         repo_root.display(),
         field_path.display()
     )
+}
+
+/// Format `/team` output showing active swarm roster, models, and seats.
+pub fn team_body(roster: &[crate::model::RosterRow]) -> String {
+    let mut out = String::from("**Swarm Team Roster**\n\n");
+    let adopted: Vec<&crate::model::RosterRow> = roster.iter().filter(|r| r.adopted).collect();
+    let catalogue_count = roster.iter().filter(|r| !r.adopted).count();
+
+    if adopted.is_empty() {
+        out.push_str("No active seats adopted for this repository.\n");
+    } else {
+        for r in adopted {
+            let role = match r.flavor {
+                Some(hadron_lattice::Flavor::Orchestrator) => "orchestrator",
+                Some(hadron_lattice::Flavor::Worker) => "worker",
+                None => "unassigned",
+            };
+            let base_model = r.model_label();
+            let model_str = if !base_model.is_empty() {
+                match r.effort.as_deref().filter(|e| !e.is_empty()) {
+                    Some(effort) => format!("{base_model} ({effort})"),
+                    None => base_model,
+                }
+            } else if !r.vendor.is_empty() {
+                r.vendor.clone()
+            } else {
+                "default".to_string()
+            };
+            let status_str = if !r.enabled {
+                "parked".to_string()
+            } else {
+                format!("{:?}", r.state).to_lowercase()
+            };
+            out.push_str(&format!(
+                "- **@{}** ({}) — role: `{}`, model: `{}`, transport: `{:?}`, mode: `{:?}`, status: `{}`\n",
+                r.id,
+                r.display_name.as_deref().unwrap_or(&r.id),
+                role,
+                model_str,
+                r.transport,
+                r.mode,
+                status_str,
+            ));
+        }
+    }
+
+    if catalogue_count > 0 {
+        out.push_str(&format!(
+            "\n*Plus {} unadopted seat(s) available in global catalogue.*\n",
+            catalogue_count
+        ));
+    }
+    out
 }
 
 /// Format `/nucleus` output.
@@ -1997,13 +2050,47 @@ pub fn extract_word_completion(
 
 /// Scans messages from newest to oldest for the last chat message matching an optional seat target.
 pub fn find_retryable_message(messages: &[crate::model::MessageRow], target_seat: Option<&str>) -> Option<String> {
+    match target_seat {
+        Some(target) => find_retryable_message_for_targets(messages, &[target]),
+        None => find_retryable_message_for_targets(messages, &[]),
+    }
+}
+
+/// Scans messages from newest to oldest for the last retryable chat message matching any of `targets`
+/// (e.g. both a seat's `id` and `display_name`), or any human message when `targets` is empty.
+pub fn find_retryable_message_for_targets(
+    messages: &[crate::model::MessageRow],
+    targets: &[&str],
+) -> Option<String> {
+    let matches_target = |m: &crate::model::MessageRow| -> bool {
+        let mentions = line_start_mentions(&m.body);
+        targets.iter().any(|t| {
+            let t = t.trim().trim_start_matches('@');
+            !t.is_empty()
+                && (m.to.as_deref().is_some_and(|to| to.eq_ignore_ascii_case(t))
+                    || mentions.iter().any(|men| men.eq_ignore_ascii_case(t))
+                    || m.from.eq_ignore_ascii_case(t))
+        })
+    };
+
+    // Pass 1: prefer human messages so `/retry` re-dispatches the human's prompt
+    // rather than echoing a quark's own reply or a lowercase `gluon` notice.
     for m in messages.iter().rev() {
-        if m.is_chat() {
-            if let Some(target) = target_seat {
-                if m.to.as_deref() == Some(target) || m.from == target {
+        if m.is_chat() && m.from.eq_ignore_ascii_case("human") {
+            if targets.is_empty() || matches_target(m) {
+                return Some(m.body.clone());
+            }
+        }
+    }
+
+    // Pass 2: fallback to any non-gluon chat message matching `targets`.
+    for m in messages.iter().rev() {
+        if m.is_chat() && !m.from.eq_ignore_ascii_case("gluon") {
+            if targets.is_empty() {
+                if m.to.is_some() || !m.from.eq_ignore_ascii_case("gluon") {
                     return Some(m.body.clone());
                 }
-            } else if m.to.is_some() || m.from != "Gluon" {
+            } else if matches_target(m) {
                 return Some(m.body.clone());
             }
         }
@@ -2786,6 +2873,71 @@ mod tests {
     }
 
     #[test]
+    fn team_body_formats_active_roster_models_and_seats() {
+        let rows = vec![
+            crate::model::RosterRow {
+                id: "cli-agy".to_string(),
+                display_name: Some("Agy".to_string()),
+                state: hadron_lattice::QuarkState::Ground,
+                mode: hadron_lattice::Mode::Bypass,
+                mode_is_override: false,
+                vendor: "google".to_string(),
+                model: "gemini-4-argon".to_string(),
+                flavor: Some(hadron_lattice::Flavor::Orchestrator),
+                transport: hadron_lattice::Transport::Cli,
+                effort: Some("medium".to_string()),
+                enabled: true,
+                adopted: true,
+                tokens: 1200,
+                unknown_turns: 0,
+            },
+            crate::model::RosterRow {
+                id: "acp-claude".to_string(),
+                display_name: Some("Opus".to_string()),
+                state: hadron_lattice::QuarkState::Ground,
+                mode: hadron_lattice::Mode::Auto,
+                mode_is_override: true,
+                vendor: "anthropic".to_string(),
+                model: "claude-opus-4-6".to_string(),
+                flavor: Some(hadron_lattice::Flavor::Worker),
+                transport: hadron_lattice::Transport::Acp,
+                effort: None,
+                enabled: false,
+                adopted: true,
+                tokens: 0,
+                unknown_turns: 0,
+            },
+            crate::model::RosterRow {
+                id: "http-ollama".to_string(),
+                display_name: None,
+                state: hadron_lattice::QuarkState::Ground,
+                mode: hadron_lattice::Mode::Ask,
+                mode_is_override: false,
+                vendor: "ollama".to_string(),
+                model: String::new(),
+                flavor: Some(hadron_lattice::Flavor::Worker),
+                transport: hadron_lattice::Transport::Http,
+                effort: None,
+                enabled: true,
+                adopted: false,
+                tokens: 0,
+                unknown_turns: 0,
+            },
+        ];
+        let body = team_body(&rows);
+        assert!(body.contains("**Swarm Team Roster**"));
+        assert!(!body.contains("**Whoami**"));
+        assert!(body.contains("- **@cli-agy** (Agy) — role: `orchestrator`, model: `gemini-4-argon (medium)`"));
+        assert!(body.contains("- **@acp-claude** (Opus) — role: `worker`, model: `claude-opus-4-6`"));
+        assert!(body.contains("status: `parked`"));
+        assert!(body.contains("Plus 1 unadopted seat(s) available in global catalogue"));
+        assert!(
+            !body.lines().any(|l| l.trim_start().starts_with('@')),
+            "team_body must not contain a line starting with @ that would trigger a dispatch"
+        );
+    }
+
+    #[test]
     fn nucleus_body_uses_resolved_budget() {
         let dir = tempfile::tempdir().unwrap();
         let nucleus_dir = dir.path().join(".hadron").join("nucleus");
@@ -3144,6 +3296,45 @@ mod tests {
         let msgs = vec![msg1, msg2];
         assert_eq!(find_retryable_message(&msgs, Some("acp-claude")), Some("@acp-claude first prompt".to_string()));
         assert_eq!(find_retryable_message(&msgs, None), Some("@Sonnet second prompt".to_string()));
+    }
+
+    #[test]
+    fn find_retryable_message_matches_line_start_mentions_and_skips_lowercase_gluon() {
+        let human_msg = MessageRow {
+            from: "human".to_string(),
+            to: None,
+            body: "@Antigravity question from user".to_string(),
+            kind_label: "message",
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: None,
+        };
+        let gluon_err = MessageRow {
+            from: "gluon".to_string(),
+            to: None,
+            body: "@orchestrator Quark `acp-agy` turn errored: ACP connection failed".to_string(),
+            kind_label: "message",
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: Some(hadron_lattice::Severity::Error),
+        };
+        let msgs = vec![human_msg, gluon_err];
+
+        // Global /retry skips the lowercase "gluon" error message and finds the human prompt.
+        assert_eq!(
+            find_retryable_message(&msgs, None),
+            Some("@Antigravity question from user".to_string())
+        );
+
+        // Seat-targeted /retry matches by display_name or id via find_retryable_message_for_targets.
+        assert_eq!(
+            find_retryable_message_for_targets(&msgs, &["acp-agy", "Antigravity"]),
+            Some("@Antigravity question from user".to_string())
+        );
     }
 
     #[test]
