@@ -38,6 +38,17 @@ pub(super) fn acp_stdio_descriptor(target: &ResolvedAcpTarget, env: &[(String, S
     acp_stdio_descriptor_sandboxed(target, env, std::path::Path::new("."), hadron_gatekeeper::SandboxMode::Off)
 }
 
+pub(super) fn rewrite_windows_bridge_path_to_linux(linux_home: &str, val: &str) -> Option<String> {
+    let norm = val.replace('\\', "/");
+    let marker = "/.hadron/bridges/";
+    let idx = norm.find(marker)?;
+    let suffix = &norm[idx + marker.len()..];
+    let linux_suffix = suffix
+        .replace("/venv/Scripts/python.exe", "/venv/bin/python")
+        .replace("/venv/Scripts/python3.exe", "/venv/bin/python3");
+    Some(format!("{linux_home}/.hadron/bridges/{linux_suffix}"))
+}
+
 pub(super) fn acp_stdio_descriptor_sandboxed(
     target: &ResolvedAcpTarget,
     env: &[(String, String)],
@@ -45,16 +56,48 @@ pub(super) fn acp_stdio_descriptor_sandboxed(
     mode: hadron_gatekeeper::SandboxMode,
 ) -> String {
     let (raw_prog, raw_args) = (target.program(), target.args());
+    let wsl_parsed = hadron_lattice::wsl::parse_wsl_unc_path(work_dir);
+    let (effective_prog, effective_args): (String, Vec<String>) = match &wsl_parsed {
+        Some((distro, linux_cwd)) => {
+            if let Some(linux_home) = hadron_lattice::wsl::infer_linux_home_from_path(linux_cwd) {
+                if let Some(candidate_prog) =
+                    rewrite_windows_bridge_path_to_linux(&linux_home, raw_prog)
+                {
+                    if hadron_lattice::wsl::wsl_unc_entry_exists(
+                        distro,
+                        std::path::Path::new(&candidate_prog),
+                    ) {
+                        let rewritten_args: Vec<String> = raw_args
+                            .iter()
+                            .map(|a| {
+                                rewrite_windows_bridge_path_to_linux(&linux_home, a)
+                                    .unwrap_or_else(|| a.clone())
+                            })
+                            .collect();
+                        (candidate_prog, rewritten_args)
+                    } else {
+                        (raw_prog.to_string(), raw_args.to_vec())
+                    }
+                } else {
+                    (raw_prog.to_string(), raw_args.to_vec())
+                }
+            } else {
+                (raw_prog.to_string(), raw_args.to_vec())
+            }
+        }
+        None => (raw_prog.to_string(), raw_args.to_vec()),
+    };
     let (sandboxed_prog, sandboxed_args) = hadron_gatekeeper::resolve_sandboxed_command(
         work_dir,
-        raw_prog,
-        &raw_args,
+        &effective_prog,
+        &effective_args,
         mode,
         false,
     );
-    let wsl_parsed = hadron_lattice::wsl::parse_wsl_unc_path(work_dir);
     let (program, args) = match &wsl_parsed {
-        Some((distro, linux_cwd)) if hadron_lattice::wsl::should_run_in_wsl(distro, raw_prog) => {
+        Some((distro, linux_cwd))
+            if hadron_lattice::wsl::should_run_in_wsl(distro, &effective_prog) =>
+        {
             hadron_lattice::wsl::wrap_wsl_command(distro, linux_cwd, &sandboxed_prog, &sandboxed_args)
         }
         _ => (sandboxed_prog, sandboxed_args),

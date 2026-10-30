@@ -1635,6 +1635,21 @@ fn windows_host_bridge_path_on_wsl_unc_workspace_is_never_wrapped_in_wsl_exe() {
         "command must remain anchored to the Windows host bridge path, got: {:?}",
         parsed["command"]
     );
+
+    assert_eq!(
+        super::session::rewrite_windows_bridge_path_to_linux(
+            "/home/Jake",
+            r"C:\Users\Komputer\.hadron\bridges\agy\venv\Scripts\python.exe"
+        ),
+        Some("/home/Jake/.hadron/bridges/agy/venv/bin/python".to_string())
+    );
+    assert_eq!(
+        super::session::rewrite_windows_bridge_path_to_linux(
+            "/home/Jake",
+            r"C:\Users\Komputer\.hadron\bridges\agy\agy_acp.py"
+        ),
+        Some("/home/Jake/.hadron/bridges/agy/agy_acp.py".to_string())
+    );
 }
 
 #[test]

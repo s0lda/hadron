@@ -192,7 +192,12 @@ pub fn decode_wsl_output(bytes: &[u8]) -> Vec<String> {
     decoded
         .lines()
         .map(|line| line.trim_matches(|c: char| c == '\r' || c == '\0' || c.is_whitespace()).to_string())
-        .filter(|line| !line.is_empty() && !line.starts_with("wsl: ") && !line.starts_with("WSL: "))
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with("wsl: ")
+                && !line.starts_with("WSL: ")
+                && !line.starts_with('<')
+        })
         .collect()
 }
 
@@ -245,7 +250,10 @@ pub fn strip_wsl_noise(raw: &str) -> String {
     for line in raw.lines() {
         let clean = line.trim_end_matches(['\r', '\0']);
         let trimmed_start = clean.trim_start_matches('\0');
-        if trimmed_start.starts_with("wsl: ") || trimmed_start.starts_with("WSL: ") {
+        if trimmed_start.starts_with("wsl: ")
+            || trimmed_start.starts_with("WSL: ")
+            || trimmed_start.starts_with("<3>WSL")
+        {
             continue;
         }
         if !out.is_empty() {
@@ -256,15 +264,29 @@ pub fn strip_wsl_noise(raw: &str) -> String {
     out
 }
 
+/// Return `true` when `linux_path` exists inside `distro` via the Windows WSL UNC share
+/// (`\\wsl.localhost\<distro>\<linux_path>`), checking both `exists()` and `symlink_metadata()`
+/// so in-distro symlinks pointing to absolute Linux targets (e.g. `venv/bin/python -> /usr/bin/python3`)
+/// are detected accurately from Windows.
+pub fn wsl_unc_entry_exists(distro: &str, linux_path: &Path) -> bool {
+    let unc = format_wsl_unc_path(distro, linux_path);
+    unc.exists() || std::fs::symlink_metadata(&unc).is_ok()
+}
+
 /// Resolve the full path of `program` inside `distro` using the user's login `PATH`
 /// (including `$HOME/.nvm/versions/node/*/bin`, `$HOME/.local/bin`, `$HOME/.cargo/bin`,
 /// `$HOME/.gemini/antigravity-cli/bin`, `$HOME/.grok/bin`, `$HOME/.bun/bin`, `$HOME/.deno/bin`,
 /// `$HOME/.volta/bin`, `/snap/bin`), or return `None` if `program` is not installed inside `distro`.
 ///
-/// Results are cached per `(distro, program)` for the lifetime of the process.
+/// Positive resolutions are cached per `(distro, program)` for the lifetime of the process.
+/// Negative results are never cached so a transient `wsl.exe` or 9P hiccup cannot permanently
+/// poison tool resolution for the life of the daemon.
 pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
     if program.starts_with('/') {
         return Some(program.to_string());
+    }
+    if is_windows_host_path(program) {
+        return None;
     }
     #[cfg(windows)]
     {
@@ -273,11 +295,69 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
         use std::process::Command;
         use std::sync::{Mutex, OnceLock};
 
-        static CACHE: OnceLock<Mutex<HashMap<(String, String), Option<String>>>> = OnceLock::new();
+        static CACHE: OnceLock<Mutex<HashMap<(String, String), String>>> = OnceLock::new();
         let map = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
         let key = (distro.to_string(), program.to_string());
         if let Some(cached) = map.lock().unwrap().get(&key) {
-            return cached.clone();
+            return Some(cached.clone());
+        }
+
+        // Fast-path: probe standard user and system bin directories directly via the WSL UNC
+        // filesystem before spawning `wsl.exe`.
+        let home_unc = resolve_wsl_home_unc_path(distro);
+        if let Some((_, home_linux)) = parse_wsl_unc_path(&home_unc) {
+            let home_str = home_linux.to_string_lossy().replace('\\', "/");
+            if home_str.starts_with("/home/") || home_str == "/root" {
+                let nvm_unc = format_wsl_unc_path(
+                    distro,
+                    Path::new(&format!("{home_str}/.nvm/versions/node")),
+                );
+                if let Ok(entries) = std::fs::read_dir(&nvm_unc) {
+                    let mut versions: Vec<PathBuf> =
+                        entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+                    versions.sort();
+                    for v in versions.into_iter().rev() {
+                        if let Some(ver_name) = v.file_name().and_then(|n| n.to_str()) {
+                            let linux_candidate =
+                                format!("{home_str}/.nvm/versions/node/{ver_name}/bin/{program}");
+                            if wsl_unc_entry_exists(distro, Path::new(&linux_candidate)) {
+                                map.lock().unwrap().insert(key, linux_candidate.clone());
+                                return Some(linux_candidate);
+                            }
+                        }
+                    }
+                }
+                for rel_dir in [
+                    ".local/bin",
+                    ".cargo/bin",
+                    ".gemini/antigravity-cli/bin",
+                    ".grok/bin",
+                    ".bun/bin",
+                    ".deno/bin",
+                    ".volta/bin",
+                ] {
+                    let linux_candidate = format!("{home_str}/{rel_dir}/{program}");
+                    if wsl_unc_entry_exists(distro, Path::new(&linux_candidate)) {
+                        map.lock().unwrap().insert(key, linux_candidate.clone());
+                        return Some(linux_candidate);
+                    }
+                }
+            }
+        }
+        for sys_dir in [
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+            "/snap/bin",
+        ] {
+            let linux_candidate = format!("{sys_dir}/{program}");
+            if wsl_unc_entry_exists(distro, Path::new(&linux_candidate)) {
+                map.lock().unwrap().insert(key, linux_candidate.clone());
+                return Some(linux_candidate);
+            }
         }
 
         let resolved = Command::new("wsl.exe")
@@ -295,10 +375,15 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
             .output()
             .ok()
             .filter(|o| o.status.success())
-            .and_then(|o| decode_wsl_output(&o.stdout).into_iter().next())
-            .filter(|s| s.starts_with('/') && !s.starts_with("/mnt/"));
+            .and_then(|o| {
+                decode_wsl_output(&o.stdout)
+                    .into_iter()
+                    .find(|s| s.starts_with('/') && !s.starts_with("/mnt/"))
+            });
 
-        map.lock().unwrap().insert(key, resolved.clone());
+        if let Some(ref path) = resolved {
+            map.lock().unwrap().insert(key, path.clone());
+        }
         resolved
     }
     #[cfg(not(windows))]
@@ -310,7 +395,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
 
 /// Check whether Bubblewrap (`bwrap`) is installed and functional inside `distro`.
 ///
-/// Cached per `distro` for the lifetime of the process.
+/// Positive availability is cached per `distro` for the lifetime of the process.
 pub fn is_wsl_bwrap_available(distro: &str) -> bool {
     #[cfg(windows)]
     {
@@ -326,7 +411,6 @@ pub fn is_wsl_bwrap_available(distro: &str) -> bool {
         }
 
         let Some(bwrap_path) = resolve_wsl_program_path(distro, "bwrap") else {
-            map.lock().unwrap().insert(distro.to_string(), false);
             return false;
         };
 
@@ -346,7 +430,9 @@ pub fn is_wsl_bwrap_available(distro: &str) -> bool {
             .map(|s| s.success())
             .unwrap_or(false);
 
-        map.lock().unwrap().insert(distro.to_string(), ok);
+        if ok {
+            map.lock().unwrap().insert(distro.to_string(), true);
+        }
         ok
     }
     #[cfg(not(windows))]
@@ -366,26 +452,38 @@ pub fn is_wsl_bwrap_available(distro: &str) -> bool {
     }
 }
 
-/// Whether `program` is an explicit Windows host path (drive-letter `C:\...` / `C:/...`
-/// or UNC `\\...`). Such paths always live on the Windows host and can never be
-/// `execvpe`'d verbatim inside a Linux WSL distribution.
+/// Whether `program` is an explicit Windows host path (drive-letter `C:\...` / `C:/...`,
+/// UNC `\\...`, or a Windows executable extension `.exe`/`.cmd`/`.bat`). Such paths
+/// always live on the Windows host and can never be `execvpe`'d verbatim inside a Linux
+/// WSL distribution.
 pub fn is_windows_host_path(program: &str) -> bool {
     let bytes = program.as_bytes();
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
         return true;
     }
-    program.starts_with(r"\\")
+    if program.starts_with(r"\\") {
+        return true;
+    }
+    let lower = program.to_ascii_lowercase();
+    lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat")
 }
 
-/// Check whether `program` exists inside `distro` (checking standard system and user bin directories)
-/// or on the Windows host, and return `true` if `program` should be executed via `wsl.exe` inside `distro`,
-/// or `false` if it is only installed on the Windows host (e.g. `agy.exe` on Windows when opening a WSL repo,
-/// or a Windows-host venv interpreter like `C:\Users\...\.hadron\bridges\agy\venv\Scripts\python.exe`).
+/// Check whether `program` should be executed via `wsl.exe` inside `distro` when the
+/// workspace is a WSL UNC path (`\\wsl.localhost\<distro>\...`).
 ///
-/// Results are cached per `(distro, program)` for the lifetime of the process.
+/// Any POSIX path (`/usr/bin/...`) or bare command name (`agy`, `claude`, `codex`, `git`, `cargo`)
+/// on a WSL workspace must execute inside `distro` so it uses the Linux filesystem, toolchain,
+/// and Linux file-based credentials (`~/.gemini/antigravity-cli/antigravity-oauth-token`) rather
+/// than falling back to an unauthenticated Windows host binary (`agy.exe`) with a WSL UNC cwd.
+/// Only explicit Windows host paths (`C:\...`, `\\...`, `*.exe`, `*.cmd`, `*.bat`) execute on
+/// the Windows host.
 pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
     if is_windows_host_path(program) {
         return false;
+    }
+    if !program.contains('\\') && !program.contains('/') {
+        let _ = resolve_wsl_program_path(distro, program);
+        return true;
     }
     #[cfg(windows)]
     {
@@ -411,7 +509,9 @@ pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
                 .unwrap_or(false);
 
         let decision = decide_wsl_vs_host(in_wsl, on_host);
-        map.lock().unwrap().insert(key, decision);
+        if decision {
+            map.lock().unwrap().insert(key, true);
+        }
         decision
     }
     #[cfg(not(windows))]
@@ -749,6 +849,13 @@ mod tests {
 
         let status = " M src/main.rs\r\nwsl: Failed to mount Z:\\\r\n?? new.txt\n";
         assert_eq!(strip_wsl_noise(status), " M src/main.rs\n?? new.txt");
+
+        let relay_noise = "<3>WSL (1234) ERROR: CreateProcessParseCommon:711: Failed to translate Z:\\\r\n/home/user/.local/bin/agy\r\n";
+        assert_eq!(strip_wsl_noise(relay_noise), "/home/user/.local/bin/agy");
+        assert_eq!(
+            decode_wsl_output(relay_noise.as_bytes()),
+            vec!["/home/user/.local/bin/agy"]
+        );
     }
 
     #[test]
@@ -814,11 +921,16 @@ mod tests {
             r"C:\Users\Komputer\.hadron/bridges/agy/venv/Scripts/python.exe"
         ));
         assert!(is_windows_host_path(r"\\server\share\tool.exe"));
+        assert!(is_windows_host_path("powershell.exe"));
+        assert!(is_windows_host_path("cmd.exe"));
         assert!(!is_windows_host_path("npx"));
+        assert!(!is_windows_host_path("agy"));
         assert!(!is_windows_host_path("/home/user/.hadron/bridges/agy/venv/bin/python"));
         assert!(!should_run_in_wsl(
             "Ubuntu-24.04",
             r"C:\Users\Komputer\.hadron/bridges/agy/venv/Scripts/python.exe"
         ));
+        assert!(should_run_in_wsl("Ubuntu", "agy"));
+        assert!(should_run_in_wsl("Ubuntu", "claude"));
     }
 }

@@ -20,10 +20,18 @@ pub fn probe_cli_models(spec: &CliSpec) -> anyhow::Result<ModelSelector> {
         .model_probe
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("no model_probe configured"))?;
-    let output = match std::process::Command::new(&spec.program)
-        .args(&probe_spec.args)
-        .output()
+    let mut host_cmd = std::process::Command::new(&spec.program);
+    host_cmd.args(&probe_spec.args);
+    // Run model probe in the host temp directory so Windows host binaries (like `agy.exe`)
+    // never inherit a WSL UNC workspace directory (`\\wsl.localhost\...`), which would cause
+    // `agy.exe` to switch to WSL file-based token storage and fail authentication on Windows.
+    host_cmd.current_dir(std::env::temp_dir());
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        host_cmd.creation_flags(0x08000000);
+    }
+    let output = match host_cmd.output() {
         Ok(out) if out.status.success() => out,
         primary_res => {
             #[cfg(windows)]

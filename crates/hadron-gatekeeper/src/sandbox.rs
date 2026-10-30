@@ -131,6 +131,8 @@ pub fn build_bwrap_args(
     }
 
     if let Some(repo_root) = infer_repo_root_from_worktree(&effective_work_dir) {
+        let host_repo_root =
+            infer_repo_root_from_worktree(work_dir).unwrap_or_else(|| repo_root.clone());
         let root_str = repo_root.to_string_lossy().replace('\\', "/");
         let git_dir = format!("{root_str}/.git");
         let hadron_dir = format!("{root_str}/.hadron");
@@ -139,8 +141,8 @@ pub fn build_bwrap_args(
             "--ro-bind-try".to_string(), hadron_dir.clone(), hadron_dir,
         ]);
         for sub in ["nucleus", "docs", "skills", "preons", "live"] {
-            let sub_path = repo_root.join(".hadron").join(sub);
-            if repo_root.join(".hadron").is_dir() {
+            let sub_path = host_repo_root.join(".hadron").join(sub);
+            if host_repo_root.join(".hadron").is_dir() {
                 let _ = std::fs::create_dir_all(&sub_path);
             }
             let sub_str = format!("{root_str}/.hadron/{sub}");
@@ -469,7 +471,7 @@ pub fn resolve_sandboxed_command(
         return (program.to_string(), args.to_vec());
     }
 
-    if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(work_dir) {
+    if let Some((distro, _linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(work_dir) {
         if hadron_lattice::wsl::should_run_in_wsl(&distro, program) {
             let resolved_prog = hadron_lattice::wsl::resolve_wsl_program_path(&distro, program)
                 .unwrap_or_else(|| program.to_string());
@@ -479,7 +481,7 @@ pub fn resolve_sandboxed_command(
                 .collect();
             if hadron_lattice::wsl::is_wsl_bwrap_available(&distro) {
                 let bwrap_args = build_bwrap_args(
-                    &linux_cwd,
+                    work_dir,
                     &resolved_prog,
                     &translated_args,
                     mode,

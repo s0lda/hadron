@@ -892,7 +892,7 @@ fn spec_for_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) 
         flavor: seat.flavor.clone(),
         kind: QuarkKind::from_seat(seat)?,
         model: seat.model.clone(),
-        effort: seat.effort.clone(),
+        effort: seat.supports_effort().then(|| seat.effort.clone()).flatten(),
         mode_config: seat.mode_config.clone(),
         display_name: seat.display_name.clone(),
         roles: seat.roles.clone(),
