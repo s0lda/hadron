@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.24",
+        date: Some("2026-10-30"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "WSL Host Bridge Execution, Resident Context Cap & Transient Rate-Limit Recovery: Prevented Windows-host bridge executables from being wrapped in wsl.exe on WSL UNC workspaces, capped resident context at 150k tokens with delta prompt stripping on resumed ACP turns, and added automatic session rotation and retry on transient 429 TPM rate limits",
+            "Worktree Session Reset on /clear & Superseded Branch Gating Guards: Detached quark worktrees at base and archived pre-clear or errored WIP branches so /clear and failed turns never trigger stale superseded-branch merge gates",
+            "Vendor-Aware Effort Selector Gating: Added CliSpec::effort_flag and Seat::supports_effort so seats without standalone effort flags (cli-agy, acp-agy, Http, Sdk) omit the Effort selector in Settings and Quark Info",
+            "PTY Reader Thread Cleanup Verification & Merge Gate Output Tail Reservation: Scoped PTY cleanup thread counting to hadron-pty-read with a 2s readiness poll and reserved half of merge gate TAIL_BYTES for stdout so verbose stderr never evicts cargo test failure summaries",
+        ],
+    },
+    Release {
         version: "0.33.23",
         date: Some("2026-10-29"),
         added: &[

@@ -5,6 +5,22 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.24] - 2026-10-30
+
+### Fixed
+- **WSL Host Bridge Execution, Resident Context Cap & Transient Rate-Limit Recovery (`hadron-gluon`, `hadron-lattice`)**:
+  - Updated `should_run_in_wsl` (`crates/hadron-lattice/src/wsl.rs`) with `is_windows_host_path` and `Path::exists()` checks so Windows-host bridge interpreters are never wrapped in `wsl.exe` when opening a WSL UNC workspace.
+  - Added `MAX_RESIDENT_CONTEXT_TOKENS = 150_000` in `should_rotate_session` (`crates/hadron-gluon/src/engine/run.rs`) and `crates/hadron-gluon/scripts/agy_acp.py`, plus `prepare_acp_turn_prompt` (`crates/hadron-gluon/src/adapter/acp/session.rs`) to strip cached static prompt prefixes on resumed ACP turns and compact prompts via `SlidingContextPruner`.
+  - Added `_transient_tpm_retry_delay_secs` in `crates/hadron-gluon/scripts/agy_acp.py` to rotate the resident SDK session and retry once on transient `429 RESOURCE_EXHAUSTED` input token-per-minute rate limits, and counted multi-tool batches as single LLM steps.
+- **Worktree Session Reset on `/clear` & Superseded Branch Gating Guards (`hadron-chamber`, `hadron-gluon`)**:
+  - Added `reset_worktrees_on_clear` (`crates/hadron-gluon/src/worktree.rs`, `crates/hadron-chamber/src/app/actions.rs`) to detach quark worktrees at `base` and archive pre-clear branches under `archive/quark-...` when `/clear` starts a new session.
+  - Added `should_gate_superseded_branch` (`crates/hadron-gluon/src/engine/run.rs`) so stale pre-`/clear`, rebooted, or `QuarkState::Error` WIP branches are archived and detached instead of blocking the next turn in `merge_gate`.
+- **Vendor-Aware Effort Selector Gating (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`)**:
+  - Added `CliSpec::effort_flag` and `Seat::supports_effort` (`crates/hadron-lattice/src/team/transport.rs`, `crates/hadron-lattice/src/team/seat.rs`, `crates/hadron-gluon/src/adapter/cli.rs`) and gated the Effort selector in Settings and the Quark Info drawer (`crates/hadron-chamber/src/app/settings/mod.rs`, `overlay.rs`, `acp_probe.rs`, `render/stats.rs`, `model/mod.rs`) so seats without standalone effort flags (`cli-agy`, `acp-agy`, `Http`, `Sdk`) omit the Effort dropdown.
+- **PTY Reader Thread Cleanup Verification & Merge Gate Output Tail Reservation (`hadron-chamber`, `hadron-gluon`)**:
+  - Filtered `/proc/self/task/<tid>/comm` by `hadron-pty-read` with a 2s readiness poll in `test_pty_resource_cleanup_under_load` and passed `Some("/bin/bash")` via `PtyTerminal::new_with_options` in `widening_the_pty_redraws_a_wrapped_prompt_onto_one_row` to avoid process-global `SHELL` env races (`crates/hadron-chamber/src/pty.rs`).
+  - Updated `combine_output_tails` (`crates/hadron-gluon/src/merge.rs`) to split `TAIL_BYTES` across `stdout` and `stderr` so verbose compiler stderr never evicts the `cargo test` failure summary from merge gate diagnostics.
+
 ## [0.33.23] - 2026-10-29
 
 ### Added
