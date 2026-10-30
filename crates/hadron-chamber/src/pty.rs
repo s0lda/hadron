@@ -970,8 +970,20 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn test_pty_resource_cleanup_under_load() {
+        fn count_pty_reader_threads() -> usize {
+            std::fs::read_dir("/proc/self/task")
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    std::fs::read_to_string(e.path().join("comm"))
+                        .map(|s| s.trim() == "hadron-pty-read")
+                        .unwrap_or(false)
+                })
+                .count()
+        }
+
         let dir = tempfile::tempdir().unwrap();
-        let initial_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+        let initial_threads = count_pty_reader_threads();
 
         for _ in 0..10 {
             let term = PtyTerminal::new(dir.path(), 80, 24).expect("spawn PTY");
@@ -983,19 +995,23 @@ mod tests {
         for _ in 0..10 {
             terms.push(PtyTerminal::new(dir.path(), 80, 24).expect("spawn PTY"));
         }
+        assert!(
+            count_pty_reader_threads() >= 10,
+            "Expected at least 10 live hadron-pty-reader threads while 10 PTYs are open"
+        );
         drop(terms);
 
-        let mut final_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+        let mut final_threads = count_pty_reader_threads();
         for _ in 0..100 {
             if final_threads <= initial_threads {
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));
-            final_threads = std::fs::read_dir("/proc/self/task").unwrap().count();
+            final_threads = count_pty_reader_threads();
         }
         assert!(
             final_threads <= initial_threads,
-            "Threads must not leak after dropping PTY terminals! Baseline: {}, Final: {}",
+            "PTY reader threads must not leak after dropping PTY terminals! Baseline: {}, Final: {}",
             initial_threads, final_threads
         );
     }
