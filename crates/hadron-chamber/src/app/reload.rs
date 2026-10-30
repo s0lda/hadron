@@ -799,10 +799,15 @@ fn newest_plan_from_list_with_mtime(
         let date_b = plan_rel_date_prefix(&b.1);
         let is_master_a = a.1.ends_with("master.md") || a.1.ends_with("index.md");
         let is_master_b = b.1.ends_with("master.md") || b.1.ends_with("index.md");
-        b.0.cmp(&a.0)
-            .then_with(|| date_b.cmp(&date_a))
-            .then_with(|| is_master_b.cmp(&is_master_a))
-            .then_with(|| b.1.cmp(&a.1))
+        match (&date_a, &date_b) {
+            (Some(da), Some(db)) if da != db => db.cmp(da),
+            _ => b
+                .0
+                .cmp(&a.0)
+                .then_with(|| date_b.cmp(&date_a))
+                .then_with(|| is_master_b.cmp(&is_master_a))
+                .then_with(|| b.1.cmp(&a.1)),
+        }
     });
     candidates.into_iter().next()
 }
