@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `build_bwrap_args` (`crates/hadron-gatekeeper/src/sandbox.rs`) to pre-create `.hadron/{nucleus,docs,skills,preons,live}` via the host/UNC repository root before mounting into `bwrap`, and gated `effort` in `spec_for_seat` (`crates/hadron-gluon/src/adapter/registry/mod.rs`) on `Seat::supports_effort()`.
 - **Plan List Date-Prefix Sort Alignment (`hadron-chamber`)**:
   - Updated `newest_plan_from_list_with_mtime` (`crates/hadron-chamber/src/text.rs`) to sort plan files by leading `YYYY-MM-DD-` date prefix before falling back to file modification time, matching `newest_plan`'s selection order.
+- **Release CI macOS Runner Migration (`.github/workflows/release.yml`)**:
+  - Migrated `x86_64-apple-darwin` and `aarch64-apple-darwin` release build jobs from retired `macos-14` runner images to `macos-15`.
 
 ## [0.33.25] - 2026-10-30
 
