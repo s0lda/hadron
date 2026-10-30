@@ -2926,7 +2926,7 @@ dependencies = [
 
 [[package]]
 name = "hadron"
-version = "0.33.24"
+version = "0.33.25"
 dependencies = [
  "agent-client-protocol",
  "alacritty_terminal",
@@ -2959,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "hadron-forge"
-version = "0.33.24"
+version = "0.33.25"
 dependencies = [
  "blake3",
  "hadron-lattice",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "hadron-forge-mcp"
-version = "0.33.24"
+version = "0.33.25"
 dependencies = [
  "anyhow",
  "base64",
@@ -3006,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "hadron-gatekeeper"
-version = "0.33.24"
+version = "0.33.25"
 dependencies = [
  "hadron-lattice",
  "regex",
@@ -3017,7 +3017,7 @@ dependencies = [
 
 [[package]]
 name = "hadron-gluon"
-version = "0.33.24"
+version = "0.33.25"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -3044,7 +3044,7 @@ dependencies = [
 
 [[package]]
 name = "hadron-lattice"
-version = "0.33.24"
+version = "0.33.25"
 dependencies = [
  "anyhow",
  "bytes",

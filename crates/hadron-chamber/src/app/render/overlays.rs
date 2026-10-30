@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.25",
+        date: Some("2026-10-30"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Slash Command Routing, @<display_name> Resolution, and /team Roster & Broadcast: Wired /team to display the active roster or broadcast @team <prompt>, changed /nucleus, /radar, and /intercom to Arity::Line, resolved @<display_name> across /spend, /diff, /retry, /approve, /deny, /limit, and /cancel, and added Gluon chat feedback across slash commands",
+            "Windows Binary Self-Update Hardening: Deferred .old* cleanup in install.ps1 until after new binaries are installed, added curl retry/timeout and install.log diagnostics in update.rs, and waited for hadron-gluon exit before relaunching on Windows",
+        ],
+    },
+    Release {
         version: "0.33.24",
         date: Some("2026-10-30"),
         added: &[],

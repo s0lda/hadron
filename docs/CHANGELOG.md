@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.25] - 2026-10-30
+
+### Fixed
+- **Slash Command Routing, `@<display_name>` Resolution, and `/team` Roster & Broadcast (`hadron-chamber`, `docs/commands.md`)**:
+  - Wired `/team` (`Arity::Body`) to post an active roster summary (`team_body`) when invoked without arguments and broadcast `@team <prompt>` when given body text, without folding preamble prose into bare `/team` (`crates/hadron-chamber/src/text.rs`, `crates/hadron-chamber/src/app/input.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+  - Changed `/nucleus`, `/radar`, and `/intercom` from `Arity::None` to `Arity::Line` (with `ArgSource::Quark` on `/radar` and `/intercom`) so subcommands (`/nucleus sync`, `/nucleus search <query>`, `/nucleus note <slug>`) and `@Quark` arguments route to `handle_chat_command` instead of leaking into the chat body.
+  - Resolved `@<display_name>` via `seat_by_mention` across `/spend`, `/diff`, `/retry`, `/approve`, `/deny`, `/limit`, and `/cancel`, updated `find_retryable_message` to match `line_start_mentions` for both seat `id` and `display_name` while skipping lowercase `"gluon"` notices, and added `Actor::Gluon` usage/completion feedback across slash commands.
+- **Windows Binary Self-Update Hardening (`hadron-chamber`, `install.ps1`)**:
+  - Deferred `.old*` executable cleanup in `install.ps1` until after new binaries are copied into `$InstallDir`, added `--retry 3` / timeouts and `install.log` capture on installer script download failures in `crates/hadron-chamber/src/app/update.rs`, and polled for `hadron-gluon` process exit before relaunching on Windows in `crates/hadron-chamber/src/main.rs`.
+
 ## [0.33.24] - 2026-10-30
 
 ### Fixed

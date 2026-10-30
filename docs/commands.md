@@ -81,7 +81,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/deny` | `/deny @Quark` | Deny a pending permission request. | `/deny @worker` |
 | `/limit` | `/limit @Quark <tokens>` | Set custom energy token limit for a seat. | `/limit @Quark 1000000` |
 | `/reset-energy` | `/reset-energy [@Quark \| all]` | Reset used token ledger for a seat or all. | `/reset-energy @Quark` |
-| `/team` | `/team` | Display active swarm roster, models, transports, and seats. | `/team` |
+| `/team` | `/team [prompt]` | Display active swarm roster, models, transports, and seats, or broadcast a prompt to `@team`. | `/team` |
 
 ---
 
@@ -101,7 +101,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/unabandon` | `/unabandon <tag>` | Restore an archived branch from its archive tag. | `/unabandon archive/my-branch` |
 | `/revert` | `/revert` | Revert the last landed commit on `main` via `git revert`. | `/revert` |
 | `/prune` | `/prune [dry-run]` | Safely clean up merged and stale quark worktrees and branches. | `/prune` |
-| `/radar` | `/radar` | Run human intent drift radar against in-flight git diff to detect goal divergence. | `/radar` |
+| `/radar` | `/radar [@Quark]` | Run human intent drift radar against in-flight git diff to detect goal divergence. | `/radar @Quark` |
 | `/baseline` | `/baseline` | Snapshot pre-turn baseline test health and quarantine pre-existing failures (Rule 5). | `/baseline` |
 | `/preview-rebase` | `/preview-rebase [@Quark]` | Dry-run rebase inspection of a quark branch onto main to preview incoming conflicts. | `/preview-rebase @Quark` |
 
@@ -115,7 +115,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/learn-global` | `/learn-global <fact>` | Pin a lesson into your global nucleus across all repositories. | `/learn-global use locked dependencies` |
 | `/learn-std-model` | `/learn-std-model <law>` | Add a standard law to this repo (`laws.md`). | `/learn-std-model verify caller before reporting` |
 | `/learn-std-model-global`| `/learn-std-model-global <law>` | Add a standard law across every repo you run Hadron in. | `/learn-std-model-global push constraints to types` |
-| `/nucleus` | `/nucleus` | Show nucleus index size vs resolved budget (16/32/64/128 KiB), lesson count, and notes path. | `/nucleus` |
+| `/nucleus` | `/nucleus [sync \| search <query> \| note <slug>]` | Show nucleus index size vs resolved budget, or run global sync, semantic search, or note inspection. | `/nucleus` |
 | `/compact-nucleus` | `/compact-nucleus [budget_kb]` | Audit, rank, and compact nucleus index against target budget. | `/compact-nucleus 32` |
 | `/doctor` | `/doctor` | Run automated system diagnostics on daemon, lockfiles, nucleus budget, fonts, and worktrees. | `/doctor` |
 | `/vocabulary` | `/vocabulary` | Display the definitive Hadron particle physics mental model and glossary. | `/vocabulary` |
@@ -149,7 +149,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/open` | `/open [path]` | Open a project directory in a new Chamber window or invoke the project switcher if no path is given. | `/open ~/dev/my-app` |
 | `/home` | `/home [@Quark]` | Open Quark personal home & telemetry dashboard. | `/home @Agy` |
 | `/canvas` | `/canvas` | Open interactive GPUI vector canvas preview. | `/canvas` |
-| `/intercom` | `/intercom` | Toggle sub-channel audio intercom voice bridge. | `/intercom` |
+| `/intercom` | `/intercom [@Quark]` | Toggle sub-channel audio intercom voice bridge. | `/intercom` |
 | `/timelapse` | `/timelapse` | Generate visual architectural feature time-lapse from git history. | `/timelapse` |
 | `/exit` (alias `/quit`) | `/exit` | Exit the Hadron Chamber desktop application. | `/exit` |
 
