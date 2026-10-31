@@ -155,7 +155,9 @@ impl Engine {
             }
         }
 
-        hadron_lattice::wire::remove_rpc_metadata(&hadron_dir);
+        if let Err(e) = hadron_lattice::wire::remove_rpc_metadata(&hadron_dir) {
+            term::warn(Source::Gluon, &format!("unable to clean up rpc metadata: {e:#}"));
+        }
         if let Some(task) = rpc_server_task {
             let _ = task.await;
         }

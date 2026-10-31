@@ -120,9 +120,19 @@ pub fn read_rpc_metadata(field_dir: &std::path::Path) -> Option<RpcEndpointMetad
     serde_json::from_str(&content).ok()
 }
 
-pub fn remove_rpc_metadata(field_dir: &std::path::Path) {
+pub fn remove_rpc_metadata(field_dir: &std::path::Path) -> std::io::Result<()> {
     let target = rpc_metadata_path(field_dir);
-    let _ = std::fs::remove_file(target);
+    match std::fs::remove_file(target) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
     let tmp = field_dir.join(".gluon.rpc.tmp");
-    let _ = std::fs::remove_file(tmp);
+    match std::fs::remove_file(tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    Ok(())
 }
+

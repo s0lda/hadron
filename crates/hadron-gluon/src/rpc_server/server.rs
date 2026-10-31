@@ -90,7 +90,12 @@ impl RpcServer {
                     }
                 }
             }
-            remove_rpc_metadata(&field_dir_buf);
+            if let Err(e) = remove_rpc_metadata(&field_dir_buf) {
+                hadron_lattice::term::warn(
+                    hadron_lattice::term::Source::Gluon,
+                    &format!("unable to clean up rpc metadata: {e:#}"),
+                );
+            }
         });
 
         Ok((addr, handle))

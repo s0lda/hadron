@@ -69,7 +69,7 @@ mod tests {
         let read_meta = read_rpc_metadata(field_dir).expect("read metadata");
         assert_eq!(read_meta, meta);
 
-        remove_rpc_metadata(field_dir);
+        remove_rpc_metadata(field_dir).expect("remove metadata");
         assert!(read_rpc_metadata(field_dir).is_none());
     }
 }
