@@ -97,6 +97,8 @@ impl super::Chamber {
                     .spawn(async move {
                         if let Err(e) = io::append_event(&path, &cmd_ev_bg) {
                             eprintln!("chamber: failed to append command event: {e}");
+                        } else {
+                            crate::rpc_client::notify_daemon_wake(&path);
                         }
                     })
                     .detach();

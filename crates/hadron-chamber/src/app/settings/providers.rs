@@ -1273,11 +1273,45 @@ impl super::Chamber {
     }
 
     pub(super) fn environment_settings_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_wsl_workspace = crate::wsl::is_wsl_unc_path(&self.path);
+        let (ipc_label, ipc_color) = match &self.rpc_endpoint {
+            Some(rpc) => {
+                let mode_suffix = if is_wsl_workspace { " · WSL2 Bridge" } else { "" };
+                (
+                    format!(
+                        "Connected ({} · {} · pid {}{})",
+                        rpc.addr, rpc.platform, rpc.pid, mode_suffix
+                    ),
+                    theme::success(),
+                )
+            }
+            None if self.last_gluon_running => (
+                if is_wsl_workspace {
+                    "File Watcher Fallback (WSL2 Workspace)".to_string()
+                } else {
+                    "File Watcher Fallback".to_string()
+                },
+                theme::text_secondary(),
+            ),
+            None => ("Daemon Stopped".to_string(), theme::warning()),
+        };
+
         let environment_card = settings_card_section(
             "Environment & Defaults",
             Some(IconName::Settings),
             v_flex()
                 .gap_3()
+                .child(settings_field(
+                    "Daemon IPC & WSL Bridge",
+                    Some(
+                        "Live JSON-RPC 2.0 loopback channel (.hadron/gluon.rpc) for <1ms daemon wakeups and WSL2 native daemon bridge status.",
+                    ),
+                    div()
+                        .text_xs()
+                        .text_color(ipc_color)
+                        .child(ipc_label)
+                        .into_any_element(),
+                ))
                 .child(settings_field(
                     "Code editor",
                     Some(

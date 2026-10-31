@@ -90,6 +90,7 @@ pub(super) struct FieldPoll {
     pub(super) live_activities: Vec<(String, Option<hadron_lattice::live::Activity>)>,
     pub(super) gate_activities: Vec<hadron_lattice::live::Activity>,
     pub(super) gluon_now_running: bool,
+    pub(super) rpc_endpoint: Option<hadron_lattice::wire::RpcEndpointMetadata>,
 }
 
 impl FieldPoll {
@@ -107,7 +108,9 @@ impl FieldPoll {
         scan_health: bool,
         prev_branch_fingerprint: Option<&str>,
     ) -> Self {
-        let events = io::read_events(path).ok();
+        let events = io::read_events(path)
+            .ok()
+            .or_else(|| crate::rpc_client::poll_field_via_rpc(path, 0, 0).map(|(evs, _)| evs));
         let read_strict = |p: &std::path::Path| -> Option<Team> {
             if !p.exists() {
                 return Some(Team::default());
@@ -160,6 +163,7 @@ impl FieldPoll {
         let gates_dir = hadron_lattice::live::gates_dir(path);
         let gate_activities = hadron_lattice::live::gates(&gates_dir, now);
         let gluon_now_running = super::Chamber::probe_gluon_running(path);
+        let rpc_endpoint = crate::rpc_client::active_endpoint(path);
 
         Self {
             events,
@@ -172,6 +176,7 @@ impl FieldPoll {
             live_activities,
             gate_activities,
             gluon_now_running,
+            rpc_endpoint,
         }
     }
 }
@@ -507,6 +512,10 @@ impl super::Chamber {
             if let Some(went_running) = gluon_running_edge(self.last_gluon_running, poll.gluon_now_running) {
                 self.last_gluon_running = poll.gluon_now_running;
                 self.gluon_stopped_notice = !went_running;
+                changed = true;
+            }
+            if poll.rpc_endpoint != self.rpc_endpoint {
+                self.rpc_endpoint = poll.rpc_endpoint;
                 changed = true;
             }
 

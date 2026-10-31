@@ -42,6 +42,8 @@ mod symbols;
 mod syntax;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 mod wsl;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+mod rpc_client;
 mod headless_runner;
 
 fn main() {

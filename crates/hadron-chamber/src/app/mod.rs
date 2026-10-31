@@ -670,6 +670,7 @@ struct Chamber {
     /// not on every tick gluon happens to still be down. Starts optimistic (running)
     /// since the chamber normally auto-spawns the daemon on launch.
     pub(super) last_gluon_running: bool,
+    pub(super) rpc_endpoint: Option<hadron_lattice::wire::RpcEndpointMetadata>,
     /// Whether the "gluon stopped" banner is currently shown. Set on the
     /// running→stopped edge, cleared on stopped→running or manual dismiss.
     /// Whether `.hadron/nucleus/index.md` exceeds the 32 KiB prompt limit
@@ -1614,6 +1615,7 @@ impl Chamber {
             .collect();
         let delegations = delegation::parse_delegations(&events, &alias_map);
         let audio_manager = audio::AudioTelemetryManager::new(prefs.audio.clone());
+        let rpc_endpoint = crate::rpc_client::active_endpoint(&path);
 
         let mut chamber = Chamber {
             view,
@@ -1863,6 +1865,7 @@ impl Chamber {
             last_gate_activities: Vec::new(),
             last_live_timer_sec: None,
             last_gluon_running: true,
+            rpc_endpoint,
             nucleus_over_budget: if workspace_mode == WorkspaceMode::Selector || is_wsl {
                 false
             } else {

@@ -24,3 +24,5 @@ pub mod symbols;
 pub mod syntax;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub mod wsl;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub mod rpc_client;

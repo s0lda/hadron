@@ -3793,6 +3793,8 @@ impl Chamber {
             .spawn(async move {
                 if let Err(e) = io::append_event(&path, &ev_bg) {
                     eprintln!("chamber: failed to append event: {e}");
+                } else {
+                    crate::rpc_client::notify_daemon_wake(&path);
                 }
             })
             .detach();
