@@ -923,3 +923,22 @@ pub fn build_seat_watched(
     build_watched(spec_for_seat(seat, store)?, Some(live_dir))
 }
 
+/// Return `true` when `vendor` has a native ACP agent preset or registry alias
+/// and therefore prefers the standardized ACP stdio protocol over legacy CLI scraping.
+pub fn vendor_prefers_acp(vendor: &str) -> bool {
+    let trimmed = vendor.trim();
+    let base = match trimmed.rsplit_once('-') {
+        Some((b, suffix)) if !b.is_empty() && suffix.parse::<u32>().is_ok_and(|n| n >= 2) => b,
+        _ => trimmed,
+    };
+    let clean = base.trim_start_matches("acp-").to_ascii_lowercase();
+    if clean.is_empty() {
+        return false;
+    }
+    ACP_AGENTS.iter().any(|p| p.vendor.eq_ignore_ascii_case(&clean))
+        || REGISTRY_ALIASES
+            .iter()
+            .any(|(alias, _)| alias.eq_ignore_ascii_case(&clean))
+}
+
+

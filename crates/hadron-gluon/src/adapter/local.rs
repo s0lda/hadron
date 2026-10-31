@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use hadron_lattice::live::{self, Activity, Doing};
+use hadron_lattice::live::{Activity, Doing};
 use hadron_lattice::{EnergyState, Flavor, Projection, QuarkId, Seat, SeatCommands, Transport, TurnOutcome};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -751,12 +751,15 @@ impl Quark for LocalQuark {
                     let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
                     if due {
                         last_publish = Some(Instant::now());
-                        let activity = if doing == Doing::Speaking {
+                        let mut activity = if doing == Doing::Speaking {
                             Activity::speaking(quark_id.clone(), &draft)
                         } else {
                             Activity::new(quark_id.clone(), Doing::Thinking, &thought)
                         };
-                        let _ = live::publish(dir, &activity);
+                        crate::adapter::telemetry::TurnTelemetrySink::publish_activity(
+                            dir,
+                            &mut activity,
+                        );
                     }
                 })
                 .await?;
@@ -764,7 +767,7 @@ impl Quark for LocalQuark {
 
             if calls.is_empty() {
                 if let Some(dir) = &self.live_dir {
-                    let _ = live::clear(dir, &self.id);
+                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
                 }
                 return Ok(TurnOutcome {
                     message: Some(text),
@@ -790,13 +793,14 @@ impl Quark for LocalQuark {
                 let call_id = call.id.clone();
                 async move {
                     if let Some(dir) = &live_dir {
-                        let _ = live::publish(
+                        let mut activity = Activity::new(
+                            quark_id,
+                            Doing::Working,
+                            &format!("round {}: {}", round + 1, call_name),
+                        );
+                        crate::adapter::telemetry::TurnTelemetrySink::publish_activity(
                             dir,
-                            &Activity::new(
-                                quark_id,
-                                Doing::Working,
-                                &format!("round {}: {}", round + 1, call_name),
-                            ),
+                            &mut activity,
                         );
                     }
                     let result =
@@ -813,7 +817,7 @@ impl Quark for LocalQuark {
         }
 
         if let Some(dir) = &self.live_dir {
-            let _ = live::clear(dir, &self.id);
+            crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
         }
         Ok(TurnOutcome {
             message: Some(format!(

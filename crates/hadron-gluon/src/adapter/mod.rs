@@ -7,3 +7,4 @@ mod local_tools;
 pub mod prompt;
 pub mod registry;
 pub mod runner;
+pub mod telemetry;

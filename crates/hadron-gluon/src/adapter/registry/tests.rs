@@ -1205,3 +1205,16 @@ fn build_seat_resolves_the_cloud_vendor_and_wires_its_secret() {
     let q = build_seat(&s, &store).unwrap();
     assert_eq!(q.id(), QuarkId::new("http-openai-compatible"));
 }
+
+#[test]
+fn vendor_prefers_acp_recognizes_presets_aliases_and_suffixed_ids() {
+    assert!(vendor_prefers_acp("agy"));
+    assert!(vendor_prefers_acp("claude"));
+    assert!(vendor_prefers_acp("codex"));
+    assert!(vendor_prefers_acp("copilot"));
+    assert!(vendor_prefers_acp("gemini"));
+    assert!(vendor_prefers_acp("acp-claude-2"));
+    assert!(!vendor_prefers_acp(""));
+    assert!(!vendor_prefers_acp("unknown-custom-shell"));
+}
+

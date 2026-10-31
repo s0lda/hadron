@@ -556,12 +556,12 @@ impl<R: CliRunner> CliQuark<R> {
                     Activity::speaking(quark_id.clone(), acc.draft())
                 };
                 activity.started = Some(turn_started);
-                let _ = live::publish(dir, &activity);
+                crate::adapter::telemetry::TurnTelemetrySink::publish_activity(dir, &mut activity);
             }
         };
         let run_result = self.runner.run_streaming(inv, &mut on_line).await;
         if let Some(dir) = &self.live_dir {
-            let _ = live::clear(dir, &self.id);
+            crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
         }
         run_result?;
         let res = acc.finish_result();
