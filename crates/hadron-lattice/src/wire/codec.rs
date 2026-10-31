@@ -10,6 +10,16 @@ impl JsonRpcCodec {
     pub fn new() -> Self {
         Self
     }
+
+    pub fn decode_request(line: &str) -> Result<super::protocol::JsonRpcRequest, serde_json::Error> {
+        serde_json::from_str(line)
+    }
+
+    pub fn encode_response(res: &super::protocol::JsonRpcResponse) -> Result<String, serde_json::Error> {
+        let mut s = serde_json::to_string(res)?;
+        s.push('\n');
+        Ok(s)
+    }
 }
 
 impl Decoder for JsonRpcCodec {

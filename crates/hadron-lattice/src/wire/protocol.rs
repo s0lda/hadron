@@ -88,3 +88,41 @@ pub enum JsonRpcMessage {
     Response(JsonRpcResponse),
     Notification(JsonRpcNotification),
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RpcEndpointMetadata {
+    pub addr: String,
+    pub pid: u32,
+    pub version: String,
+    pub platform: String,
+}
+
+pub fn rpc_metadata_path(field_dir: &std::path::Path) -> std::path::PathBuf {
+    field_dir.join("gluon.rpc")
+}
+
+pub fn write_rpc_metadata(field_dir: &std::path::Path, meta: &RpcEndpointMetadata) -> std::io::Result<()> {
+    let target = rpc_metadata_path(field_dir);
+    let tmp = field_dir.join(".gluon.rpc.tmp");
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(meta)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &target)?;
+    Ok(())
+}
+
+pub fn read_rpc_metadata(field_dir: &std::path::Path) -> Option<RpcEndpointMetadata> {
+    let target = rpc_metadata_path(field_dir);
+    let content = std::fs::read_to_string(&target).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+pub fn remove_rpc_metadata(field_dir: &std::path::Path) {
+    let target = rpc_metadata_path(field_dir);
+    let _ = std::fs::remove_file(target);
+    let tmp = field_dir.join(".gluon.rpc.tmp");
+    let _ = std::fs::remove_file(tmp);
+}

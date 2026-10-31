@@ -60,6 +60,7 @@ impl Engine {
         let (change_tx, mut change_rx) = tokio::sync::mpsc::channel::<()>(1);
         let field_path = self.field_path().to_path_buf();
         let bridge_shutdown = shutdown.clone();
+        let bridge_change_tx = change_tx.clone();
         let bridge = tokio::task::spawn_blocking(move || {
             // If the watcher can't be created (e.g. dir missing), drop the
             // sender and let the daemon fall back to pure safety-polling.
@@ -69,10 +70,33 @@ impl Engine {
             };
             while !*bridge_shutdown.borrow() {
                 if watcher.wait(Duration::from_millis(200)) {
-                    let _ = change_tx.try_send(());
+                    let _ = bridge_change_tx.try_send(());
                 }
             }
         });
+
+        let hadron_dir = hadron_lattice::hadron_dir_of(self.field_path());
+        let bus = crate::actor::bus::ActorBus::new(64);
+        let mut _bus_rxs = Vec::new();
+        for card in self.roster() {
+            if let Ok((_mailbox, rx)) = bus.register_quark(card.id.as_str()).await {
+                _bus_rxs.push(rx);
+            }
+        }
+        let dispatcher = std::sync::Arc::new(
+            crate::rpc_server::RpcDispatcher::new(bus)
+                .with_field_and_wake(self.field_path().to_path_buf(), change_tx.clone()),
+        );
+        let rpc_server_task = match crate::rpc_server::RpcServer::bind_and_serve(&hadron_dir, dispatcher, shutdown.clone()).await {
+            Ok((addr, handle)) => {
+                term::info(Source::Gluon, &format!("serving JSON-RPC on {addr} ({})", hadron_dir.display()));
+                Some(handle)
+            }
+            Err(e) => {
+                term::warn(Source::Gluon, &format!("unable to bind JSON-RPC server (continuing): {e:#}"));
+                None
+            }
+        };
 
         // Once the change channel closes (bridge exited / watcher failed) we
         // stop selecting on it so a ready-`None` can't starve the sleep arm and
@@ -131,6 +155,10 @@ impl Engine {
             }
         }
 
+        hadron_lattice::wire::remove_rpc_metadata(&hadron_dir);
+        if let Some(task) = rpc_server_task {
+            let _ = task.await;
+        }
         let _ = bridge.await;
         Ok(())
     }

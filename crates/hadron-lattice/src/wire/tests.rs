@@ -50,4 +50,26 @@ mod tests {
             _ => panic!("expected notification frame"),
         }
     }
+
+    #[test]
+    fn test_rpc_endpoint_metadata_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let field_dir = tmp.path();
+
+        assert!(read_rpc_metadata(field_dir).is_none());
+
+        let meta = RpcEndpointMetadata {
+            addr: "127.0.0.1:45678".to_string(),
+            pid: 12345,
+            version: "0.33.27".to_string(),
+            platform: "linux".to_string(),
+        };
+
+        write_rpc_metadata(field_dir, &meta).expect("write metadata");
+        let read_meta = read_rpc_metadata(field_dir).expect("read metadata");
+        assert_eq!(read_meta, meta);
+
+        remove_rpc_metadata(field_dir);
+        assert!(read_rpc_metadata(field_dir).is_none());
+    }
 }
