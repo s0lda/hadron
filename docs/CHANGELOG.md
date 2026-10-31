@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.28] - 2026-10-31
+
+### Added
+- **Daemon-First JSON-RPC IPC Server & `<1ms` Chamber Wakeups (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added `RpcEndpointMetadata` and `.hadron/gluon.rpc` lifecycle helpers (`write_rpc_metadata`, `read_rpc_metadata`, `remove_rpc_metadata`) in `crates/hadron-lattice/src/wire/protocol.rs` plus `RpcNotification` in `crates/hadron-lattice/src/wire/codec.rs`.
+  - Added `RpcServer::bind_and_serve` (`crates/hadron-gluon/src/rpc_server/server.rs`, `dispatcher.rs`, `daemon.rs`) listening on `127.0.0.1:0` with `"daemon/wake"`, `"field/poll"`, `"engine/status"`, and `"swarm/turn/dispatch"` handlers wired into `Engine::serve_with_wake`.
+  - Added `rpc_client` (`active_endpoint`, `call_rpc`, `notify_daemon_wake`, `poll_field_via_rpc`) in `crates/hadron-chamber/src/rpc_client.rs`, wired `notify_daemon_wake` into `append_and_reload` (`crates/hadron-chamber/src/app/actions.rs`) and `on_input_submit` (`crates/hadron-chamber/src/app/input.rs`), tracked `rpc_endpoint` in `FieldPoll::gather` (`crates/hadron-chamber/src/app/reload.rs`), and rendered live `Daemon IPC & WSL Bridge` telemetry in `Settings > Environment` (`crates/hadron-chamber/src/app/settings/providers.rs`).
+- **WSL-Native `hadron-gluon` Daemon Bridge & Cross-Boundary Spawning (`hadron-lattice`, `hadron-chamber`)**:
+  - Added `build_wsl_gluon_command`, `parse_wsl_which_output`, and `probe_wsl_gluon_binary` (`crates/hadron-lattice/src/wsl.rs`), `terminate_gluon_in_dir` (`crates/hadron-lattice/src/sys/process.rs`), and `resolve_gluon_spawn_target` / `spawn_gluon_for_field` (`crates/hadron-chamber/src/sys.rs`, `crates/hadron-chamber/src/main.rs`) so WSL UNC workspaces run an in-distro Linux `hadron-gluon` daemon on native ext4/inotify when installed with automatic host fallback.
+- **Unified Adapter Stream Telemetry Sink & ACP Vendor Preference (`hadron-gluon`)**:
+  - Added `AdapterStreamEvent` and `TurnTelemetrySink` (`crates/hadron-gluon/src/adapter/telemetry.rs`) to unify live activity publishing and turn cleanup across `acp/session.rs`, `cli.rs`, and `local.rs`, and added `vendor_prefers_acp` in `crates/hadron-gluon/src/adapter/registry/mod.rs`.
+
 ## [0.33.27] - 2026-10-31
 
 ### Fixed

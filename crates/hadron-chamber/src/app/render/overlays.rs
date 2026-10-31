@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.28",
+        date: Some("2026-10-31"),
+        added: &[
+            "Daemon-First JSON-RPC IPC Server & <1ms Chamber Wakeups: Added RpcServer::bind_and_serve on 127.0.0.1:0 with .hadron/gluon.rpc discovery, daemon/wake, field/poll, engine/status, and swarm/turn/dispatch handlers, wired rpc_client::notify_daemon_wake on message/command submit, and added live Daemon IPC & WSL Bridge status in Settings > Environment",
+            "WSL-Native hadron-gluon Daemon Bridge & Cross-Boundary Spawning: Added probe_wsl_gluon_binary, build_wsl_gluon_command, spawn_gluon_for_field, and terminate_gluon_in_dir so WSL UNC workspaces run an in-distro Linux hadron-gluon daemon on native ext4/inotify when installed with automatic host fallback",
+            "Unified Adapter Stream Telemetry Sink & ACP Vendor Preference: Added AdapterStreamEvent and TurnTelemetrySink across ACP, CLI, and Local adapters plus vendor_prefers_acp in the adapter registry",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.27",
         date: Some("2026-10-31"),
         added: &[],

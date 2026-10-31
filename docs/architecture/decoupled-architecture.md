@@ -9,8 +9,8 @@ Hadron separates execution from presentation to ensure maximum performance, stab
 Hadron is split into two primary operational tiers:
 
 - **`hadron-gluon` (Headless Daemon)**: 
-  - Watches the NDJSON file bus (`field.jsonl`) using low-level filesystem notifications (`notify`).
-  - Dispatches turns to seated Quarks (agents).
+  - Watches the NDJSON file bus (`field.jsonl`) using low-level filesystem notifications (`notify`) and serves a loopback JSON-RPC 2.0 endpoint (`.hadron/gluon.rpc`) for `<1ms` wakeups (`daemon/wake`), incremental `field/poll`, and status/turn dispatch.
+  - Dispatches turns to seated Quarks (agents), with native in-distro Linux execution on WSL UNC workspaces when installed.
   - Manages isolated git worktree environments (`.hadron/trees/<id>`).
   - Enforces gatekeeper security policies.
   - Executes merge gates to safely rebase and verify completed code turns against native project test suites.
