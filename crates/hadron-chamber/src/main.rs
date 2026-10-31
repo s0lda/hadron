@@ -193,17 +193,16 @@ fn main() {
             // runs the chamber. Headless (no gui) stays side-effect-free by design.
             #[cfg(feature = "gui")]
             if !no_daemon {
-                let gluon_bin = resolve_gluon_binary();
+                let (gluon_bin, gluon_args) = sys::resolve_gluon_spawn_target(field_path);
                 term::info(
                     Source::Chamber,
                     &format!(
                         "auto-spawning daemon {:?} on field {:?}",
-                        gluon_bin, p
+                        gluon_bin, gluon_args
                     ),
                 );
-                match sys::spawn_with_console_pref(
-                    &gluon_bin,
-                    [p],
+                match sys::spawn_gluon_for_field(
+                    field_path,
                     config::load().show_console_window,
                 ) {
                     Ok(child) => {
@@ -255,30 +254,7 @@ fn main() {
                         Source::Chamber,
                         &format!("closing hadron-gluon (PID {}) on exit...", pid),
                     );
-                    #[cfg(unix)]
-                    {
-                        // Send SIGTERM first so hadron-gluon runs its ShutdownGuard
-                        // (`proc::kill_all()`) and terminates all spawned quark process groups
-                        // before exiting cleanly. Escalate to SIGKILL only if it does not exit.
-                        unsafe {
-                            let _ = libc::kill(pid as i32, libc::SIGTERM);
-                        }
-                        for _ in 0..30 {
-                            if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-                                break;
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    }
-                    if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-                        hadron_lattice::sys::process::kill_process_group(pid);
-                        for _ in 0..20 {
-                            if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-                                break;
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
-                    }
+                    hadron_lattice::sys::process::terminate_gluon_in_dir(pid, &field_dir);
                 } else {
                     term::warn(
                         Source::Chamber,
@@ -363,7 +339,7 @@ fn main() {
 }
 
 #[cfg(feature = "gui")]
-use sys::{read_lock_pid, resolve_gluon_binary};
+use sys::read_lock_pid;
 
 /// The name the kernel reports for the daemon in `<proc_root>/<pid>/comm`: the basename
 /// of the binary `resolve_gluon_binary` runs, comfortably inside `comm`'s 15-char limit.

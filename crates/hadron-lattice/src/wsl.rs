@@ -328,6 +328,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
                     }
                 }
                 for rel_dir in [
+                    ".hadron/bin",
                     ".local/bin",
                     ".cargo/bin",
                     ".gemini/antigravity-cli/bin",
@@ -367,7 +368,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
                 "--exec",
                 "sh",
                 "-c",
-                "NVM_BIN=$(ls -d \"$HOME\"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n 1); export PATH=\"${NVM_BIN:+$NVM_BIN:}$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$HOME/.grok/bin:$HOME/.bun/bin:$HOME/.deno/bin:$HOME/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin\"; command -v \"$1\"",
+                "NVM_BIN=$(ls -d \"$HOME\"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -n 1); export PATH=\"${NVM_BIN:+$NVM_BIN:}$HOME/.hadron/bin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.gemini/antigravity-cli/bin:$HOME/.grok/bin:$HOME/.bun/bin:$HOME/.deno/bin:$HOME/.volta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin\"; command -v \"$1\"",
                 "sh",
                 program,
             ])
@@ -566,6 +567,7 @@ pub fn wsl_user_path_env(linux_cwd: &Path) -> Option<String> {
         }
     }
     dirs.extend([
+        format!("{home}/.hadron/bin"),
         format!("{home}/.local/bin"),
         format!("{home}/.cargo/bin"),
         format!("{home}/.gemini/antigravity-cli/bin"),
@@ -667,6 +669,55 @@ pub fn wsl_aware_command(cwd: &Path, program: &str) -> std::process::Command {
 /// `cwd` is a Windows WSL UNC path so git runs natively on ext4 instead of across 9P.
 pub fn git_command(cwd: &Path) -> std::process::Command {
     wsl_aware_command(cwd, "git")
+}
+
+/// Build the `wsl.exe` command and argument vector to launch a Linux-native `hadron-gluon`
+/// daemon inside `distro` on `linux_field_path`.
+pub fn build_wsl_gluon_command(
+    distro: &str,
+    linux_field_path: &Path,
+    linux_gluon_bin: &str,
+) -> (String, Vec<String>) {
+    (
+        "wsl.exe".to_string(),
+        vec![
+            "-d".to_string(),
+            distro.to_string(),
+            "--".to_string(),
+            linux_gluon_bin.to_string(),
+            linux_field_path.to_string_lossy().replace('\\', "/"),
+        ],
+    )
+}
+
+/// Parse raw `command -v hadron-gluon` stdout from `wsl.exe`, ignoring WSL mount/relay
+/// noise and Windows `/mnt/` paths, and returning the in-distro Linux binary path.
+pub fn parse_wsl_which_output(bytes: &[u8]) -> Option<String> {
+    decode_wsl_output(bytes)
+        .into_iter()
+        .find(|line| {
+            line.starts_with('/')
+                && !line.starts_with("/mnt/")
+                && (line.ends_with("/hadron-gluon") || line == "/hadron-gluon")
+        })
+}
+
+/// Probe whether a Linux-native `hadron-gluon` binary is installed inside `distro`.
+///
+/// Reuses [`resolve_wsl_program_path`] on Windows (which checks `~/.hadron/bin`,
+/// `~/.local/bin`, `~/.cargo/bin`, system `PATH`, and `command -v`) and filters out
+/// Windows `/mnt/` paths so only a genuine Linux binary is returned.
+pub fn probe_wsl_gluon_binary(distro: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        resolve_wsl_program_path(distro, "hadron-gluon")
+            .filter(|p| p.starts_with('/') && !p.starts_with("/mnt/"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = distro;
+        None
+    }
 }
 
 #[cfg(test)]
@@ -932,5 +983,35 @@ mod tests {
         ));
         assert!(should_run_in_wsl("Ubuntu", "agy"));
         assert!(should_run_in_wsl("Ubuntu", "claude"));
+    }
+
+    #[test]
+    fn test_build_wsl_gluon_command_and_parse_which() {
+        let (prog, args) = build_wsl_gluon_command(
+            "Ubuntu-24.04",
+            Path::new("/home/jake/dev/hadron/.hadron/field.jsonl"),
+            "/home/jake/.local/bin/hadron-gluon",
+        );
+        assert_eq!(prog, "wsl.exe");
+        assert_eq!(
+            args,
+            vec![
+                "-d",
+                "Ubuntu-24.04",
+                "--",
+                "/home/jake/.local/bin/hadron-gluon",
+                "/home/jake/dev/hadron/.hadron/field.jsonl",
+            ]
+        );
+
+        let noisy_stdout = b"<3>WSL (99) ERROR: CreateProcessParseCommon:711: Failed to translate Z:\\\r\n/home/jake/.local/bin/hadron-gluon\r\n";
+        assert_eq!(
+            parse_wsl_which_output(noisy_stdout),
+            Some("/home/jake/.local/bin/hadron-gluon".to_string())
+        );
+
+        // Windows /mnt/c paths must be rejected so we only use genuine Linux binaries
+        let mnt_stdout = b"/mnt/c/Users/Jake/bin/hadron-gluon\r\n";
+        assert_eq!(parse_wsl_which_output(mnt_stdout), None);
     }
 }

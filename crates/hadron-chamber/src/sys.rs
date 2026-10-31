@@ -1181,6 +1181,43 @@ pub fn read_lock_pid(lock_path: &Path) -> Option<u32> {
         .and_then(|content| content.trim().parse::<u32>().ok())
 }
 
+/// Resolve the program and argument vector to spawn `hadron-gluon` for `field_path`.
+///
+/// When running on Windows against a WSL UNC path (`\\wsl.localhost\<distro>\...`) where
+/// a Linux-native `hadron-gluon` is installed inside `distro`, routes through
+/// `wsl.exe -d <distro> -- <linux_gluon_bin> <linux_field_path>` so git worktree gates and
+/// quark subprocesses run natively on Linux ext4; otherwise uses the local host
+/// [`resolve_gluon_binary`].
+pub fn resolve_gluon_spawn_target(field_path: &Path) -> (std::path::PathBuf, Vec<String>) {
+    if cfg!(target_os = "windows") {
+        if let Some((distro, linux_field_path)) = hadron_lattice::wsl::parse_wsl_unc_path(field_path)
+        {
+            if let Some(linux_bin) = hadron_lattice::wsl::probe_wsl_gluon_binary(&distro) {
+                let (prog, args) = hadron_lattice::wsl::build_wsl_gluon_command(
+                    &distro,
+                    &linux_field_path,
+                    &linux_bin,
+                );
+                return (std::path::PathBuf::from(prog), args);
+            }
+        }
+    }
+    (
+        resolve_gluon_binary(),
+        vec![field_path.to_string_lossy().into_owned()],
+    )
+}
+
+/// Spawn `hadron-gluon` for `field_path`, routing through WSL2 when running on Windows
+/// against a WSL UNC workspace that has a Linux-native `hadron-gluon` installed.
+pub fn spawn_gluon_for_field(
+    field_path: &Path,
+    show_console: bool,
+) -> std::io::Result<std::process::Child> {
+    let (prog, args) = resolve_gluon_spawn_target(field_path);
+    spawn_with_console_pref(&prog, args, show_console)
+}
+
 /// Start or restart the `hadron-gluon` daemon for `field_path`: if a live
 /// `hadron-gluon` currently holds `<field_dir>/gluon.lock`, terminates it and waits
 /// briefly for exit before spawning a fresh `hadron-gluon` instance.
@@ -1189,31 +1226,10 @@ pub fn restart_gluon_daemon(field_path: &Path, show_console: bool) -> std::io::R
     let lock_path = field_dir.join("gluon.lock");
     if let Some(pid) = read_lock_pid(&lock_path) {
         if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-            #[cfg(unix)]
-            {
-                unsafe {
-                    let _ = libc::kill(pid as i32, libc::SIGTERM);
-                }
-                for _ in 0..30 {
-                    if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            }
-            if hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-                hadron_lattice::sys::process::kill_process_group(pid);
-                for _ in 0..20 {
-                    if !hadron_lattice::sys::inspect::is_process_alive_in_dir(pid, &field_dir) {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            }
+            hadron_lattice::sys::process::terminate_gluon_in_dir(pid, &field_dir);
         }
     }
-    let gluon_bin = resolve_gluon_binary();
-    let child = spawn_with_console_pref(&gluon_bin, [field_path], show_console)?;
+    let child = spawn_gluon_for_field(field_path, show_console)?;
     Ok(child.id())
 }
 
@@ -1958,6 +1974,14 @@ mod tests {
         // Delete item
         delete_workspace_item(root, "icon.rs").expect("delete file");
         assert!(!root.join("icon.rs").exists());
+    }
+
+    #[test]
+    fn resolve_gluon_spawn_target_falls_back_to_local_binary_for_local_path() {
+        let local_field = Path::new("/tmp/hadron-test/.hadron/field.jsonl");
+        let (prog, args) = resolve_gluon_spawn_target(local_field);
+        assert_eq!(prog, resolve_gluon_binary());
+        assert_eq!(args, vec![local_field.to_string_lossy().into_owned()]);
     }
 }
 
