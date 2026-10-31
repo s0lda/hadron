@@ -7057,7 +7057,10 @@ async fn a_slow_merge_gate_does_not_block_sibling_quark_dispatch() {
     });
 
     engine.run_until_quiesce().await.unwrap();
-    sender.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(10), sender)
+        .await
+        .expect("timed out waiting for merge gate to be entered")
+        .unwrap();
 
     let b_time = b_completed_at
         .lock()

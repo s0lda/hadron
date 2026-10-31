@@ -265,6 +265,11 @@ pub(crate) fn main_repo_root(path: &Path) -> anyhow::Result<std::path::PathBuf> 
 }
 
 const ATOMIC_SNAPSHOT_CREATE_SCRIPT: &str = r#"set -e
+export GIT_AUTHOR_NAME="hadron"
+export GIT_AUTHOR_EMAIL="hadron@localhost"
+export GIT_COMMITTER_NAME="hadron"
+export GIT_COMMITTER_EMAIL="hadron@localhost"
+export GIT_TERMINAL_PROMPT="0"
 id="$1"
 label="$2"
 refname="$3"
