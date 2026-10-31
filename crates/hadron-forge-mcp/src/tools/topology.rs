@@ -22,19 +22,7 @@ impl ForgeMcpServer {
         &self,
         Parameters(_args): Parameters<TopologyArgs>,
     ) -> Json<ToolResponse> {
-        let mut graph = WorkspaceTopologyGraph::new();
-        graph.add_crate("hadron-chamber", "crates/hadron-chamber");
-        graph.add_crate("hadron-gluon", "crates/hadron-gluon");
-        graph.add_crate("hadron-lattice", "crates/hadron-lattice");
-        graph.add_crate("hadron-gatekeeper", "crates/hadron-gatekeeper");
-        graph.add_crate("hadron-forge", "crates/hadron-forge");
-        graph.add_crate("hadron-forge-mcp", "crates/hadron-forge-mcp");
-
-        graph.add_dependency("hadron-chamber", "hadron-gluon");
-        graph.add_dependency("hadron-gluon", "hadron-lattice");
-        graph.add_dependency("hadron-gluon", "hadron-gatekeeper");
-        graph.add_dependency("hadron-gluon", "hadron-forge");
-        graph.add_dependency("hadron-forge-mcp", "hadron-forge");
+        let graph = WorkspaceTopologyGraph::from_workspace(self.root.path());
 
         match serde_json::to_string_pretty(&graph) {
             Ok(json) => Json(ToolResponse::success(Some(json))),

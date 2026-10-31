@@ -104,13 +104,60 @@ pub fn build_nucleus_graph(nucleus_dir: &Path) -> (BTreeMap<String, NucleusNode>
         }
     }
 
-    // Parse index.md to capture pointers from the index
+    // Parse index.md to capture pointers and hook descriptions from the index
     let index_file = nucleus_dir.join("index.md");
     if let Ok(index_content) = fs::read_to_string(index_file) {
         let index_links = extract_note_links(&index_content);
         for target in index_links {
             if let Some(node) = nodes.get_mut(&target) {
                 node.incoming_links.push("index".to_string());
+            }
+        }
+
+        for line in index_content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let mut extracted_slug = None;
+            if let Some(start) = trimmed.find("(notes/") {
+                let rest = &trimmed[start + 7..];
+                if let Some(end) = rest.find(')') {
+                    let target = &rest[..end];
+                    let slug = target.strip_suffix(".md").unwrap_or(target).trim();
+                    if !slug.is_empty() {
+                        extracted_slug = Some(slug.to_string());
+                    }
+                }
+            } else if let Some(start) = trimmed.find("[[") {
+                let rest = &trimmed[start + 2..];
+                if let Some(end) = rest.find("]]") {
+                    let slug = rest[..end].trim();
+                    if !slug.is_empty() {
+                        extracted_slug = Some(slug.to_string());
+                    }
+                }
+            }
+
+            if let Some(slug) = extracted_slug {
+                let hook = if let Some(dash_idx) = trimmed.find('—') {
+                    let after = &trimmed[dash_idx + '—'.len_utf8()..];
+                    let raw_hook = after.split('→').next().unwrap_or(after).trim();
+                    raw_hook.to_string()
+                } else if let Some(dash_idx) = trimmed.find(" - ") {
+                    let after = &trimmed[dash_idx + 3..];
+                    let raw_hook = after.split('→').next().unwrap_or(after).trim();
+                    raw_hook.to_string()
+                } else {
+                    String::new()
+                };
+
+                if !hook.is_empty() {
+                    if let Some(node) = nodes.get_mut(&slug) {
+                        node.title = format!("{} — {}", slug, hook);
+                    }
+                }
             }
         }
     }
@@ -199,5 +246,26 @@ mod tests {
         let links = extract_note_links(text);
         assert!(links.contains(&"foo-bar".to_string()));
         assert!(links.contains(&"baz-qux".to_string()));
+    }
+
+    #[test]
+    fn test_index_hook_enrichment() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus_dir = dir.path();
+        let notes_dir = nucleus_dir.join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+        fs::write(notes_dir.join("some-slug.md"), "Some note content").unwrap();
+        fs::write(
+            nucleus_dir.join("index.md"),
+            "- [some-slug](notes/some-slug.md) — Software fallback constraint\n",
+        )
+        .unwrap();
+
+        let (nodes, _) = build_nucleus_graph(nucleus_dir);
+        assert!(nodes.contains_key("some-slug"));
+        assert_eq!(
+            nodes.get("some-slug").unwrap().title,
+            "some-slug — Software fallback constraint"
+        );
     }
 }
