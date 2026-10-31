@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.27] - 2026-10-31
+
+### Fixed
+- **Live Quark Action Single-Line Clamping & Turn Timer Stabilization (`hadron-chamber`, `hadron-gluon`)**:
+  - Collapsed newlines and capped length in `trim_title`, `humanize_activity_detail`, and ACP tool/thought/plan live updates (`crates/hadron-chamber/src/app/widgets.rs`, `crates/hadron-gluon/src/adapter/acp/session.rs`) so multiline copied text and tool output never stretch Roster or Chat Live Quark Action rows vertically.
+  - Anchored live capsule `elapsed_secs` to `active_task.asked_at` before `act.started` (`crates/hadron-chamber/src/model/tasks.rs`, `crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/render/roster.rs`), ticked active timers at 1Hz in `reload_if_changed` (`crates/hadron-chamber/src/app/reload.rs`), stabilized timer pill `min_w`, and removed Roster `act.at` heartbeat flicker.
+  - Added effort-qualified `gemini-3.8-flash` variants to `agy` `vendor_fallback_models` (`crates/hadron-chamber/src/app/settings/model_select.rs`).
+- **Worktree Provisioning Latency, Single-Invocation Atomic Snapshots & Binary-Search Prompt Fitting (`hadron-gluon`)**:
+  - Added `create_atomic_sh` (`crates/hadron-gluon/src/snapshot.rs`) to perform worktree snapshot creation (`git add -A`, `write-tree`, `commit-tree`, `update-ref`) in a single shell invocation with pinned fallback git author/committer identity, and cached `main_repo_root` lookups.
+  - Added filesystem fast-paths in `default_branch`, `resolve_git_dir_fast`, and `current_branch` (`crates/hadron-gluon/src/worktree.rs`), added `ensure_with_base` to avoid redundant `default_branch` / `rev-parse` subprocesses during worktree setup, moved solo-turn `provision_one` onto `tokio::task::spawn_blocking`, and skipped cross-worktree conflict scans when only one quark is active (`crates/hadron-gluon/src/engine/run.rs`).
+  - Replaced linear event-by-event prompt shedding in `fit_prompt_to_budget` (`crates/hadron-gluon/src/adapter/cli.rs`) with binary search over `field_window`, cached `is_sccache_available` (`crates/hadron-gluon/src/env/sccache.rs`) and `MOLD_AVAILABLE` (`crates/hadron-gluon/src/worktree/build_cache.rs`) in `OnceLock`, and bounded notification wait in `a_slow_merge_gate_does_not_block_sibling_quark_dispatch` (`crates/hadron-gluon/src/engine/tests.rs`).
+
 ## [0.33.26] - 2026-10-30
 
 ### Fixed

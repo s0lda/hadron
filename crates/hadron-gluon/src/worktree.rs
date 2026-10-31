@@ -191,6 +191,7 @@ pub fn current_branch(path: &Path) -> Option<String> {
 /// commit there is unreachable garbage). Checked *after* the work, so it also
 /// catches a human — or a Bypass-mode CLI — who checked out `main` inside a
 /// quark's tree behind the engine's back.
+#[cfg(test)]
 fn assert_not_default_branch(path: &Path, repo_root: &Path) -> anyhow::Result<String> {
     let default = default_branch(repo_root);
     assert_not_default_branch_with_base(path, &default)

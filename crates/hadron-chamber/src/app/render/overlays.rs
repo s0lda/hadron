@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.27",
+        date: Some("2026-10-31"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Live Quark Action Single-Line Clamping & Turn Timer Stabilization: Collapsed newlines and capped length in trim_title, humanize_activity_detail, and ACP live updates so multiline tool output never stretches Roster or Chat Live Quark Action rows vertically, anchored elapsed_secs to active_task.asked_at with 1Hz ticks, and added effort-qualified gemini-3.8-flash fallback variants",
+            "Worktree Provisioning Latency, Single-Invocation Atomic Snapshots & Binary-Search Prompt Fitting: Added single-shell create_atomic_sh snapshots with pinned git author fallback, added filesystem fast-paths in default_branch and current_branch, moved solo provision_one to spawn_blocking, binary-searched field_window in fit_prompt_to_budget, and cached sccache/mold probes in OnceLock",
+        ],
+    },
+    Release {
         version: "0.33.26",
         date: Some("2026-10-30"),
         added: &[],
