@@ -53,7 +53,7 @@ pub fn is_process_alive(pid: u32, expected_name: &str) -> bool {
                 let clean_path = path_str.trim_start_matches("\\?\\").trim_start_matches("//?/");
                 return matches_process_image_name(clean_path, expected_name);
             }
-            active
+            false
         }
     }
 

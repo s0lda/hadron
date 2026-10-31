@@ -278,9 +278,13 @@ pub fn wsl_unc_entry_exists(distro: &str, linux_path: &Path) -> bool {
 /// `$HOME/.gemini/antigravity-cli/bin`, `$HOME/.grok/bin`, `$HOME/.bun/bin`, `$HOME/.deno/bin`,
 /// `$HOME/.volta/bin`, `/snap/bin`), or return `None` if `program` is not installed inside `distro`.
 ///
-/// Positive resolutions are cached per `(distro, program)` for the lifetime of the process.
-/// Negative results are never cached so a transient `wsl.exe` or 9P hiccup cannot permanently
-/// poison tool resolution for the life of the daemon.
+/// Resolve the full path of `program` inside `distro` using the user's login `PATH`
+/// (including `$HOME/.nvm/versions/node/*/bin`, `$HOME/.hadron/bin`, `$HOME/.local/bin`,
+/// `$HOME/.cargo/bin`, `$HOME/.gemini/antigravity-cli/bin`, `$HOME/.grok/bin`,
+/// `$HOME/.bun/bin`, `$HOME/.deno/bin`, `$HOME/.volta/bin`, `/snap/bin`), or return `None`
+/// if `program` is not installed inside `distro`.
+///
+/// Results are cached per `(distro, program)` for the lifetime of the process.
 pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
     if program.starts_with('/') {
         return Some(program.to_string());
@@ -295,11 +299,11 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
         use std::process::Command;
         use std::sync::{Mutex, OnceLock};
 
-        static CACHE: OnceLock<Mutex<HashMap<(String, String), String>>> = OnceLock::new();
+        static CACHE: OnceLock<Mutex<HashMap<(String, String), Option<String>>>> = OnceLock::new();
         let map = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
         let key = (distro.to_string(), program.to_string());
         if let Some(cached) = map.lock().unwrap().get(&key) {
-            return Some(cached.clone());
+            return cached.clone();
         }
 
         // Fast-path: probe standard user and system bin directories directly via the WSL UNC
@@ -321,7 +325,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
                             let linux_candidate =
                                 format!("{home_str}/.nvm/versions/node/{ver_name}/bin/{program}");
                             if wsl_unc_entry_exists(distro, Path::new(&linux_candidate)) {
-                                map.lock().unwrap().insert(key, linux_candidate.clone());
+                                map.lock().unwrap().insert(key, Some(linux_candidate.clone()));
                                 return Some(linux_candidate);
                             }
                         }
@@ -339,7 +343,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
                 ] {
                     let linux_candidate = format!("{home_str}/{rel_dir}/{program}");
                     if wsl_unc_entry_exists(distro, Path::new(&linux_candidate)) {
-                        map.lock().unwrap().insert(key, linux_candidate.clone());
+                        map.lock().unwrap().insert(key, Some(linux_candidate.clone()));
                         return Some(linux_candidate);
                     }
                 }
@@ -356,7 +360,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
         ] {
             let linux_candidate = format!("{sys_dir}/{program}");
             if wsl_unc_entry_exists(distro, Path::new(&linux_candidate)) {
-                map.lock().unwrap().insert(key, linux_candidate.clone());
+                map.lock().unwrap().insert(key, Some(linux_candidate.clone()));
                 return Some(linux_candidate);
             }
         }
@@ -382,9 +386,7 @@ pub fn resolve_wsl_program_path(distro: &str, program: &str) -> Option<String> {
                     .find(|s| s.starts_with('/') && !s.starts_with("/mnt/"))
             });
 
-        if let Some(ref path) = resolved {
-            map.lock().unwrap().insert(key, path.clone());
-        }
+        map.lock().unwrap().insert(key, resolved.clone());
         resolved
     }
     #[cfg(not(windows))]
@@ -469,22 +471,15 @@ pub fn is_windows_host_path(program: &str) -> bool {
     lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat")
 }
 
-/// Check whether `program` should be executed via `wsl.exe` inside `distro` when the
-/// workspace is a WSL UNC path (`\\wsl.localhost\<distro>\...`).
+/// Check whether `program` exists inside `distro` (checking standard system and user bin directories)
+/// or on the Windows host, and return `true` if `program` should be executed via `wsl.exe` inside `distro`,
+/// or `false` if it is only installed on the Windows host (e.g. `agy.exe` on Windows when opening a WSL repo,
+/// or a Windows-host venv interpreter like `C:\Users\...\.hadron\bridges\agy\venv\Scripts\python.exe`).
 ///
-/// Any POSIX path (`/usr/bin/...`) or bare command name (`agy`, `claude`, `codex`, `git`, `cargo`)
-/// on a WSL workspace must execute inside `distro` so it uses the Linux filesystem, toolchain,
-/// and Linux file-based credentials (`~/.gemini/antigravity-cli/antigravity-oauth-token`) rather
-/// than falling back to an unauthenticated Windows host binary (`agy.exe`) with a WSL UNC cwd.
-/// Only explicit Windows host paths (`C:\...`, `\\...`, `*.exe`, `*.cmd`, `*.bat`) execute on
-/// the Windows host.
+/// Results are cached per `(distro, program)` for the lifetime of the process.
 pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
     if is_windows_host_path(program) {
         return false;
-    }
-    if !program.contains('\\') && !program.contains('/') {
-        let _ = resolve_wsl_program_path(distro, program);
-        return true;
     }
     #[cfg(windows)]
     {
@@ -510,9 +505,7 @@ pub fn should_run_in_wsl(distro: &str, program: &str) -> bool {
                 .unwrap_or(false);
 
         let decision = decide_wsl_vs_host(in_wsl, on_host);
-        if decision {
-            map.lock().unwrap().insert(key, true);
-        }
+        map.lock().unwrap().insert(key, decision);
         decision
     }
     #[cfg(not(windows))]
@@ -702,12 +695,21 @@ pub fn parse_wsl_which_output(bytes: &[u8]) -> Option<String> {
         })
 }
 
-/// Probe whether a Linux-native `hadron-gluon` binary is installed inside `distro`.
+/// Probe whether a Linux-native `hadron-gluon` binary is installed inside `distro` and
+/// opted into via `HADRON_WSL_GLUON=1` (`true`).
 ///
-/// Reuses [`resolve_wsl_program_path`] on Windows (which checks `~/.hadron/bin`,
-/// `~/.local/bin`, `~/.cargo/bin`, system `PATH`, and `command -v`) and filters out
-/// Windows `/mnt/` paths so only a genuine Linux binary is returned.
+/// By default on Windows, `hadron.exe` runs its own shipped sibling `hadron-gluon.exe`
+/// so it uses the Windows Credential Manager keyring, Windows host CLIs, and the exact
+/// same release version as `hadron.exe` rather than an unauthenticated or stale Linux
+/// binary inside WSL.
 pub fn probe_wsl_gluon_binary(distro: &str) -> Option<String> {
+    if !matches!(
+        std::env::var("HADRON_WSL_GLUON").as_deref(),
+        Ok("1" | "true" | "TRUE")
+    ) {
+        let _ = distro;
+        return None;
+    }
     #[cfg(windows)]
     {
         resolve_wsl_program_path(distro, "hadron-gluon")

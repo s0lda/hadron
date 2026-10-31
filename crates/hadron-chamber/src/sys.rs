@@ -1982,6 +1982,14 @@ mod tests {
         let (prog, args) = resolve_gluon_spawn_target(local_field);
         assert_eq!(prog, resolve_gluon_binary());
         assert_eq!(args, vec![local_field.to_string_lossy().into_owned()]);
+
+        // And for a WSL UNC path on Windows when HADRON_WSL_GLUON is not set,
+        // resolve_gluon_spawn_target must use the local Windows hadron-gluon.exe
+        // so Windows Credential Manager and Windows host CLIs work out of the box.
+        let wsl_field = Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\field.jsonl");
+        let (wsl_prog, wsl_args) = resolve_gluon_spawn_target(wsl_field);
+        assert_eq!(wsl_prog, resolve_gluon_binary());
+        assert_eq!(wsl_args, vec![wsl_field.to_string_lossy().into_owned()]);
     }
 }
 

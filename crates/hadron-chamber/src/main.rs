@@ -239,8 +239,9 @@ fn main() {
         if should_close_gluon(config::load().close_gluon_on_exit, restarting) {
             let field_dir = path
                 .as_ref()
-                .and_then(|p| std::path::Path::new(p).parent())
-                .unwrap_or(std::path::Path::new("."));
+                .map(|p| hadron_lattice::hadron_dir_of(std::path::Path::new(p)))
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let spawned_pid = spawned_gluon.as_ref().map(|c| c.id());
             if path.is_some() {
                 let lock_pid = read_lock_pid(&field_dir.join("gluon.lock"));
                 if lock_pid.is_some() {
@@ -268,12 +269,7 @@ fn main() {
                         ),
                     );
                 }
-                // Reap the child if it was ours, so it does not linger as a zombie.
-                if let Some(mut child) = spawned_gluon {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
-            } else if gluon_running_no_pid {
+            } else if gluon_running_no_pid && spawned_gluon.is_none() {
                 // A gluon holds the lock but recorded no PID, so we cannot target it.
                 // This is an older daemon build predating PID tracking — surface it
                 // instead of silently doing nothing.
@@ -283,6 +279,19 @@ fn main() {
                      wrote no PID to gluon.lock (likely a daemon from an older build). \
                      Rebuild and restart hadron-gluon so it records its PID."
                 );
+            }
+            // Always terminate and reap the child process tree if we spawned it ourselves
+            // (including when `spawned_pid` was a Windows `wsl.exe` relay whose PID differs
+            // from the Linux namespace `lock_pid`, or when an older daemon wrote no PID to
+            // `gluon.lock`).
+            if let Some(mut child) = spawned_gluon {
+                if let Some(spid) = spawned_pid {
+                    if Some(spid) != gluon_pid {
+                        hadron_lattice::sys::process::kill_process_group(spid);
+                    }
+                }
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
 

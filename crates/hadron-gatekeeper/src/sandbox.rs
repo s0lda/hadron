@@ -574,8 +574,35 @@ impl IsolatedSandbox {
                 scrubbed.insert(key.clone(), val);
             }
         }
-        // Guarantee clean PATH if absent
-        scrubbed.entry("PATH".to_string()).or_insert_with(|| "/usr/local/bin:/usr/bin:/bin".to_string());
+        // Guarantee clean PATH if absent, and ensure standard user bin dirs (`~/.cargo/bin`,
+        // `~/.local/bin`, `~/.hadron/bin`) are present on Unix when `HOME` is set so
+        // non-login daemon launches (e.g. desktop launchers or `wsl.exe --`) still find `cargo`.
+        let base_path = scrubbed
+            .remove("PATH")
+            .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".to_string());
+        #[cfg(unix)]
+        let final_path = {
+            if let Some(home) = scrubbed
+                .get("HOME")
+                .cloned()
+                .or_else(|| std::env::var("HOME").ok())
+            {
+                let mut parts: Vec<String> = Vec::new();
+                for rel in [".hadron/bin", ".local/bin", ".cargo/bin"] {
+                    let candidate = format!("{home}/{rel}");
+                    if !base_path.split(':').any(|p| p == candidate) {
+                        parts.push(candidate);
+                    }
+                }
+                parts.push(base_path);
+                parts.join(":")
+            } else {
+                base_path
+            }
+        };
+        #[cfg(not(unix))]
+        let final_path = base_path;
+        scrubbed.insert("PATH".to_string(), final_path);
         scrubbed
     }
 

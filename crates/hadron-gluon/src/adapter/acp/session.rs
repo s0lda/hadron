@@ -57,8 +57,15 @@ pub(super) fn acp_stdio_descriptor_sandboxed(
 ) -> String {
     let (raw_prog, raw_args) = (target.program(), target.args());
     let wsl_parsed = hadron_lattice::wsl::parse_wsl_unc_path(work_dir);
+    // Keep explicit Windows host bridge paths (e.g. `C:\Users\...\.hadron\bridges\agy\venv\Scripts\python.exe`)
+    // on the Windows host when `python.exe` exists there, so Windows Hadron uses the Windows
+    // host environment and Windows Credential Manager keyring. Only rewrite to the in-distro
+    // Linux bridge if the host bridge executable does not exist on the local filesystem.
     let (effective_prog, effective_args): (String, Vec<String>) = match &wsl_parsed {
-        Some((distro, linux_cwd)) => {
+        Some((distro, linux_cwd))
+            if !(hadron_lattice::wsl::is_windows_host_path(raw_prog)
+                && std::path::Path::new(raw_prog).exists()) =>
+        {
             if let Some(linux_home) = hadron_lattice::wsl::infer_linux_home_from_path(linux_cwd) {
                 if let Some(candidate_prog) =
                     rewrite_windows_bridge_path_to_linux(&linux_home, raw_prog)
@@ -85,7 +92,7 @@ pub(super) fn acp_stdio_descriptor_sandboxed(
                 (raw_prog.to_string(), raw_args.to_vec())
             }
         }
-        None => (raw_prog.to_string(), raw_args.to_vec()),
+        _ => (raw_prog.to_string(), raw_args.to_vec()),
     };
     let (sandboxed_prog, sandboxed_args) = hadron_gatekeeper::resolve_sandboxed_command(
         work_dir,

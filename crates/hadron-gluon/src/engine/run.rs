@@ -713,9 +713,25 @@ impl super::Engine {
                                                     },
                                                 ))
                                                 .await?;
-                                                if self.merge_gate(&target, &old_turn_tree).await? {
-                                                    spawned_any = true;
-                                                    continue;
+                                                match self.merge_gate(&target, &old_turn_tree).await {
+                                                    Ok(true) => {
+                                                        spawned_any = true;
+                                                        continue;
+                                                    }
+                                                    Ok(false) => {}
+                                                    Err(e) => {
+                                                        self.reroute_blocked_with_severity(
+                                                            &target,
+                                                            &format!(
+                                                                "gating `{old_branch}` (a previous assignment of `{}`) failed: {e:#}",
+                                                                target.as_str()
+                                                            ),
+                                                            hadron_lattice::Severity::Error,
+                                                        )
+                                                        .await?;
+                                                        spawned_any = true;
+                                                        continue;
+                                                    }
                                                 }
                                             }
                                         } else {

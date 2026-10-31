@@ -70,7 +70,7 @@ pub fn terminate_gluon_in_dir(pid: u32, field_dir: &std::path::Path) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             let _ = crate::wsl::wsl_aware_command(field_dir, "kill")
-                .args(["-KILL", &format!("-{pid}"), &pid.to_string()])
+                .args(["-KILL", "--", &format!("-{pid}"), &pid.to_string()])
                 .status();
             for _ in 0..20 {
                 if !crate::sys::inspect::is_process_alive_in_dir(pid, field_dir) {

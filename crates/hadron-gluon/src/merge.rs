@@ -348,9 +348,15 @@ pub async fn run_tests_within(
     use hadron_lattice::sys::ConfigureProcessGroup;
     cmd.as_std_mut().set_process_group();
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?;
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok((
+                false,
+                format!("failed to run the gate's tests ({program}): {e}"),
+            ));
+        }
+    };
     // Read before the handle is consumed by `wait_with_output`.
     let pid = child.id();
     if let Some(pid) = pid {
@@ -362,7 +368,15 @@ pub async fn run_tests_within(
             if let Some(pid) = pid {
                 crate::proc::unregister(pid);
             }
-            out.map_err(|e| anyhow::anyhow!("failed to run the gate's tests ({program}): {e}"))?
+            match out {
+                Ok(output) => output,
+                Err(e) => {
+                    return Ok((
+                        false,
+                        format!("failed to run the gate's tests ({program}): {e}"),
+                    ));
+                }
+            }
         }
         // **Red, not `Err`.** An `Err` propagates out of `merge_gate` through
         // `run_until_quiesce`'s `?` into the daemon's "excite error (continuing)" arm,
@@ -1053,6 +1067,21 @@ mod tests {
             .unwrap();
         assert!(!passed, "a nonzero exit is a red suite");
         assert!(out.contains("boom"), "the human gets the output: {out}");
+    }
+
+    #[tokio::test]
+    async fn missing_test_runner_binary_returns_red_instead_of_err_so_gate_never_loops() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
+
+        let (passed, out) = run_tests_with(&wt, "hadron-nonexistent-test-runner-xyz", &[])
+            .await
+            .expect("missing test runner binary must return Ok((false, ...)), not Err");
+        assert!(!passed, "missing test runner must be treated as a red gate");
+        assert!(
+            out.contains("failed to run the gate's tests (hadron-nonexistent-test-runner-xyz)"),
+            "diagnostic must name the missing runner: {out}"
+        );
     }
 
     #[test]
