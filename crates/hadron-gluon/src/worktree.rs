@@ -71,6 +71,34 @@ pub fn trees_dir(repo_root: &Path) -> PathBuf {
 /// sit on. Resolved, not hardcoded: `origin/HEAD` if a remote names one, else
 /// whichever of `main`/`master` actually exists, else `init.defaultBranch`.
 pub fn default_branch(repo_root: &Path) -> String {
+    let dot_git = repo_root.join(".git");
+    if dot_git.is_dir() {
+        let origin_head = dot_git.join("refs").join("remotes").join("origin").join("HEAD");
+        if let Ok(content) = std::fs::read_to_string(&origin_head) {
+            if let Some(name) = content.trim().strip_prefix("ref: refs/remotes/origin/") {
+                if !name.is_empty() {
+                    return name.to_string();
+                }
+            }
+        }
+        let packed = std::fs::read_to_string(dot_git.join("packed-refs")).unwrap_or_default();
+        if !origin_head.is_file() && !packed.contains("refs/remotes/origin/HEAD") {
+            for candidate in ["main", "master"] {
+                let ref_file = dot_git.join("refs").join("heads").join(candidate);
+                let target_ref = format!("refs/heads/{candidate}");
+                if ref_file.is_file()
+                    || packed.lines().any(|l| {
+                        !l.starts_with('#')
+                            && !l.starts_with('^')
+                            && l.split_whitespace().nth(1) == Some(target_ref.as_str())
+                    })
+                {
+                    return candidate.to_string();
+                }
+            }
+        }
+    }
+
     if let Some(sym) = git_ok(repo_root, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).ok().flatten() {
         if let Some(name) = sym.trim().strip_prefix("origin/") {
             if !name.is_empty() {
@@ -113,8 +141,44 @@ pub fn is_dirty(path: &Path) -> anyhow::Result<bool> {
     Ok(!git(path, &["status", "--porcelain"])?.trim().is_empty())
 }
 
+fn resolve_git_dir_fast(path: &Path) -> Option<PathBuf> {
+    let dot_git = path.join(".git");
+    let meta = std::fs::symlink_metadata(&dot_git).ok()?;
+    if meta.is_dir() {
+        return Some(dot_git);
+    }
+    if meta.is_file() {
+        let content = std::fs::read_to_string(&dot_git).ok()?;
+        let raw = content.trim().strip_prefix("gitdir:")?.trim();
+        if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(path) {
+            if raw.starts_with('/') {
+                return Some(hadron_lattice::wsl::format_wsl_unc_path(&distro, Path::new(raw)));
+            }
+        }
+        let gitdir = PathBuf::from(raw);
+        return Some(if gitdir.is_absolute() {
+            gitdir
+        } else {
+            path.join(gitdir)
+        });
+    }
+    None
+}
+
 /// The branch HEAD points at, or `None` when HEAD is detached.
 pub fn current_branch(path: &Path) -> Option<String> {
+    if let Some(gitdir) = resolve_git_dir_fast(path) {
+        if let Ok(head_content) = std::fs::read_to_string(gitdir.join("HEAD")) {
+            let trimmed = head_content.trim();
+            if let Some(branch) = trimmed.strip_prefix("ref: refs/heads/") {
+                if !branch.is_empty() {
+                    return Some(branch.to_string());
+                }
+            } else if !trimmed.starts_with("ref:") && !trimmed.is_empty() {
+                return None;
+            }
+        }
+    }
     git_ok(path, &["symbolic-ref", "--short", "HEAD"])
         .ok()
         .flatten()
@@ -129,6 +193,10 @@ pub fn current_branch(path: &Path) -> Option<String> {
 /// quark's tree behind the engine's back.
 fn assert_not_default_branch(path: &Path, repo_root: &Path) -> anyhow::Result<String> {
     let default = default_branch(repo_root);
+    assert_not_default_branch_with_base(path, &default)
+}
+
+fn assert_not_default_branch_with_base(path: &Path, default: &str) -> anyhow::Result<String> {
     match current_branch(path) {
         None => bail!(
             "worktree {} is on a detached HEAD — a quark's commits there would be unreachable",
@@ -158,12 +226,23 @@ static WORKTREE_ADD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// permission grant must resume in the *same* tree on the *same* branch, or the
 /// half-finished work it left uncommitted vanishes.
 pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Result<Worktree> {
+    let base = default_branch(repo_root);
+    ensure_with_base(repo_root, quark, assignment, &base)
+}
+
+/// Like [`ensure`], reusing an already-resolved `base` default branch to avoid
+/// redundant `git` subprocess calls during pre-turn provisioning.
+pub fn ensure_with_base(
+    repo_root: &Path,
+    quark: &QuarkId,
+    assignment: &str,
+    base: &str,
+) -> anyhow::Result<Worktree> {
     if assignment.trim().is_empty() {
         bail!("refusing to cut a branch for {}: no assignment", quark.as_str());
     }
     let path = trees_dir(repo_root).join(quark.as_str());
     let branch = branch_name(quark, assignment);
-    let base = default_branch(repo_root);
 
     if !path.exists() {
         let _guard = WORKTREE_ADD_LOCK
@@ -182,24 +261,24 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
                 // Single-step worktree creation + branch cut from `base`. Only run
                 // `git worktree prune` on retry if `worktree add` refuses a stale
                 // admin record, avoiding an extra git subprocess on every fresh quark.
-                let added = git(repo_root, &["worktree", "add", "-q", "-b", &branch, &path_s, &base])
+                let added = git(repo_root, &["worktree", "add", "-q", "-b", &branch, &path_s, base])
                     .or_else(|_| {
                         let _ = git(repo_root, &["worktree", "prune"]);
-                        git(repo_root, &["worktree", "add", "-q", "-b", &branch, &path_s, &base])
+                        git(repo_root, &["worktree", "add", "-q", "-b", &branch, &path_s, base])
                     });
                 if added.is_ok() {
                     drop(_guard);
-                    assert_not_default_branch(&path, repo_root)?;
+                    assert_not_default_branch_with_base(&path, base)?;
                     return Ok(Worktree { quark: quark.clone(), path, branch });
                 }
             }
 
             // Fallback when `branch` already existed (or was held elsewhere): add
             // detached at `base` and let the branch-checkout path below land on it.
-            git(repo_root, &["worktree", "add", "--detach", &path_s, &base])
+            git(repo_root, &["worktree", "add", "--detach", &path_s, base])
                 .or_else(|_| {
                     let _ = git(repo_root, &["worktree", "prune"]);
-                    git(repo_root, &["worktree", "add", "--detach", &path_s, &base])
+                    git(repo_root, &["worktree", "add", "--detach", &path_s, base])
                 })
                 .with_context(|| format!("git worktree add {path_s}"))?;
         }
@@ -207,7 +286,7 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
 
     // Already on this assignment's branch → the resume / hand-off case. No-op.
     if current_branch(&path).as_deref() == Some(branch.as_str()) {
-        assert_not_default_branch(&path, repo_root)?;
+        assert_not_default_branch_with_base(&path, base)?;
         return Ok(Worktree { quark: quark.clone(), path, branch });
     }
 
@@ -245,10 +324,10 @@ pub fn ensure(repo_root: &Path, quark: &QuarkId, assignment: &str) -> anyhow::Re
         // NOT `reset --hard`: that would move the PREVIOUS branch's pointer to the
         // default branch and orphan its unmerged commits. Branch from the default
         // branch instead, leaving the old branch exactly where it is.
-        git(&path, &["checkout", "-q", "-b", &branch, &base])?;
+        git(&path, &["checkout", "-q", "-b", &branch, base])?;
     }
 
-    assert_not_default_branch(&path, repo_root)?;
+    assert_not_default_branch_with_base(&path, base)?;
     Ok(Worktree { quark: quark.clone(), path, branch })
 }
 
@@ -327,9 +406,10 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
 /// When `sccache` is not present, falls back to the shared `target/` directory per Standard Model invariant.
 pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, String)> {
     let mut env = vec![("CARGO_INCREMENTAL".to_string(), "0".to_string())];
-    if let Ok(root) = crate::snapshot::main_repo_root(cwd) {
+    let main_root = crate::snapshot::main_repo_root(cwd).ok();
+    if let Some(ref root) = main_root {
         if crate::env::is_sccache_available() {
-            let guard = sccache_guard::SccacheGuard::new(&root);
+            let guard = sccache_guard::SccacheGuard::new(root);
             for (k, v) in guard.build_env_for_quark(quark_id) {
                 env.retain(|(ek, _)| ek != &k);
                 env.push((k, v));
@@ -355,8 +435,8 @@ pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, St
         }
     }
 
-    if let Ok(root) = crate::snapshot::main_repo_root(cwd) {
-        let team = hadron_lattice::load_team_for_repo(&root);
+    if let Some(ref root) = main_root {
+        let team = hadron_lattice::load_team_for_repo(root);
         if let Some(name) = team.git_author_name.as_deref().filter(|s| !s.trim().is_empty()) {
             env.push(("GIT_AUTHOR_NAME".to_string(), name.to_string()));
             env.push(("GIT_COMMITTER_NAME".to_string(), name.to_string()));
@@ -2362,5 +2442,22 @@ pub(crate) mod tests {
 
         let committer_str = git(&wt.path, &["log", "-1", "--pretty=format:%cn <%ce>"]).unwrap();
         assert_eq!(committer_str.trim(), "Custom Swarm Agent <swarm-agent@hadron.dev>");
+    }
+
+    #[test]
+    fn fast_git_dir_and_current_branch_resolve_main_and_worktree_branches() {
+        let repo = git_repo();
+        assert_eq!(default_branch(repo.path()), "main");
+        assert_eq!(current_branch(repo.path()).as_deref(), Some("main"));
+
+        let wt = ensure_with_base(repo.path(), &q("cli-agy"), "01FAST", "main").unwrap();
+        assert_eq!(
+            current_branch(&wt.path).as_deref(),
+            Some("quark/cli-agy/01FAST")
+        );
+
+        // Detached HEAD in worktree returns None from fast-path current_branch.
+        git(&wt.path, &["checkout", "-q", "--detach", "HEAD"]).unwrap();
+        assert_eq!(current_branch(&wt.path), None);
     }
 }

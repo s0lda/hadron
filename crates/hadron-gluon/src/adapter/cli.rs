@@ -141,20 +141,50 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     }
 
     let mut p = projection.clone();
-    // Drop the oldest events one at a time until it fits, keeping at least the 2
-    // most recent field events while reference sections (`nucleus_index`,
-    // `nucleus_digest`, `git_diff`) can still be shed first.
-    while p.field_window.len() > 2 {
-        p.field_window.remove(0);
-        let mut probe = p.clone();
-        probe.field_window.insert(
-            0,
-            Event::new(Actor::Gluon, None, Kind::Message { body: TRUNCATION_MARKER.to_string() }),
-        );
-        let out = render(&probe);
-        if out.len() <= max_bytes {
-            return out;
+    let marker_event = || {
+        Event::new(
+            Actor::Gluon,
+            None,
+            Kind::Message {
+                body: TRUNCATION_MARKER.to_string(),
+            },
+        )
+    };
+
+    // Binary-search the minimum number of oldest field events to drop so the rendered
+    // prompt fits `max_bytes`, keeping at least the 2 most recent field events while
+    // reference sections (`nucleus_index`, `nucleus_digest`, `git_diff`) can still be
+    // shed first. Fast-checks the max-drop bound (`len - 2`) first so we spend 1 render
+    // instead of N-2 renders when reference sections alone exceed `max_bytes`.
+    if projection.field_window.len() > 2 {
+        let max_drop = projection.field_window.len() - 2;
+        p.field_window.clear();
+        p.field_window.push(marker_event());
+        p.field_window
+            .extend_from_slice(&projection.field_window[max_drop..]);
+        let min_window_out = render(&p);
+        if min_window_out.len() <= max_bytes {
+            let mut lo = 1usize;
+            let mut hi = max_drop;
+            let mut best = min_window_out;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                p.field_window.clear();
+                p.field_window.push(marker_event());
+                p.field_window
+                    .extend_from_slice(&projection.field_window[mid..]);
+                let candidate = render(&p);
+                if candidate.len() <= max_bytes {
+                    best = candidate;
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            return best;
         }
+        // Keep the last 2 field events in `p.field_window` (without marker yet; added below).
+        p.field_window.remove(0);
     }
 
     // Still over budget: drop the working diff and reference sections
@@ -1408,5 +1438,23 @@ mod tests {
             "agy CLI spec with effort_flag: None must never pass --effort, got: {:?}",
             recorded_agy[0].args
         );
+    }
+
+    #[test]
+    fn fit_prompt_to_budget_binary_search_preserves_maximum_recent_events() {
+        let mut p = huge_projection(50, 500);
+        for (i, ev) in p.field_window.iter_mut().enumerate() {
+            ev.kind = Kind::Message {
+                body: format!("EVENT-{i:03} {}", "y".repeat(500)),
+            };
+        }
+        // Budget large enough to hold roughly the newest 10 events plus static chrome.
+        let budget = 8 * 1024;
+        let fitted = fit_prompt_to_budget(&p, &QuarkId::new("agy"), budget);
+        assert!(fitted.len() <= budget);
+        assert!(fitted.contains(TRUNCATION_MARKER));
+        assert!(fitted.contains("EVENT-049"), "newest event must survive");
+        assert!(fitted.contains("EVENT-045"), "recent events fitting budget must survive");
+        assert!(!fitted.contains("EVENT-000"), "oldest events must be dropped");
     }
 }

@@ -221,6 +221,21 @@ pub(crate) fn git_dir(path: &Path) -> anyhow::Result<std::path::PathBuf> {
 /// linked worktree, so its parent is the root in both cases. `--path-format=absolute`
 /// because git otherwise answers a *relative* path from inside a worktree.
 pub(crate) fn main_repo_root(path: &Path) -> anyhow::Result<std::path::PathBuf> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::path::PathBuf>>,
+    > = std::sync::OnceLock::new();
+
+    if path.join(".git").exists() {
+        let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(guard) = cache.lock() {
+            if let Some(cached) = guard.get(path) {
+                if cached.join(".git").exists() {
+                    return Ok(cached.clone());
+                }
+            }
+        }
+    }
+
     let raw = git(
         path,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -234,10 +249,112 @@ pub(crate) fn main_repo_root(path: &Path) -> anyhow::Result<std::path::PathBuf> 
     } else {
         std::path::PathBuf::from(raw)
     };
-    common
+    let root = common
         .parent()
         .map(Path::to_path_buf)
-        .ok_or_else(|| anyhow!("git common dir has no parent: {}", common.display()))
+        .ok_or_else(|| anyhow!("git common dir has no parent: {}", common.display()))?;
+
+    if path.join(".git").exists() && root.join(".git").exists() {
+        let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(path.to_path_buf(), root.clone());
+        }
+    }
+
+    Ok(root)
+}
+
+const ATOMIC_SNAPSHOT_CREATE_SCRIPT: &str = r#"set -e
+id="$1"
+label="$2"
+refname="$3"
+gitdir="$(git rev-parse --absolute-git-dir)"
+tmp_index="$gitdir/hadron-index-$id"
+trap 'rm -f "$tmp_index"' EXIT
+GIT_INDEX_FILE="$tmp_index" git add -A
+tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree)"
+rm -f "$tmp_index"
+if parent="$(git rev-parse --verify HEAD 2>/dev/null)"; then
+    commit="$(git commit-tree "$tree" -p "$parent" -m "$label")"
+else
+    commit="$(git commit-tree "$tree" -m "$label")"
+fi
+git update-ref "$refname" "$commit"
+printf '%s\n' "$commit"
+"#;
+
+fn create_atomic_sh(
+    repo_root: &Path,
+    id: &str,
+    label: &str,
+    refname: &str,
+) -> Option<anyhow::Result<String>> {
+    let mut cmd = if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(repo_root) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let mut c = Command::new("wsl.exe");
+            c.args([
+                "-d",
+                &distro,
+                "--cd",
+                &linux_cwd.to_string_lossy().replace('\\', "/"),
+                "--exec",
+                "sh",
+                "-c",
+                ATOMIC_SNAPSHOT_CREATE_SCRIPT,
+                "sh",
+                id,
+                label,
+                refname,
+            ]);
+            c.creation_flags(0x08000000);
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = distro;
+            let mut c = Command::new("sh");
+            c.current_dir(linux_cwd).args([
+                "-c",
+                ATOMIC_SNAPSHOT_CREATE_SCRIPT,
+                "sh",
+                id,
+                label,
+                refname,
+            ]);
+            c
+        }
+    } else if cfg!(unix) {
+        let mut c = Command::new("sh");
+        c.current_dir(repo_root).args([
+            "-c",
+            ATOMIC_SNAPSHOT_CREATE_SCRIPT,
+            "sh",
+            id,
+            label,
+            refname,
+        ]);
+        c
+    } else {
+        return None;
+    };
+
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    let out = match run_bounded(cmd, GIT_DEADLINE, &["snapshot-create"]) {
+        Ok(o) => o,
+        Err(e) => return Some(Err(e)),
+    };
+    let stdout = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stdout));
+    let stderr = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stderr));
+    if !out.success() {
+        return Some(Err(anyhow!("snapshot create failed: {stderr}")));
+    }
+    let commit = stdout.lines().last().unwrap_or("").trim().to_string();
+    if commit.is_empty() {
+        return None;
+    }
+    Some(Ok(commit))
 }
 
 /// Snapshot the current worktree into a shadow ref without touching the user's
@@ -246,7 +363,18 @@ pub(crate) fn main_repo_root(path: &Path) -> anyhow::Result<std::path::PathBuf> 
 /// at the result.
 pub fn create(repo_root: &Path, label: &str) -> anyhow::Result<SnapshotRef> {
     let id = Ulid::new().to_string();
+    let refname = format!("{SNAPSHOT_REF_PREFIX}{id}");
 
+    if let Some(res) = create_atomic_sh(repo_root, &id, label, &refname) {
+        let commit = res?;
+        return Ok(SnapshotRef {
+            id,
+            label: label.to_string(),
+            commit,
+        });
+    }
+
+    // Fallback multi-step path for non-WSL Windows hosts without `sh`.
     // Throwaway index so we never disturb the user's staging area. It lives in the
     // checkout's REAL git dir (see `git_dir`) — in a quark's worktree that is not
     // `<path>/.git`, which is a file there, not a directory.
@@ -266,7 +394,6 @@ pub fn create(repo_root: &Path, label: &str) -> anyhow::Result<SnapshotRef> {
     };
 
     // Park it under the shadow ref namespace.
-    let refname = format!("{SNAPSHOT_REF_PREFIX}{id}");
     git(repo_root, &["update-ref", &refname, &commit])?;
 
     Ok(SnapshotRef { id, label: label.to_string(), commit })

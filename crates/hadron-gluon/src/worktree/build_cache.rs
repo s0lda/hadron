@@ -17,25 +17,22 @@ pub struct CompilerAccelerator {
 
 impl CompilerAccelerator {
     pub fn detect() -> Self {
-        let has_sccache = std::process::Command::new("sccache")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        static MOLD_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-        let has_mold = if cfg!(target_os = "linux") {
-            std::process::Command::new("mold")
-                .arg("-v")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        } else {
-            false
-        };
+        let has_sccache = crate::env::is_sccache_available();
+        let has_mold = *MOLD_AVAILABLE.get_or_init(|| {
+            if cfg!(target_os = "linux") {
+                std::process::Command::new("mold")
+                    .arg("-v")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        });
 
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let sccache_dir = PathBuf::from(home).join(".hadron").join("cache").join("sccache");

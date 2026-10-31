@@ -9,12 +9,17 @@ use std::path::Path;
 use std::process::Command;
 
 /// Checks whether the `sccache` binary is installed and executable in PATH.
+/// Cached for the lifetime of the process so per-turn worktree build env construction
+/// never spawns `sccache --version` on every turn.
 pub fn is_sccache_available() -> bool {
-    Command::new("sccache")
-        .arg("--version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    static SCCACHE_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SCCACHE_AVAILABLE.get_or_init(|| {
+        Command::new("sccache")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    })
 }
 
 /// Configures compiler environment for worktree-isolated builds backed by `sccache`.

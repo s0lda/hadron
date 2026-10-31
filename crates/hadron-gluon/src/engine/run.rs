@@ -775,18 +775,25 @@ impl super::Engine {
                                     "provisioning worktree…",
                                 ),
                             );
-                            let wt = crate::worktree::ensure(
+                            let base = crate::worktree::default_branch(&root);
+                            let wt = crate::worktree::ensure_with_base(
                                 &root,
                                 &target,
                                 &assignment.to_string(),
+                                &base,
                             )?;
                             let snap = crate::snapshot::create(
                                 &wt.path,
                                 &format!("before {}", target.as_str()),
                             )?;
-                            let base = crate::worktree::default_branch(&root);
-                            let git_diff = crate::worktree::branch_diff(&wt, &base)?;
                             let head_before = crate::worktree::head(&wt.path);
+                            let git_diff = if head_before.is_some() {
+                                let range = format!("{base}...HEAD");
+                                crate::snapshot::git_ok(&wt.path, &["diff", &range])?
+                                    .unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
                             let _ = hadron_lattice::live::clear(&live_dir, &target);
                             Ok((
                                 TurnTree {
@@ -815,12 +822,16 @@ impl super::Engine {
                                     &format!("provisioning worktree for @{}", cand.target.as_str()),
                                 ),
                             );
-                            let res = provision_one(
-                                root.clone(),
-                                live_dir.clone(),
-                                cand.target.clone(),
-                                assignment,
-                            );
+                            let root_c = root.clone();
+                            let live_c = live_dir.clone();
+                            let target_c = cand.target.clone();
+                            let res = tokio::task::spawn_blocking(move || {
+                                provision_one(root_c, live_c, target_c, assignment)
+                            })
+                            .await
+                            .unwrap_or_else(|e| {
+                                Err(anyhow::anyhow!("worktree provisioning task panicked: {e}"))
+                            });
                             let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
                             provisioned.push((cand, Some(res)));
                         } else {
@@ -858,20 +869,25 @@ impl super::Engine {
                             let _ = hadron_lattice::live::clear(&live_dir, &QuarkId::new("gluon"));
                         }
 
-                        // Pre-turn peer conflict and intent lease radar (run once per
-                        // dispatch batch rather than O(N^2) per candidate).
-                        let root_obj = hadron_forge::file::Root::new(root.clone());
-                        if let Ok(conflicts) =
-                            hadron_forge::peers::detect_cross_worktree_conflicts(&root_obj)
-                        {
-                            if conflicts.conflicts_detected > 0 {
-                                term::info(
-                                    Source::Gluon,
-                                    &format!(
-                                        "cross-worktree conflict radar: {} conflicting file entries detected across active peers",
-                                        conflicts.conflicts.len()
-                                    ),
-                                );
+                        // Pre-turn peer conflict radar (run asynchronously on blocking pool only
+                        // when multiple quarks are active concurrently, avoiding 4xN git spawns on solo turns).
+                        if in_flight.len() + provisioned.len() > 1 {
+                            let root_for_conflicts = root.clone();
+                            if let Ok(Ok(conflicts)) = tokio::task::spawn_blocking(move || {
+                                let root_obj = hadron_forge::file::Root::new(root_for_conflicts);
+                                hadron_forge::peers::detect_cross_worktree_conflicts(&root_obj)
+                            })
+                            .await
+                            {
+                                if conflicts.conflicts_detected > 0 {
+                                    term::info(
+                                        Source::Gluon,
+                                        &format!(
+                                            "cross-worktree conflict radar: {} conflicting file entries detected across active peers",
+                                            conflicts.conflicts.len()
+                                        ),
+                                    );
+                                }
                             }
                         }
                         let locks_path = root.join(".hadron").join("locks.json");
