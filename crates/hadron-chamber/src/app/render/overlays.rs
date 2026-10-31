@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.29",
+        date: Some("2026-10-31"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Windows Host CLI & Credential Manager Default on WSL UNC Workspaces: Restored decide_wsl_vs_host fallback in should_run_in_wsl so Windows host CLIs work without duplicate WSL installs, gated probe_wsl_gluon_binary behind HADRON_WSL_GLUON=1 so Windows hadron.exe defaults to its sibling hadron-gluon.exe and Windows Credential Manager, and kept existing Windows host ACP bridges on the host",
+            "Merge Gate Test-Runner I/O Error Handling, Superseded-Branch Loop Guard & Daemon Exit Termination: Converted missing test-runner spawn errors into red gates in run_tests_within, caught superseded-branch merge_gate errors in run_until_quiesce to prevent infinite gate loops, prepended ~/.cargo/bin and ~/.local/bin in IsolatedSandbox::scrub_environment, and hardened Close Gluon on Exit across Windows and WSL",
+        ],
+    },
+    Release {
         version: "0.33.28",
         date: Some("2026-10-31"),
         added: &[

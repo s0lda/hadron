@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.29] - 2026-10-31
+
+### Fixed
+- **Windows Host CLI & Credential Manager Default on WSL UNC Workspaces (`hadron-lattice`, `hadron-chamber`, `hadron-gluon`)**:
+  - Restored `decide_wsl_vs_host(in_wsl, on_host)` in `should_run_in_wsl` (`crates/hadron-lattice/src/wsl.rs`) so tools installed only on Windows (`agy.exe`, `claude.exe`, `codex.exe`) run on the Windows host without requiring duplicate WSL installations, while caching both `Some`/`None` and `true`/`false` probe results.
+  - Gated `probe_wsl_gluon_binary` (`crates/hadron-lattice/src/wsl.rs`, `crates/hadron-chamber/src/sys.rs`) behind explicit `HADRON_WSL_GLUON=1` opt-in so Windows `hadron.exe` spawns its sibling `hadron-gluon.exe` by default (using Windows Credential Manager instead of triggering a WSL D-Bus keyring prompt or launching a stale Linux `hadron-gluon` binary).
+  - Updated `acp_stdio_descriptor_sandboxed` (`crates/hadron-gluon/src/adapter/acp/session.rs`) to keep explicit Windows-host bridge paths (`.hadron/bridges/agy`) on the Windows host when present instead of rewriting them to Linux WSL bridges.
+- **Merge Gate Test-Runner I/O Error Handling, Superseded-Branch Loop Guard & Daemon Exit Termination (`hadron-gluon`, `hadron-gatekeeper`, `hadron-lattice`, `hadron-chamber`)**:
+  - Updated `run_tests_within` (`crates/hadron-gluon/src/merge.rs`) to convert test-runner spawn/wait I/O errors (such as missing `cargo` in `PATH`) into red gate results instead of `Err(...)`, and guarded the superseded-branch `merge_gate` call in `run_until_quiesce` (`crates/hadron-gluon/src/engine/run.rs`) with `reroute_blocked_with_severity(..., Severity::Error)` so a broken gate never aborts `run_until_quiesce` and loops infinitely.
+  - Prepended `$HOME/.hadron/bin`, `$HOME/.local/bin`, and `$HOME/.cargo/bin` to `PATH` in `IsolatedSandbox::scrub_environment` (`crates/hadron-gatekeeper/src/sandbox.rs`) on Unix so non-login daemon launches always find user-installed toolchains.
+  - Added `--` before `-{pid}` in `terminate_gluon_in_dir` (`crates/hadron-lattice/src/sys/process.rs`), returned `false` when `QueryFullProcessImageNameW` fails in `is_process_alive` (`crates/hadron-lattice/src/sys/inspect.rs`), and updated the `should_close_gluon` shutdown hook (`crates/hadron-chamber/src/main.rs`) to resolve `hadron_dir_of` and always terminate and reap `spawned_gluon` on exit.
+
 ## [0.33.28] - 2026-10-31
 
 ### Added
