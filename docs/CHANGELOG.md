@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.32] - 2026-11-01
+
+### Fixed
+- **Antigravity (`agy`) 1M Context Window, WSL UNC Transcript Resolution & 90s Error Grace (`hadron-gluon`)**:
+  - Raised `ERROR_GRACE_DEADLINE` in `until_silent` from `30s` to `90s` so single `agy` EOF stream retries (`~64s–85s` exponential backoff) recover on attempt 2 before liveness termination (`crates/hadron-gluon/src/engine/run.rs`).
+  - Resolved WSL UNC user homes from `work_dir` in `cli_stream.rs` when reading `agy` `transcript.jsonl`, extracted end-of-turn `PLANNER_RESPONSE` window occupancy (`input_tokens + cache_read_tokens`) in `agy_acp.py`, and defaulted CLI and ACP Gemini/`agy` context window limits to `1_048_576` (`1M` tokens) (`crates/hadron-gluon/src/adapter/cli_stream.rs`, `crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/scripts/agy_acp.py`).
+- **Visualizer `Dependencies` & `Nucleus Graph` Layout, plus Gitignored `@`-File Autocompletion (`hadron-chamber`, `hadron-forge`)**:
+  - Seeded `Nucleus Graph` nodes on a Vogel golden-angle sunflower spiral with independent `(scale_x, scale_y)` projection (`compute_nucleus_projection`) and `min_h(px(280.0))` canvas bounds; unified `Dependencies` Bezier curves and positioned crate cards via `compute_normalized_crate_coords`, centered crate rows per topological layer, and restricted `WorkspaceTopologyGraph::scan_workspace` to `[workspace].members` and `[dependencies]` section keys (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/render/visualizer.rs`, `crates/hadron-forge/src/topology.rs`).
+  - Discovered non-heavy gitignored files and folders (such as `.hadron/assets/`) in `list_workspace_files` without 9P stat storms, normalized leading `./` queries in `@`-completion, and styled gitignored completion candidates with muted italic text and dimmed icons (`crates/hadron-chamber/src/sys.rs`, `crates/hadron-chamber/src/text.rs`, `crates/hadron-chamber/src/app/render/overlays.rs`).
+
 ## [0.33.31] - 2026-11-01
 
 ### Added

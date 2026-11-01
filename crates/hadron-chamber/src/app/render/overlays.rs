@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.32",
+        date: Some("2026-11-01"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Antigravity (agy) 1M Context Window, WSL UNC Transcript Resolution & 90s Error Grace: Raised ERROR_GRACE_DEADLINE in until_silent from 30s to 90s so single agy EOF stream retries recover on attempt 2, resolved WSL UNC user homes from work_dir when reading transcript.jsonl, extracted end-of-turn PLANNER_RESPONSE window occupancy in agy_acp.py, and defaulted CLI and ACP Gemini/agy context windows to 1_048_576 (1M tokens)",
+            "Visualizer Dependencies & Nucleus Graph Layout, plus Gitignored @-File Autocompletion: Seeded Nucleus Graph nodes on a golden-angle spiral with independent X/Y scaling, aligned Dependencies Bezier curves and crate cards via normalized coordinates while filtering topology scans strictly to workspace members, and added gitignored @-file autocompletion with leading ./ normalization and muted italic styling",
+        ],
+    },
+    Release {
         version: "0.33.31",
         date: Some("2026-11-01"),
         added: &[
