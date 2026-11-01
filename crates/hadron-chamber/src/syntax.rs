@@ -288,10 +288,11 @@ pub fn tokenize_code_line(
 }
 
 /// Infers a syntax-highlighting language tag for a bare code block from its content.
+/// Defaults to `"text"` when no specific language markers match.
 pub fn infer_code_language(code: &str) -> &'static str {
     let trimmed = code.trim();
     if trimmed.is_empty() {
-        return "rust";
+        return "text";
     }
     if (trimmed.starts_with('{') && trimmed.ends_with('}'))
         || (trimmed.starts_with('[') && trimmed.ends_with(']'))
@@ -318,6 +319,13 @@ pub fn infer_code_language(code: &str) -> &'static str {
         {
             return "rust";
         }
+        if l.starts_with("public class ")
+            || l.starts_with("private class ")
+            || (l.starts_with("package ") && l.ends_with(';'))
+            || l.starts_with("import java.")
+        {
+            return "java";
+        }
         if l.starts_with("def ") || l.starts_with("from ") && l.contains(" import ") || l.starts_with("elif ") {
             return "python";
         }
@@ -331,7 +339,7 @@ pub fn infer_code_language(code: &str) -> &'static str {
             return "toml";
         }
     }
-    "rust"
+    "text"
 }
 
 /// Annotates bare Markdown fenced code blocks (```` ``` ```` with no language tag) with an
@@ -487,9 +495,13 @@ mod tests {
 
     #[test]
     fn test_annotate_bare_code_fences_infers_language() {
-        let md = "Here is code:\n```\npub fn hello() -> usize {\n    42\n}\n```\nAnd tagged:\n```python\ndef f(): pass\n```";
+        let md = "Here is code:\n```\npub fn hello() -> usize {\n    42\n}\n```\nPlain text:\n```\njust some plain notes\n```\nAnd tagged:\n```python\ndef f(): pass\n```";
         let annotated = annotate_bare_code_fences(md);
         assert!(annotated.contains("```rust\npub fn hello()"));
+        assert!(annotated.contains("```text\njust some plain notes"));
         assert!(annotated.contains("```python\ndef f(): pass"));
+        assert_eq!(infer_code_language(""), "text");
+        assert_eq!(infer_code_language("plain log output"), "text");
+        assert_eq!(infer_code_language("public class Main {\n}"), "java");
     }
 }

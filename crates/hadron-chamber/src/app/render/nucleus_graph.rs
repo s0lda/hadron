@@ -134,12 +134,115 @@ impl ForceDirectedGraph {
 /// Lavapipe-cached Nucleus Graph topology and layout calculation.
 #[derive(Debug, Clone)]
 pub struct CachedNucleusGraph {
+    #[allow(dead_code)]
     pub content_hash: u64,
     pub nodes: BTreeMap<String, hadron_forge::nucleus_graph::NucleusNode>,
     pub dead_links: Vec<(String, String)>,
     pub orphaned_notes: Vec<String>,
     pub force_graph: ForceDirectedGraph,
     pub positions: HashMap<String, (f32, f32)>,
+}
+
+/// Replaces broken wiki-links (`[[target_slug]]`) and markdown links (`[label](notes/target_slug.md)`)
+/// to `target_slug` with inline code or plain label text so the note no longer carries a dead link.
+pub fn remove_dead_link_from_markdown(content: &str, target_slug: &str) -> String {
+    let wiki_pattern = format!("[[{}]]", target_slug);
+    let replacement_code = format!("`{}`", target_slug);
+    let mut result = content.replace(&wiki_pattern, &replacement_code);
+
+    for suffix in [".md", ""] {
+        let needle = format!("](notes/{}{})", target_slug, suffix);
+        while let Some(mid_ix) = result.find(&needle) {
+            let after_ix = mid_ix + needle.len();
+            if let Some(open_bracket_rel) = result[..mid_ix].rfind('[') {
+                let label = result[open_bracket_rel + 1..mid_ix].to_string();
+                let replacement = if label.is_empty() {
+                    replacement_code.clone()
+                } else {
+                    label
+                };
+                result.replace_range(open_bracket_rel..after_ix, &replacement);
+            } else {
+                break;
+            }
+        }
+    }
+
+    result
+}
+
+/// Removes a broken outgoing link to `target_slug` from `notes/<source_slug>.md`.
+pub fn remove_dead_link_from_note(
+    nucleus_dir: &std::path::Path,
+    source_slug: &str,
+    target_slug: &str,
+) -> std::io::Result<()> {
+    let note_path = nucleus_dir.join("notes").join(format!("{}.md", source_slug));
+    let content = std::fs::read_to_string(&note_path)?;
+    let updated = remove_dead_link_from_markdown(&content, target_slug);
+    if updated != content {
+        std::fs::write(&note_path, updated)?;
+    }
+    Ok(())
+}
+
+/// Extracts the `description:` frontmatter value from a note file, falling back to `slug`.
+fn extract_note_description(content: &str, slug: &str) -> String {
+    for line in content.lines().take(12) {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("description:") {
+            let desc = rest.trim().trim_matches('"').trim_matches('\'').trim();
+            if !desc.is_empty() {
+                return desc.chars().take(100).collect();
+            }
+        }
+    }
+    slug.to_string()
+}
+
+/// Adds a pointer line `- [<slug>](notes/<slug>.md) — <description>` to `index.md` if not present.
+pub fn index_orphan_note(nucleus_dir: &std::path::Path, slug: &str) -> std::io::Result<()> {
+    let note_path = nucleus_dir.join("notes").join(format!("{}.md", slug));
+    let note_content = std::fs::read_to_string(&note_path).unwrap_or_default();
+    let hook = extract_note_description(&note_content, slug);
+
+    let index_path = nucleus_dir.join("index.md");
+    let existing = std::fs::read_to_string(&index_path).unwrap_or_default();
+    let target_marker = format!("(notes/{}.md)", slug);
+    let wiki_marker = format!("[[{}]]", slug);
+    if existing.contains(&target_marker) || existing.contains(&wiki_marker) {
+        return Ok(());
+    }
+
+    let mut updated = existing;
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(&format!("- [{}](notes/{}.md) — {}\n", slug, slug, hook));
+    std::fs::write(&index_path, updated)
+}
+
+/// Deletes an orphaned note file `notes/<slug>.md`.
+pub fn delete_orphan_note(nucleus_dir: &std::path::Path, slug: &str) -> std::io::Result<()> {
+    let note_path = nucleus_dir.join("notes").join(format!("{}.md", slug));
+    if note_path.exists() {
+        std::fs::remove_file(note_path)?;
+    }
+    Ok(())
+}
+
+/// Creates a stub note `notes/<slug>.md` with standard YAML frontmatter and indexes it in `index.md`.
+pub fn create_stub_note(nucleus_dir: &std::path::Path, slug: &str) -> std::io::Result<()> {
+    let notes_dir = nucleus_dir.join("notes");
+    std::fs::create_dir_all(&notes_dir)?;
+    let note_path = notes_dir.join(format!("{}.md", slug));
+    if !note_path.exists() {
+        let stub = format!(
+            "---\nname: {slug}\ndescription: {slug}\nmetadata:\n  type: project\n---\n\nStub note created from Nucleus Graph for `{slug}`.\n"
+        );
+        std::fs::write(&note_path, stub)?;
+    }
+    index_orphan_note(nucleus_dir, slug)
 }
 
 impl CachedNucleusGraph {
@@ -292,29 +395,41 @@ impl super::Chamber {
             .when(!cached.orphaned_notes.is_empty(), |this| {
                 this.child(
                     div()
+                        .id("nucleus-hud-orphans")
                         .px_2p5()
                         .py_1()
                         .rounded_full()
+                        .cursor_pointer()
                         .bg(theme::warning().opacity(0.18))
                         .border_1()
                         .border_color(theme::warning().opacity(0.4))
                         .text_xs()
                         .text_color(theme::warning())
-                        .child(format!("{} Orphans", cached.orphaned_notes.len())),
+                        .child(format!("{} Orphans", cached.orphaned_notes.len()))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.visualizer_nucleus_filter = Some("orphans".to_string());
+                            cx.notify();
+                        })),
                 )
             })
             .when(!cached.dead_links.is_empty(), |this| {
                 this.child(
                     div()
+                        .id("nucleus-hud-dead-links")
                         .px_2p5()
                         .py_1()
                         .rounded_full()
+                        .cursor_pointer()
                         .bg(theme::error().opacity(0.18))
                         .border_1()
                         .border_color(theme::error().opacity(0.4))
                         .text_xs()
                         .text_color(theme::error())
-                        .child(format!("{} Dead Links", cached.dead_links.len())),
+                        .child(format!("{} Dead Links", cached.dead_links.len()))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.visualizer_nucleus_filter = Some("dead_links".to_string());
+                            cx.notify();
+                        })),
                 )
             });
 
@@ -492,6 +607,9 @@ impl super::Chamber {
         // Searchable Note Inspector Dock with Filter Pills
         let filter_mode = self.visualizer_nucleus_filter.as_deref().unwrap_or("all");
         let is_orphan_filter = filter_mode == "orphans";
+        let is_dead_link_filter = filter_mode == "dead_links";
+        let is_all_filter = !is_orphan_filter && !is_dead_link_filter;
+        let dead_sources: HashSet<String> = cached.dead_links.iter().map(|(s, _)| s.clone()).collect();
 
         let filtered_notes: Vec<hadron_forge::nucleus_graph::NucleusNode> = cached
             .nodes
@@ -500,7 +618,10 @@ impl super::Chamber {
                 if is_orphan_filter && !cached.orphaned_notes.contains(&n.slug) {
                     return false;
                 }
-                if filter_str.is_empty() || filter_str == "orphans" {
+                if is_dead_link_filter && !dead_sources.contains(&n.slug) {
+                    return false;
+                }
+                if filter_str.is_empty() || filter_str == "orphans" || filter_str == "dead_links" {
                     true
                 } else {
                     n.slug.to_lowercase().contains(&filter_str) || n.title.to_lowercase().contains(&filter_str)
@@ -509,48 +630,157 @@ impl super::Chamber {
             .cloned()
             .collect();
 
+        let orphans_for_bulk = cached.orphaned_notes.clone();
+        let dead_links_for_bulk = cached.dead_links.clone();
+        let repo_root_for_orphans = repo_root.clone();
+        let repo_root_for_delete_orphans = repo_root.clone();
+        let repo_root_for_dead = repo_root.clone();
+
         let filter_pills = h_flex()
-            .gap_1p5()
+            .w_full()
+            .justify_between()
             .items_center()
+            .flex_wrap()
+            .gap_1p5()
             .px_3()
             .py_1p5()
             .border_t_1()
             .border_color(theme::glass_highlight())
             .bg(theme::bg_surface().opacity(0.60))
             .child(
-                div()
-                    .id("nucleus-filter-all")
-                    .px_2p5()
-                    .py_1()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .bg(if filter_mode != "orphans" { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
-                    .text_xs()
-                    .font_weight(if filter_mode != "orphans" { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
-                    .text_color(if filter_mode != "orphans" { theme::accent() } else { theme::text_muted() })
-                    .child("All Notes")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.visualizer_nucleus_filter = None;
-                        cx.notify();
-                    })),
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(
+                        div()
+                            .id("nucleus-filter-all")
+                            .px_2p5()
+                            .py_1()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(if is_all_filter { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
+                            .text_xs()
+                            .font_weight(if is_all_filter { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                            .text_color(if is_all_filter { theme::accent() } else { theme::text_muted() })
+                            .child("All Notes")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.visualizer_nucleus_filter = None;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("nucleus-filter-orphans")
+                            .px_2p5()
+                            .py_1()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(if is_orphan_filter { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
+                            .text_xs()
+                            .font_weight(if is_orphan_filter { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                            .text_color(if is_orphan_filter { theme::warning() } else { theme::text_muted() })
+                            .child(format!("Orphans ({})", cached.orphaned_notes.len()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.visualizer_nucleus_filter = Some("orphans".to_string());
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("nucleus-filter-dead-links")
+                            .px_2p5()
+                            .py_1()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(if is_dead_link_filter { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
+                            .text_xs()
+                            .font_weight(if is_dead_link_filter { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                            .text_color(if is_dead_link_filter { theme::error() } else { theme::text_muted() })
+                            .child(format!("Dead Links ({})", cached.dead_links.len()))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.visualizer_nucleus_filter = Some("dead_links".to_string());
+                                cx.notify();
+                            })),
+                    ),
             )
-            .child(
-                div()
-                    .id("nucleus-filter-orphans")
-                    .px_2p5()
-                    .py_1()
-                    .rounded_full()
-                    .cursor_pointer()
-                    .bg(if filter_mode == "orphans" { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
-                    .text_xs()
-                    .font_weight(if filter_mode == "orphans" { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
-                    .text_color(if filter_mode == "orphans" { theme::warning() } else { theme::text_muted() })
-                    .child(format!("Orphans ({})", cached.orphaned_notes.len()))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.visualizer_nucleus_filter = Some("orphans".to_string());
-                        cx.notify();
-                    })),
-            );
+            .when(is_orphan_filter && !orphans_for_bulk.is_empty(), |bar| {
+                let orphans_to_index = orphans_for_bulk.clone();
+                let orphans_to_delete = orphans_for_bulk.clone();
+                bar.child(
+                    h_flex()
+                        .gap_1p5()
+                        .items_center()
+                        .child(
+                            div()
+                                .id("nucleus-index-all-orphans")
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .bg(theme::accent().opacity(0.15))
+                                .border_1()
+                                .border_color(theme::accent().opacity(0.4))
+                                .text_xs()
+                                .text_color(theme::accent())
+                                .child("+ Index All Orphans")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let nucleus_dir = repo_root_for_orphans.join(".hadron/nucleus");
+                                    for slug in &orphans_to_index {
+                                        let _ = index_orphan_note(&nucleus_dir, slug);
+                                    }
+                                    *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_root_for_orphans));
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            div()
+                                .id("nucleus-delete-all-orphans")
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .bg(theme::error().opacity(0.15))
+                                .border_1()
+                                .border_color(theme::error().opacity(0.4))
+                                .text_xs()
+                                .text_color(theme::error())
+                                .child("Delete All Orphans")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let nucleus_dir = repo_root_for_delete_orphans.join(".hadron/nucleus");
+                                    for slug in &orphans_to_delete {
+                                        let _ = delete_orphan_note(&nucleus_dir, slug);
+                                    }
+                                    this.visualizer_selected_note = None;
+                                    *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_root_for_delete_orphans));
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
+            .when(is_dead_link_filter && !dead_links_for_bulk.is_empty(), |bar| {
+                bar.child(
+                    div()
+                        .id("nucleus-strip-all-dead-links")
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .bg(theme::error().opacity(0.15))
+                        .border_1()
+                        .border_color(theme::error().opacity(0.4))
+                        .text_xs()
+                        .text_color(theme::error())
+                        .child("Unlink All Dead Links")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let nucleus_dir = repo_root_for_dead.join(".hadron/nucleus");
+                            for (src, tgt) in &dead_links_for_bulk {
+                                let _ = remove_dead_link_from_note(&nucleus_dir, src, tgt);
+                            }
+                            *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_root_for_dead));
+                            cx.notify();
+                        })),
+                )
+            });
 
         let note_chips_dock = v_flex()
             .id("nucleus-notes-dock-scroll")
@@ -572,9 +802,12 @@ impl super::Chamber {
                         let slug = n.slug.clone();
                         let is_sel = selected_note.as_deref() == Some(&slug);
                         let is_orphan = cached.orphaned_notes.contains(&slug);
+                        let has_dead_link = dead_sources.contains(&slug);
 
                         let chip_bg = if is_sel {
                             theme::tab_bar_bg()
+                        } else if has_dead_link {
+                            theme::error().opacity(0.15)
                         } else if is_orphan {
                             theme::warning().opacity(0.15)
                         } else {
@@ -583,6 +816,8 @@ impl super::Chamber {
 
                         let chip_border = if is_sel {
                             theme::accent()
+                        } else if has_dead_link {
+                            theme::error().opacity(0.40)
                         } else if is_orphan {
                             theme::warning().opacity(0.40)
                         } else {
@@ -622,6 +857,19 @@ impl super::Chamber {
                                         .child("orphan"),
                                 )
                             })
+                            .when(has_dead_link, |chip| {
+                                chip.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::error().opacity(0.2))
+                                        .text_xs()
+                                        .text_color(theme::error())
+                                        .child("dead link"),
+                                )
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.visualizer_selected_note = Some(slug.clone());
                                 cx.notify();
@@ -635,6 +883,16 @@ impl super::Chamber {
             let note_path = repo_root.join(".hadron/nucleus").join(&n.path);
             let content_preview = std::fs::read_to_string(&note_path).unwrap_or_else(|_| "Note file content unavailable".to_string());
             let is_orphan = cached.orphaned_notes.contains(&n_slug);
+            let note_dead_targets: Vec<String> = cached
+                .dead_links
+                .iter()
+                .filter(|(src, _)| src == &n_slug)
+                .map(|(_, tgt)| tgt.clone())
+                .collect();
+            let repo_for_index = repo_root.clone();
+            let repo_for_delete = repo_root.clone();
+            let slug_for_index = n_slug.clone();
+            let slug_for_delete = n_slug.clone();
 
             v_flex()
                 .w_full()
@@ -669,6 +927,47 @@ impl super::Chamber {
                                             .text_xs()
                                             .text_color(theme::warning())
                                             .child("Orphan Note"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("nucleus-action-index-orphan")
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .bg(theme::accent().opacity(0.15))
+                                            .border_1()
+                                            .border_color(theme::accent().opacity(0.4))
+                                            .text_xs()
+                                            .text_color(theme::accent())
+                                            .child("+ Add to Index")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let nucleus_dir = repo_for_index.join(".hadron/nucleus");
+                                                let _ = index_orphan_note(&nucleus_dir, &slug_for_index);
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_for_index));
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("nucleus-action-delete-orphan")
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .cursor_pointer()
+                                            .bg(theme::error().opacity(0.15))
+                                            .border_1()
+                                            .border_color(theme::error().opacity(0.4))
+                                            .text_xs()
+                                            .text_color(theme::error())
+                                            .child("Delete Orphan")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let nucleus_dir = repo_for_delete.join(".hadron/nucleus");
+                                                let _ = delete_orphan_note(&nucleus_dir, &slug_for_delete);
+                                                this.visualizer_selected_note = None;
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_for_delete));
+                                                cx.notify();
+                                            })),
                                     )
                                 }),
                         )
@@ -715,6 +1014,88 @@ impl super::Chamber {
                         .child(format!("Incoming: {} link(s)", n.incoming_links.len()))
                         .child(format!("Outgoing: {} link(s)", n.outgoing_links.len())),
                 )
+                .when(!note_dead_targets.is_empty(), |panel| {
+                    let src_slug = n_slug.clone();
+                    let repo_for_links = repo_root.clone();
+                    panel.child(
+                        h_flex()
+                            .w_full()
+                            .flex_wrap()
+                            .gap_2()
+                            .items_center()
+                            .p_2()
+                            .rounded_md()
+                            .bg(theme::error().opacity(0.10))
+                            .border_1()
+                            .border_color(theme::error().opacity(0.35))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::error())
+                                    .child("Dead Links:"),
+                            )
+                            .children(note_dead_targets.into_iter().map(move |target| {
+                                let src_for_unlink = src_slug.clone();
+                                let tgt_for_unlink = target.clone();
+                                let tgt_for_stub = target.clone();
+                                let repo_unlink = repo_for_links.clone();
+                                let repo_stub = repo_for_links.clone();
+
+                                h_flex()
+                                    .gap_1p5()
+                                    .items_center()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::bg_surface())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme::error())
+                                            .child(format!("[[{}]]", target)),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("nucleus-unlink-{}-{}", src_for_unlink, target)))
+                                            .px_1p5()
+                                            .py_0p5()
+                                            .rounded_sm()
+                                            .cursor_pointer()
+                                            .bg(theme::error().opacity(0.18))
+                                            .text_xs()
+                                            .text_color(theme::error())
+                                            .child("Unlink")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let nucleus_dir = repo_unlink.join(".hadron/nucleus");
+                                                let _ = remove_dead_link_from_note(&nucleus_dir, &src_for_unlink, &tgt_for_unlink);
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_unlink));
+                                                cx.notify();
+                                            })),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("nucleus-stub-{}-{}", src_slug, target)))
+                                            .px_1p5()
+                                            .py_0p5()
+                                            .rounded_sm()
+                                            .cursor_pointer()
+                                            .bg(theme::accent().opacity(0.18))
+                                            .text_xs()
+                                            .text_color(theme::accent())
+                                            .child("+ Create Stub")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                let nucleus_dir = repo_stub.join(".hadron/nucleus");
+                                                let _ = create_stub_note(&nucleus_dir, &tgt_for_stub);
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_stub));
+                                                cx.notify();
+                                            })),
+                                    )
+                            })),
+                    )
+                })
                 .child(
                     div()
                         .id(SharedString::from(format!("nucleus-preview-{}", n.slug)))
@@ -765,5 +1146,57 @@ mod tests {
         // Repulsion should push them further apart along the x axis
         assert!(na.x < 0.0);
         assert!(nb.x > 1.0);
+    }
+
+    #[test]
+    fn test_remove_dead_link_from_markdown_strips_wiki_and_md_links() {
+        let src = "See [[missing-note]] and [Missing](notes/missing-note.md) for details, keep [[valid-note]].";
+        let cleaned = remove_dead_link_from_markdown(src, "missing-note");
+        assert_eq!(
+            cleaned,
+            "See `missing-note` and Missing for details, keep [[valid-note]]."
+        );
+        let remaining_links = hadron_forge::nucleus_graph::extract_note_links(&cleaned);
+        assert_eq!(remaining_links, vec!["valid-note".to_string()]);
+    }
+
+    #[test]
+    fn test_orphan_and_dead_link_remediation_helpers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nucleus_dir = tmp.path().join(".hadron/nucleus");
+        let notes_dir = nucleus_dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(nucleus_dir.join("index.md"), "# Index\n").unwrap();
+        std::fs::write(
+            notes_dir.join("orphan-a.md"),
+            "---\nname: orphan-a\ndescription: First orphan lesson\n---\nLinks to [[missing-target]].\n",
+        )
+        .unwrap();
+        std::fs::write(
+            notes_dir.join("orphan-b.md"),
+            "---\nname: orphan-b\ndescription: Second orphan\n---\nStandalone.\n",
+        )
+        .unwrap();
+
+        let (nodes, dead_links) = hadron_forge::nucleus_graph::build_nucleus_graph(&nucleus_dir);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(dead_links, vec![("orphan-a".to_string(), "missing-target".to_string())]);
+        assert!(nodes["orphan-b"].incoming_links.is_empty());
+
+        // 1. Index orphan-b -> no longer orphan
+        index_orphan_note(&nucleus_dir, "orphan-b").unwrap();
+        let (nodes, _) = hadron_forge::nucleus_graph::build_nucleus_graph(&nucleus_dir);
+        assert_eq!(nodes["orphan-b"].incoming_links, vec!["index".to_string()]);
+
+        // 2. Create stub for missing-target -> dead link resolved and orphan-a now has outgoing link to valid note
+        create_stub_note(&nucleus_dir, "missing-target").unwrap();
+        let (nodes, dead_links) = hadron_forge::nucleus_graph::build_nucleus_graph(&nucleus_dir);
+        assert!(dead_links.is_empty());
+        assert!(nodes.contains_key("missing-target"));
+
+        // 3. Delete orphan-b
+        delete_orphan_note(&nucleus_dir, "orphan-b").unwrap();
+        let (nodes, _) = hadron_forge::nucleus_graph::build_nucleus_graph(&nucleus_dir);
+        assert!(!nodes.contains_key("orphan-b"));
     }
 }

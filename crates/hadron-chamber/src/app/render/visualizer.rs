@@ -1509,6 +1509,7 @@ impl super::Chamber {
 /// Lavapipe-cached workspace crates & intra-crate modules topology graph.
 #[derive(Debug, Clone)]
 pub struct CachedCrateGraph {
+    #[allow(dead_code)]
     pub content_hash: u64,
     pub topology: hadron_forge::topology::WorkspaceTopologyGraph,
     pub crate_layers: BTreeMap<String, usize>,
@@ -1668,7 +1669,7 @@ impl super::Chamber {
                             div()
                                 .text_sm()
                                 .text_color(theme::text_muted())
-                                .child("Building workspace crate topology graph..."),
+                                .child("Building workspace dependency topology graph..."),
                         ),
                 )
                 .into_any_element();
@@ -1691,7 +1692,7 @@ impl super::Chamber {
                     .border_color(theme::glass_highlight())
                     .text_xs()
                     .text_color(theme::accent())
-                    .child(format!("{} Crates", cached.crate_positions.len())),
+                    .child(format!("{} Packages", cached.crate_positions.len())),
             )
             .child(
                 div()

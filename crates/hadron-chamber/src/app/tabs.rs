@@ -211,7 +211,7 @@ impl VisualizerMode {
     pub(super) fn label(self) -> &'static str {
         match self {
             VisualizerMode::Swarm3D => "Swarm 3D",
-            VisualizerMode::CratesAndModules => "Crates & Modules",
+            VisualizerMode::CratesAndModules => "Dependencies",
             VisualizerMode::NucleusGraph => "Nucleus Graph",
         }
     }
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(VisualizerMode::from_index(2), VisualizerMode::NucleusGraph);
         assert_eq!(VisualizerMode::from_index(99), VisualizerMode::Swarm3D);
         assert_eq!(VisualizerMode::Swarm3D.label(), "Swarm 3D");
-        assert_eq!(VisualizerMode::CratesAndModules.label(), "Crates & Modules");
+        assert_eq!(VisualizerMode::CratesAndModules.label(), "Dependencies");
         assert_eq!(VisualizerMode::NucleusGraph.label(), "Nucleus Graph");
     }
 }
