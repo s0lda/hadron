@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.31",
+        date: Some("2026-11-01"),
+        added: &[
+            "Nucleus Graph Orphan & Dead-Link Curation Actions, Dependencies Mode & Process/Settings Polish: Renamed Crates & Modules to Dependencies with background graph builds, floating crate inspector overlay, and Nucleus Graph centering gravity; added Dead Links filter and one-click orphan/broken-link remediation (+ Add to Index, Delete Orphan, Unlink, + Create Stub); and polished Settings Roster (ACTIVE/CATALOGUE split) and Process Manager / PTY headers",
+        ],
+        changed: &[],
+        fixed: &[
+            "Mid-Turn Transient Stream Error Recovery & False 900s Silence Kill Prevention: Cleared sticky error status in StreamAccumulator on DONE thinking retry steps, reset last_sign when entering the 30s error grace window in until_silent and restored the full deadline on recovery, and treated 'The stream was interrupted' as retryable",
+            "Bare Code Fence Language Fallback & InvariantLinter Hygiene: Defaulted unrecognized bare code fences in infer_code_language to plain text instead of Rust and removed unused cache fields and #[allow(dead_code)] attributes",
+        ],
+    },
+    Release {
         version: "0.33.30",
         date: Some("2026-11-01"),
         added: &[

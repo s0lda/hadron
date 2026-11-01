@@ -5,6 +5,20 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.31] - 2026-11-01
+
+### Added
+- **Nucleus Graph Orphan & Dead-Link Curation Actions, Dependencies Mode & Process/Settings Polish (`hadron-chamber`)**:
+  - Renamed the `Visualizer` dependency mode to language-agnostic `Dependencies` (`Packages` HUD badge), offloaded topology and nucleus graph builds to background worker threads with dynamic canvas scaling, top-anchored `#crates-dock` with a floating `#crate-inspector-drawer` overlay, and added centering gravity in `Nucleus Graph` so orphan nodes remain inside canvas bounds (`crates/hadron-chamber/src/app/render/visualizer.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/tabs.rs`).
+  - Added a `Dead Links` filter pill, clickable HUD filter badges, and interactive per-note and bulk remediation actions (`+ Add to Index`, `Delete Orphan`, `Unlink`, `+ Create Stub`) in `Nucleus Graph` (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+  - Split the `Settings > ROSTER` sidebar into alphabetically sorted `ACTIVE` and `CATALOGUE` sections with transport badges and live presence dots, and enriched the `Process Manager` overlay and `PTY` grid headers with summary pills, transport/model/activity badges, batch `Restart All ACP`, Settings quick-jump, and `Clear` / `^C` controls (`crates/hadron-chamber/src/app/settings/overlay.rs`, `crates/hadron-chamber/src/app/render/overlays.rs`, `crates/hadron-chamber/src/app/render/pty_grid.rs`).
+
+### Fixed
+- **Mid-Turn Transient Stream Error Recovery & False 900s Silence Kill Prevention (`hadron-gluon`)**:
+  - Cleared sticky `"error message"` status in `StreamAccumulator` when `in_error_state` clears on a `DONE` thinking retry step, reset `last_sign` when `until_silent` enters its 30s error grace window after healthy prior work and restored the full deadline upon recovery, reported actual `silent_for` seconds, and treated `"The stream was interrupted"` as a retryable CLI error (`crates/hadron-gluon/src/adapter/cli_stream.rs`, `crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/adapter/cli.rs`).
+- **Bare Code Fence Language Fallback & InvariantLinter Dead-Code Hygiene (`hadron-chamber`)**:
+  - Changed `infer_code_language` fallback from `"rust"` to `"text"` (and added a Java heuristic) so plain or unrecognized bare code fences are not syntax-highlighted as Rust (`crates/hadron-chamber/src/syntax.rs`), and removed unused `content_hash` fields and `#[allow(dead_code)]` annotations across `visualizer.rs`, `nucleus_graph.rs`, and `tabs.rs`.
+
 ## [0.33.30] - 2026-11-01
 
 ### Added
