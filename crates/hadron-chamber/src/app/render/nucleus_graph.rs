@@ -599,6 +599,7 @@ impl super::Chamber {
                 )
                 .child(
                     div()
+                        .id(SharedString::from(format!("nucleus-preview-{}", n.slug)))
                         .w_full()
                         .max_h(px(100.0))
                         .overflow_y_scroll()

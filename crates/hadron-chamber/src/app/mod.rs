@@ -27,7 +27,7 @@ use gpui_component::input::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
+pub use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
 use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::switch::Switch;
 // tab imports removed
@@ -297,7 +297,7 @@ struct Chamber {
     pub(super) visualizer_selected_note: Option<String>,
     pub(super) visualizer_nucleus_filter: Option<String>,
     pub(super) cached_crate_graph:
-        std::cell::RefCell<Option<render::nucleus_graph::CachedCrateGraph>>,
+        std::cell::RefCell<Option<render::visualizer::CachedCrateGraph>>,
     pub(super) cached_nucleus_graph:
         std::cell::RefCell<Option<render::nucleus_graph::CachedNucleusGraph>>,
     /// Keyboard cursor over the roster (index into `view.roster`), moved by the
@@ -361,8 +361,6 @@ struct Chamber {
     pub(super) mission_plan_scroll: ScrollHandle,
     /// Cached parsed Plan DAG, waves, and merged-commit status.
     pub(super) cached_plan_dag: std::cell::RefCell<Option<CachedPlanDag>>,
-    pub(super) cached_nucleus_graph: std::cell::RefCell<Option<crate::app::render::nucleus_graph::CachedNucleusGraph>>,
-    pub(super) cached_crate_graph: std::cell::RefCell<Option<crate::app::render::visualizer::CachedCrateGraph>>,
     /// Scroll position of the Tasks pane.
     tasks_scroll: ScrollHandle,
     /// Scroll position of the Time Travel inspector pane.
@@ -1703,8 +1701,6 @@ impl Chamber {
             dag_waves_scroll: ScrollHandle::new(),
             mission_plan_scroll: ScrollHandle::new(),
             cached_plan_dag: std::cell::RefCell::new(None),
-            cached_nucleus_graph: std::cell::RefCell::new(None),
-            cached_crate_graph: std::cell::RefCell::new(None),
             tasks_scroll: ScrollHandle::new(),
             time_travel_scroll: ScrollHandle::new(),
             task_scrub: None,

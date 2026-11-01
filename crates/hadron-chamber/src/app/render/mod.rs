@@ -14,7 +14,7 @@ mod terminal;
 mod git;
 mod stats;
 mod overlays;
-mod visualizer;
+pub mod visualizer;
 mod breadcrumb;
 mod repl_overlay;
 mod dag_visualizer;
@@ -29,6 +29,8 @@ pub mod quark_home;
 pub mod canvas;
 pub mod nucleus_graph;
 pub mod selector;
+
+pub use gpui_component::scroll::ScrollableElement;
 
 impl Render for Chamber {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

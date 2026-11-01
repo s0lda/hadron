@@ -1522,7 +1522,7 @@ impl CachedCrateGraph {
         let topology = hadron_forge::topology::WorkspaceTopologyGraph::from_workspace(repo_root);
         let crate_layers = topology.compute_crate_layers();
 
-        let mut direct_modified_crates = HashSet::new();
+        let direct_modified_crates = HashSet::new();
         let mut downstream_impacted_crates = HashSet::new();
 
         let crates_dir = repo_root.join("crates");
@@ -1530,7 +1530,7 @@ impl CachedCrateGraph {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if p.is_dir() {
-                    if let Some(crate_name) = p.file_name().and_then(|s| s.to_str()) {
+                    if let Some(_crate_name) = p.file_name().and_then(|s| s.to_str()) {
                         let src_dir = p.join("src");
                         if src_dir.is_dir() {
                             // Crate directory exists
@@ -1604,10 +1604,10 @@ impl super::Chamber {
                     .py_1()
                     .rounded_md()
                     .cursor_pointer()
-                    .bg(if is_active { theme::accent() } else { gpui::transparent_black() })
+                    .bg(if is_active { theme::accent().into() } else { gpui::transparent_black() })
                     .text_xs()
                     .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
-                    .text_color(if is_active { theme::text_on_accent() } else { theme::text_secondary() })
+                    .text_color(if is_active { theme::text() } else { theme::text_secondary() })
                     .hover(|s| if !is_active { s.text_color(theme::text()) } else { s })
                     .child(mode_label)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1712,7 +1712,7 @@ impl super::Chamber {
 
         let canvas_elem = canvas(
             move |bounds, _, _| bounds,
-            move |bounds, _, window, _cx| {
+            move |_bounds, _, window, _cx| {
                 // Draw Bezier edges
                 for edge in &edges_list {
                     if edge.relation == "depends_on" {
@@ -1944,9 +1944,10 @@ impl super::Chamber {
                                 .gap_1p5()
                                 .items_center()
                                 .child(div().text_color(theme::text_muted()).child("Dependencies:"))
-                                .children(deps.iter().map(|d| {
+                                 .children(deps.iter().map(|d| {
                                     let dep_name = d.clone();
                                     div()
+                                        .id(SharedString::from(format!("dep-{}", dep_name)))
                                         .px_1p5()
                                         .py_0p5()
                                         .rounded_sm()
@@ -1968,6 +1969,7 @@ impl super::Chamber {
                                 .children(dependents.iter().map(|d| {
                                     let dep_name = d.clone();
                                     div()
+                                        .id(SharedString::from(format!("dependent-{}", dep_name)))
                                         .px_1p5()
                                         .py_0p5()
                                         .rounded_sm()
