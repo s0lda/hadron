@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.33.30] - 2026-11-01
 
 ### Added
+- **3-Mode Inspector Visualizer (`Swarm 3D` | `Crates & Modules` | `Nucleus Graph`) (`hadron-chamber`)**:
+  - Upgraded the right-rail `Visualizer` tab with a 3-mode capsule switcher (`crates/hadron-chamber/src/app/tabs.rs`, `crates/hadron-chamber/src/app/render/visualizer.rs`), adding an interactive layered `Crates & Modules` dependency canvas with Bezier curves, live git blast-radius highlighting, and intra-crate module drill-down, plus a Lavapipe-cached `Nucleus Graph` 2D node-link canvas (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`) with searchable note/invariant inspection.
 - **Workspace Topology Graph Scanner & Crate Layers (`hadron-forge`, `hadron-forge-mcp`)**:
   - Added workspace topology graph scanner and crate layer mapper (`crates/hadron-forge/src/topology.rs`), nucleus graph hook enrichment (`crates/hadron-forge/src/nucleus_graph.rs`), and MCP topology tool integration (`crates/hadron-forge-mcp/src/tools/topology.rs`).
 

@@ -23,6 +23,7 @@ const RELEASES: &[Release] = &[
         version: "0.33.30",
         date: Some("2026-11-01"),
         added: &[
+            "3-Mode Inspector Visualizer (Swarm 3D | Crates & Modules | Nucleus Graph): Upgraded the Visualizer tab with a 3-mode switcher, adding an interactive layered Crates & Modules dependency canvas with live git blast-radius and intra-crate module drill-down, plus a Lavapipe-cached Nucleus Graph 2D node-link canvas and note inspector",
             "Workspace Topology Graph Scanner & Crate Layers: Added workspace topology graph scanner, crate layer mapper, nucleus graph hook enrichment, and MCP topology tool integration",
         ],
         changed: &[],
