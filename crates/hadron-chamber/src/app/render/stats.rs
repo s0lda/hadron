@@ -605,65 +605,6 @@ impl super::Chamber {
             )
     }
 
-    /// The Timeline section: a vertical [`Stepper`] over the run's milestones — the
-    /// non-message activity (status changes, edits, commands, snapshots), most
-    /// recent marked as the current step.
-    pub(super) fn timeline_view(&self) -> impl IntoElement {
-        let steps: Vec<&MessageRow> = self
-            .view
-            .messages
-            .iter()
-            .filter(|m| m.kind_label != "message")
-            .collect();
-
-        let mut col = v_flex().p_4();
-        if steps.is_empty() {
-            return col.child(empty_hint(
-                "No activity yet — the timeline fills as quarks work.",
-            ));
-        }
-
-        let current = steps.len().saturating_sub(1);
-        let stepper = Stepper::new("timeline")
-            .vertical()
-            .selected_index(current)
-            .items(steps.into_iter().map(|m| {
-                StepperItem::new()
-                    .pb_6()
-                    .icon(kind_icon(m.kind_label))
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .text_color(theme::actor_hue(&m.from))
-                                            .child(m.from.clone())
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme::text_muted())
-                                            .child(format!("· {}", m.kind_label))
-                                    )
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .child(m.body.clone()),
-                            ),
-                    )
-            }));
-        col = col.child(stepper);
-        col
-    }
-
     /// The Session / Week / Month / All-time selector shared by the chat Stats tab and
     /// the info panel's Stats tab. `id` distinguishes the two (both can be in the tree at
     /// once — the info panel overlays the chat pane), so their element ids never collide.
@@ -1093,20 +1034,6 @@ impl super::Chamber {
             }
             col = col.child(block);
         }
-
-        // Run Milestone Timeline Stepper
-        col = col.child(
-            session_card()
-                .gap_3()
-                .child(
-                    div()
-                        .text_sm()
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(theme::text())
-                        .child("Milestone Timeline"),
-                )
-                .child(self.timeline_view()),
-        );
 
         col
     }

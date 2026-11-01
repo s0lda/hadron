@@ -1885,18 +1885,6 @@ pub(super) fn stat_tile_with_note(
         )
 }
 
-/// Map an event kind to a timeline step icon.
-#[allow(dead_code)] // only used by the (unwired) timeline_view
-pub(super) fn kind_icon(kind_label: &str) -> IconName {
-    match kind_label {
-        "status" => IconName::Info,
-        "edit" => IconName::Folder,
-        "command" => IconName::SquareTerminal,
-        "snapshot" => IconName::CircleCheck,
-        _ => IconName::Asterisk,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

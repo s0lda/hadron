@@ -28,7 +28,6 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 pub use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
-use gpui_component::stepper::{Stepper, StepperItem};
 use gpui_component::switch::Switch;
 // tab imports removed
 // tag imports removed
@@ -94,7 +93,7 @@ use providers::{
 mod widgets;
 use widgets::{
     control_button, drag_region, effective_presence_state, effort_tag, empty_hint,
-    fallback_pick_image, format_num, frame_corner_radii, kind_icon, kv_row, log_row,
+    fallback_pick_image, format_num, frame_corner_radii, kv_row, log_row,
     markdown_style, menu_button, mode_color, mode_hint, mode_label, mode_tag, next_global_mode,
     next_mode, next_sandbox_mode, panel_eyebrow, progress_meter, sandbox_tag, session_card,
     settings_card_section, settings_field, settings_field_stacked, stat_tile, stat_tile_with_note,
