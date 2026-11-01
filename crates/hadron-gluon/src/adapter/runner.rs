@@ -109,7 +109,7 @@ pub trait CliRunner: Send + Sync {
     async fn run_streaming(
         &self,
         inv: CliInvocation,
-        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+        on_line: &mut (dyn for<'a> FnMut(&'a str) -> bool + Send),
     ) -> anyhow::Result<CliResult> {
         let _ = on_line;
         self.run(inv).await
@@ -248,20 +248,24 @@ impl CliRunner for ProcessRunner {
 
         if let Some(stream_spec) = &inv.stream {
             use tokio::io::{AsyncBufReadExt, AsyncReadExt};
-            let stderr_fut = async {
+            let stdout_pipe = child.stdout.take();
+            let stderr_pipe = child.stderr.take();
+            let stream_format = stream_spec.format.clone();
+
+            let stderr_fut = async move {
                 let mut buf = Vec::new();
-                if let Some(mut stderr_pipe) = child.stderr.take() {
-                    let _ = stderr_pipe.read_to_end(&mut buf).await;
+                if let Some(mut pipe) = stderr_pipe {
+                    let _ = pipe.read_to_end(&mut buf).await;
                 }
                 String::from_utf8_lossy(&buf).into_owned()
             };
-            let stdout_fut = async {
+            let stdout_fut = async move {
                 let mut usage = None;
                 let mut stdout_accumulated = String::new();
-                if let Some(stdout_pipe) = child.stdout.take() {
-                    let mut reader = tokio::io::BufReader::new(stdout_pipe).lines();
+                if let Some(pipe) = stdout_pipe {
+                    let mut reader = tokio::io::BufReader::new(pipe).lines();
                     while let Ok(Some(line)) = reader.next_line().await {
-                        match &stream_spec.format {
+                        match &stream_format {
                             hadron_lattice::StreamFormat::AgyStreamJson => {
                                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
                                     let evt = v.get("event").and_then(|e| e.as_str());
@@ -289,7 +293,6 @@ impl CliRunner for ProcessRunner {
                                             let out_tok = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
                                             let think_tok = u.get("thinking_tokens").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
                                             let cache_read = u.get("cache_read_tokens").and_then(|n| n.as_u64()).map(|n| n as u32);
-                                            // Note: thinking_tokens is folded into output because thinking/reasoning generation spends output token budget on LLM inference.
                                             usage = Some(hadron_lattice::TokenSpend {
                                                 input: in_tok,
                                                 output: Some(out_tok + think_tok),
@@ -326,7 +329,15 @@ impl CliRunner for ProcessRunner {
                 }
                 (stdout_accumulated, usage)
             };
-            let ((stdout_accumulated, usage), stderr) = tokio::join!(stdout_fut, stderr_fut);
+            let ((stdout_accumulated, usage), stderr) = tokio::select! {
+                res = async { tokio::join!(stdout_fut, stderr_fut) } => res,
+                _ = async {
+                    let _ = child.wait().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                } => {
+                    ((String::new(), None), String::new())
+                }
+            };
             let status = child.wait().await?;
             child_guard.disarm();
             if !status.success() {
@@ -347,9 +358,6 @@ impl CliRunner for ProcessRunner {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-            // A nonzero exit is a real failure (expired auth, rate-limit, bad flag).
-            // Surface stderr as the error rather than silently returning empty stdout
-            // — otherwise the loop just stalls with no diagnostic signal.
             if !output.status.success() {
                 let code = output
                     .status
@@ -370,7 +378,7 @@ impl CliRunner for ProcessRunner {
     async fn run_streaming(
         &self,
         inv: CliInvocation,
-        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+        on_line: &mut (dyn for<'a> FnMut(&'a str) -> bool + Send),
     ) -> anyhow::Result<CliResult> {
         use std::process::Stdio;
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
@@ -434,26 +442,40 @@ impl CliRunner for ProcessRunner {
             stdin.shutdown().await?;
         }
 
-        let stderr_fut = async {
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let stderr_fut = async move {
             let mut buf = Vec::new();
-            if let Some(mut stderr_pipe) = child.stderr.take() {
-                let _ = stderr_pipe.read_to_end(&mut buf).await;
+            if let Some(mut pipe) = stderr_pipe {
+                let _ = pipe.read_to_end(&mut buf).await;
             }
             String::from_utf8_lossy(&buf).into_owned()
         };
-        let stdout_fut = async {
+        let stdout_fut = async move {
             let mut stdout_accumulated = String::new();
-            if let Some(stdout_pipe) = child.stdout.take() {
-                let mut reader = tokio::io::BufReader::new(stdout_pipe).lines();
+            if let Some(pipe) = stdout_pipe {
+                let mut reader = tokio::io::BufReader::new(pipe).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
-                    on_line(&line);
+                    let keep_going = on_line(&line);
                     stdout_accumulated.push_str(&line);
                     stdout_accumulated.push('\n');
+                    if !keep_going {
+                        break;
+                    }
                 }
             }
             stdout_accumulated
         };
-        let (stdout_accumulated, stderr) = tokio::join!(stdout_fut, stderr_fut);
+        let (stdout_accumulated, stderr) = tokio::select! {
+            res = async { tokio::join!(stdout_fut, stderr_fut) } => res,
+            _ = async {
+                let _ = child.wait().await;
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            } => {
+                (String::new(), String::new())
+            }
+        };
         let status = child.wait().await?;
         child_guard.disarm();
         if !status.success() {
@@ -525,16 +547,19 @@ impl CliRunner for FakeRunner {
     async fn run_streaming(
         &self,
         inv: CliInvocation,
-        on_line: &mut (dyn for<'a> FnMut(&'a str) + Send),
+        on_line: &mut (dyn for<'a> FnMut(&'a str) -> bool + Send),
     ) -> anyhow::Result<CliResult> {
         self.recorded.lock().unwrap().push(inv);
         let queued = self.stream_lines.lock().unwrap().pop_front();
         if let Some(lines) = queued {
             let mut full = String::new();
             for line in &lines {
-                on_line(line);
+                let keep_going = on_line(line);
                 full.push_str(line);
                 full.push('\n');
+                if !keep_going {
+                    break;
+                }
                 // Yield between lines so a test watching `live_dir` concurrently (the
                 // same shape as the real subprocess's genuinely-async line reads) gets
                 // a chance to observe a publish before this loop clears it.
@@ -549,7 +574,9 @@ impl CliRunner for FakeRunner {
             .pop_front()
             .ok_or_else(|| anyhow::anyhow!("FakeRunner ran out of queued replies"))?;
         for line in reply.stdout.lines() {
-            on_line(line);
+            if !on_line(line) {
+                break;
+            }
         }
         Ok(reply)
     }
@@ -982,7 +1009,7 @@ mod tests {
                     stream: None,
                     sandbox: hadron_gatekeeper::SandboxMode::Off,
                 },
-                &mut |_line| {},
+                &mut |_line| true,
             )
             .await
             .unwrap_err();
@@ -1021,6 +1048,7 @@ mod tests {
                                 let _ = tx.send(pid);
                             }
                         }
+                        true
                     },
                 )
                 .await

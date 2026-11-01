@@ -531,17 +531,23 @@ impl<R: CliRunner> CliQuark<R> {
         let mut acc = StreamAccumulator::new(stream.format);
         let mut last_publish: Option<Instant> = None;
         let mut last_heartbeat: Option<Instant> = None;
-        let mut on_line = |line: &str| {
+        let mut on_line = |line: &str| -> bool {
             let changed = acc.on_line(line);
-            let Some(dir) = &dir else { return };
+            if acc.error_step_count() >= 3 {
+                return false;
+            }
+            let Some(dir) = &dir else { return true };
+            let status_is_error = acc.status() == "error message" || acc.status() == "error";
             if !changed {
                 if !line.trim().is_empty()
+                    && !acc.in_error_state()
+                    && !status_is_error
                     && last_heartbeat.is_none_or(|t: Instant| t.elapsed() >= PUBLISH_THROTTLE)
                 {
                     last_heartbeat = Some(Instant::now());
                     let _ = live::touch_heartbeat(dir, &quark_id);
                 }
-                return;
+                return true;
             }
             // Status transitions arrive in bursts (e.g. `agent_response` followed <1ms
             // later by `tool_name: run_command`) and must never be dropped by the text
@@ -552,7 +558,9 @@ impl<R: CliRunner> CliQuark<R> {
             if due {
                 let now = Instant::now();
                 last_publish = Some(now);
-                last_heartbeat = Some(now);
+                if !acc.in_error_state() && !status_is_error {
+                    last_heartbeat = Some(now);
+                }
                 let mut activity = if is_status_update {
                     let status = acc.status();
                     let doing = if status == "thinking"
@@ -574,13 +582,22 @@ impl<R: CliRunner> CliQuark<R> {
                 activity.started = Some(turn_started);
                 crate::adapter::telemetry::TurnTelemetrySink::publish_activity(dir, &mut activity);
             }
+            true
         };
         let run_result = self.runner.run_streaming(inv, &mut on_line).await;
         if let Some(dir) = &self.live_dir {
             crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
         }
-        run_result?;
+        let error_step_exhausted = acc.error_step_count() >= 3;
+        let in_error = acc.in_error_state();
+        let latest_err_msg = acc.latest_error_message();
         let res = acc.finish_result();
+        if error_step_exhausted || (in_error && res.message.is_none()) {
+            let err_msg = latest_err_msg
+                .unwrap_or_else(|| "quark stream entered error state".to_string());
+            anyhow::bail!("quark stream failed with error steps: {err_msg}");
+        }
+        run_result?;
         let model = res
             .model
             .or_else(|| (!self.model.trim().is_empty()).then(|| self.model.clone()));
@@ -1542,7 +1559,7 @@ mod tests {
                 }
                 Ok(CliResult { stdout: "Success after retry".to_string(), exit: 0, usage: None })
             }
-            async fn run_streaming(&self, inv: CliInvocation, _on_line: &mut (dyn for<'a> FnMut(&'a str) + Send)) -> anyhow::Result<CliResult> {
+            async fn run_streaming(&self, inv: CliInvocation, _on_line: &mut (dyn for<'a> FnMut(&'a str) -> bool + Send)) -> anyhow::Result<CliResult> {
                 self.run(inv).await
             }
         }
@@ -1562,5 +1579,31 @@ mod tests {
         let outcome = quark.excite(projection("do task")).await.unwrap();
         assert_eq!(outcome.message.as_deref(), Some("Success after retry"));
         assert_eq!(quark.runner.attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn cli_quark_streaming_aborts_immediately_on_consecutive_error_steps() {
+        let stream_lines = vec![vec![
+            r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Error 1"}}"#.to_string(),
+            r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Error 2"}}"#.to_string(),
+            r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Error 3"}}"#.to_string(),
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Never reached"}}"#.to_string(),
+        ]];
+        let runner = FakeRunner::with_stream_lines(stream_lines);
+        let mut spec = CliSpec::agy();
+        spec.stream = Some(agy_stream_spec());
+        let mut quark = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Worker,
+            "gemini-3.6-flash",
+            spec,
+            runner,
+        );
+
+        let err = quark.excite(projection("do task")).await.unwrap_err();
+        assert!(
+            err.to_string().contains("quark stream failed with error steps"),
+            "streaming execution must abort immediately when consecutive error steps >= 3, got: {err}"
+        );
     }
 }

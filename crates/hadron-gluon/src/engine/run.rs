@@ -35,15 +35,19 @@ async fn until_silent(
     // Poll well inside `live::STALE_AFTER_SECS`, or a write could go stale between
     // two ticks and never be seen. Derived from the deadline so a test with a tiny
     // one exercises this same path rather than a code branch of its own.
-    let tick = (deadline / 4)
-        .min(std::time::Duration::from_secs(5))
-        .max(std::time::Duration::from_millis(10));
+    let mut effective_deadline = deadline;
     let mut last_sign = std::time::Instant::now();
     let mut newest_seen: Option<chrono::DateTime<chrono::Utc>> = None;
     loop {
+        let tick = (effective_deadline / 4)
+            .min(std::time::Duration::from_secs(5))
+            .max(std::time::Duration::from_millis(10));
         tokio::time::sleep(tick).await;
         if let Some(activity) = hadron_lattice::live::read(live_dir, quark, chrono::Utc::now()) {
-            if newest_seen.is_none_or(|seen| activity.at > seen) {
+            let is_error_detail = activity.detail == "error message" || activity.detail == "error";
+            if is_error_detail {
+                effective_deadline = effective_deadline.min(std::time::Duration::from_secs(30));
+            } else if newest_seen.is_none_or(|seen| activity.at > seen) {
                 newest_seen = Some(activity.at);
                 last_sign = std::time::Instant::now();
             }
@@ -55,7 +59,7 @@ async fn until_silent(
             }
         }
         let silent_for = last_sign.elapsed();
-        if silent_for >= deadline {
+        if silent_for >= effective_deadline {
             return silent_for;
         }
     }
@@ -1536,5 +1540,33 @@ impl super::Engine {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn until_silent_triggers_fast_error_deadline_on_error_activity() {
+        let temp = tempfile::tempdir().unwrap();
+        let qid = QuarkId::new("test-quark");
+        let live_dir = temp.path().to_path_buf();
+
+        let activity = hadron_lattice::live::Activity::new(
+            qid.clone(),
+            hadron_lattice::live::Doing::Working,
+            "error message",
+        );
+        crate::adapter::telemetry::TurnTelemetrySink::publish_activity(&live_dir, &mut activity.clone());
+
+        let start = std::time::Instant::now();
+        let silent_duration = until_silent(&live_dir, &qid, std::time::Duration::from_secs(600)).await;
+
+        assert!(
+            silent_duration < std::time::Duration::from_secs(35),
+            "until_silent must enforce fast <=30s error deadline when activity.detail is 'error message', took {:?}",
+            start.elapsed()
+        );
     }
 }

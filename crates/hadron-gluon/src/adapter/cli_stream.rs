@@ -57,6 +57,8 @@ pub struct StreamAccumulator {
     context_used: Option<u32>,
     context_window: Option<u32>,
     conversation_id: Option<String>,
+    error_step_count: u32,
+    in_error_state: bool,
 }
 
 impl StreamAccumulator {
@@ -72,6 +74,8 @@ impl StreamAccumulator {
             context_used: None,
             context_window: None,
             conversation_id: None,
+            error_step_count: 0,
+            in_error_state: false,
         }
     }
 
@@ -140,8 +144,27 @@ impl StreamAccumulator {
     /// confirmed `total_tokens == input_tokens + output_tokens` exactly, meaning
     /// `output_tokens` already counts thinking; adding it again would double it.
     fn on_agy_line(&mut self, value: &Value) -> bool {
-        match value.get("event").and_then(Value::as_str) {
+        let evt = value.get("event").and_then(Value::as_str);
+        if evt == Some("error") || evt == Some("error_message") {
+            self.error_step_count += 1;
+            self.in_error_state = true;
+        }
+        match evt {
             Some("step_update") => {
+                if let Some(step) = value.get("step_update") {
+                    let step_type = step.get("step_type").and_then(Value::as_str).unwrap_or("");
+                    if step_type == "error_message" || step_type == "error" {
+                        self.error_step_count += 1;
+                        self.in_error_state = true;
+                    } else if step_type == "agent_response"
+                        || step_type == "user_input"
+                        || step.get("tool_name").is_some()
+                        || step_type == "tool"
+                    {
+                        self.error_step_count = 0;
+                        self.in_error_state = false;
+                    }
+                }
                 if let Some(v) = path_as_u32(value, "step_update.usage.input_tokens") {
                     self.spend.input = Some(self.spend.input.unwrap_or(0).saturating_add(v));
                 }
@@ -219,6 +242,24 @@ impl StreamAccumulator {
         }
     }
 
+    pub fn error_step_count(&self) -> u32 {
+        self.error_step_count
+    }
+
+    pub fn in_error_state(&self) -> bool {
+        self.in_error_state
+    }
+
+    pub fn conversation_id(&self) -> Option<&str> {
+        self.conversation_id.as_deref()
+    }
+
+    pub fn latest_error_message(&self) -> Option<String> {
+        self.conversation_id
+            .as_deref()
+            .and_then(read_agy_transcript_latest_error_message)
+    }
+
     /// The full text accumulated so far — what a throttled `live::publish` should
     /// show after `on_line` returns `true`.
     pub fn draft(&self) -> &str {
@@ -290,6 +331,66 @@ fn parse_transcript_context_used(contents: &str) -> Option<u32> {
             let total = input.unwrap_or(0).saturating_add(cache_read.unwrap_or(0));
             if total > 0 {
                 return Some(total);
+            }
+        }
+    }
+    None
+}
+
+pub fn parse_transcript_latest_error_message(contents: &str) -> Option<String> {
+    for line in contents.lines().rev() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+        let is_error = value
+            .get("type")
+            .and_then(Value::as_str)
+            .map_or(false, |t| t == "ERROR" || t == "ERROR_MESSAGE" || t == "error" || t == "error_message")
+            || value
+                .get("step_type")
+                .and_then(Value::as_str)
+                .map_or(false, |t| t == "error" || t == "error_message");
+        if is_error {
+            let msg = path_as_str(&value, "content")
+                .or_else(|| path_as_str(&value, "message"))
+                .or_else(|| path_as_str(&value, "error"))
+                .or_else(|| path_as_str(&value, "error_message"))
+                .or_else(|| path_as_str(&value, "detail"))
+                .or_else(|| path_as_str(&value, "step_update.message"))
+                .or_else(|| path_as_str(&value, "step_update.error"));
+            if let Some(msg) = msg {
+                let trimmed = msg.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn read_agy_transcript_latest_error_message(conversation_id: &str) -> Option<String> {
+    let cid = conversation_id.trim();
+    if cid.is_empty() || cid.contains('/') || cid.contains('\\') || cid.contains("..") {
+        return None;
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)?;
+    for app_dir in ["antigravity-cli", "antigravity"] {
+        let path = home
+            .join(".gemini")
+            .join(app_dir)
+            .join("brain")
+            .join(cid)
+            .join(".system_generated")
+            .join("logs")
+            .join("transcript.jsonl");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            if let Some(err_msg) = parse_transcript_latest_error_message(&contents) {
+                return Some(err_msg);
             }
         }
     }
@@ -631,6 +732,37 @@ mod tests {
             parse_transcript_context_used(transcript),
             Some(917 + 56552),
             "must use the final PLANNER_RESPONSE step's single-call prompt window (input + cache_read), not cumulative sums"
+        );
+    }
+
+    #[test]
+    fn consecutive_error_steps_are_tracked_and_reset_on_normal_steps() {
+        let mut acc = agy();
+        assert_eq!(acc.error_step_count(), 0);
+        assert!(!acc.in_error_state());
+
+        acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Rate limited"}}"#);
+        assert_eq!(acc.error_step_count(), 1);
+        assert!(acc.in_error_state());
+
+        acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Rate limited again"}}"#);
+        assert_eq!(acc.error_step_count(), 2);
+
+        acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"recovered"}}"#);
+        assert_eq!(acc.error_step_count(), 0);
+        assert!(!acc.in_error_state());
+    }
+
+    #[test]
+    fn parse_transcript_latest_error_message_extracts_last_error() {
+        let transcript = r#"{"step_index":0,"type":"USER_INPUT","status":"DONE"}
+{"step_index":1,"type":"ERROR","content":"First transient failure"}
+{"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE"}
+{"step_index":3,"type":"ERROR_MESSAGE","message":"Quota limit exceeded for model"}
+"#;
+        assert_eq!(
+            parse_transcript_latest_error_message(transcript),
+            Some("Quota limit exceeded for model".to_string())
         );
     }
 }
