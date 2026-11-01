@@ -1623,11 +1623,12 @@ impl super::Chamber {
         if self.cached_crate_graph.borrow().is_none() {
             if !self.cached_crate_graph_loading.get() {
                 self.cached_crate_graph_loading.set(true);
+                let repo_root_for_bg = repo_root.clone();
                 cx.spawn(async move |this, cx| {
                     let graph = cx
                         .background_executor()
                         .spawn(async move {
-                            CachedCrateGraph::build(&repo_root)
+                            CachedCrateGraph::build(&repo_root_for_bg)
                         })
                         .await;
                     let _ = this.update(cx, |chamber, cx| {
@@ -1984,6 +1985,7 @@ impl super::Chamber {
                 .collect();
 
             v_flex()
+                .id("crate-inspector-panel")
                 .w_full()
                 .h(px(160.0))
                 .max_h(px(160.0))
@@ -2138,6 +2140,7 @@ impl super::Chamber {
             .child(canvas_container)
             .child(crate_chips_dock)
             .children(crate_inspector)
+            .into_any_element()
     }
 
     /// Primary visualizer entrypoint dispatching across the 3 visualizer modes.

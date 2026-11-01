@@ -198,11 +198,12 @@ impl super::Chamber {
         if self.cached_nucleus_graph.borrow().is_none() {
             if !self.cached_nucleus_graph_loading.get() {
                 self.cached_nucleus_graph_loading.set(true);
+                let repo_root_for_bg = repo_root.clone();
                 cx.spawn(async move |this, cx| {
                     let graph = cx
                         .background_executor()
                         .spawn(async move {
-                            CachedNucleusGraph::build(&repo_root)
+                            CachedNucleusGraph::build(&repo_root_for_bg)
                         })
                         .await;
                     let _ = this.update(cx, |chamber, cx| {
@@ -545,6 +546,7 @@ impl super::Chamber {
             );
 
         let note_chips_dock = v_flex()
+            .id("nucleus-note-chips-dock")
             .w_full()
             .max_h(px(140.0))
             .overflow_y_scroll()
@@ -711,6 +713,7 @@ impl super::Chamber {
             .child(filter_pills)
             .child(note_chips_dock)
             .children(selected_note_panel)
+            .into_any_element()
     }
 }
 
