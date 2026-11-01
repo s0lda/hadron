@@ -78,7 +78,9 @@ use identity::{
 };
 
 mod tabs;
-use tabs::{ChatTab, GitSubtab, InfoTab, MissionSubtab, Rail, RightRailTab, RosterTab};
+use tabs::{
+    ChatTab, GitSubtab, InfoTab, MissionSubtab, Rail, RightRailTab, RosterTab, VisualizerMode,
+};
 
 mod providers;
 use providers::{
@@ -290,6 +292,14 @@ struct Chamber {
     visualizer_auto_spin: bool,
     visualizer_selected_quark: Option<String>,
     visualizer_last_mouse: Option<gpui::Point<gpui::Pixels>>,
+    pub(super) visualizer_mode: VisualizerMode,
+    pub(super) visualizer_selected_crate: Option<String>,
+    pub(super) visualizer_selected_note: Option<String>,
+    pub(super) visualizer_nucleus_filter: Option<String>,
+    pub(super) cached_crate_graph:
+        std::cell::RefCell<Option<render::nucleus_graph::CachedCrateGraph>>,
+    pub(super) cached_nucleus_graph:
+        std::cell::RefCell<Option<render::nucleus_graph::CachedNucleusGraph>>,
     /// Keyboard cursor over the roster (index into `view.roster`), moved by the
     /// quark-nav keys and drawn as a highlighted row. `None` = nothing selected.
     selected_quark_ix: Option<usize>,
@@ -351,6 +361,8 @@ struct Chamber {
     pub(super) mission_plan_scroll: ScrollHandle,
     /// Cached parsed Plan DAG, waves, and merged-commit status.
     pub(super) cached_plan_dag: std::cell::RefCell<Option<CachedPlanDag>>,
+    pub(super) cached_nucleus_graph: std::cell::RefCell<Option<crate::app::render::nucleus_graph::CachedNucleusGraph>>,
+    pub(super) cached_crate_graph: std::cell::RefCell<Option<crate::app::render::visualizer::CachedCrateGraph>>,
     /// Scroll position of the Tasks pane.
     tasks_scroll: ScrollHandle,
     /// Scroll position of the Time Travel inspector pane.
@@ -1645,6 +1657,12 @@ impl Chamber {
             visualizer_auto_spin: true,
             visualizer_selected_quark: None,
             visualizer_last_mouse: None,
+            visualizer_mode: VisualizerMode::Swarm3D,
+            visualizer_selected_crate: None,
+            visualizer_selected_note: None,
+            visualizer_nucleus_filter: None,
+            cached_crate_graph: std::cell::RefCell::new(None),
+            cached_nucleus_graph: std::cell::RefCell::new(None),
             selected_quark_ix: None,
             roster_tab: RosterTab::Active,
             app_menu_open: false,
@@ -1685,6 +1703,8 @@ impl Chamber {
             dag_waves_scroll: ScrollHandle::new(),
             mission_plan_scroll: ScrollHandle::new(),
             cached_plan_dag: std::cell::RefCell::new(None),
+            cached_nucleus_graph: std::cell::RefCell::new(None),
+            cached_crate_graph: std::cell::RefCell::new(None),
             tasks_scroll: ScrollHandle::new(),
             time_travel_scroll: ScrollHandle::new(),
             task_scrub: None,

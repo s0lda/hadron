@@ -5,6 +5,7 @@
 //! neural constellation wireframe lattices, glowing singularity core,
 //! traveling orbital photon belt, animated excitation halos, and dynamic delegation links.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::f32::consts::PI;
 use std::sync::LazyLock;
 use super::*;
@@ -303,8 +304,8 @@ impl super::Chamber {
         }
     }
 
-    /// Render the interactive 3D Cosmic Sphere Topology visualizer tab.
-    pub(super) fn visualizer_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Render the interactive 3D Cosmic Sphere Topology visualizer view.
+    pub(super) fn swarm_3d_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let now = chrono::Utc::now();
         let time_secs = (now.timestamp_millis() % 1_000_000) as f32 / 1000.0;
 
@@ -633,6 +634,8 @@ impl super::Chamber {
                     })),
             );
 
+        let mode_switcher = self.visualizer_mode_switcher_header(cx);
+
         // Header strip
         let header = h_flex()
             .w_full()
@@ -646,7 +649,13 @@ impl super::Chamber {
             .py_2()
             .border_b_1()
             .border_color(theme::glass_highlight())
-            .child(hud_summary)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(mode_switcher)
+                    .child(hud_summary),
+            )
             .child(hud_controls);
 
         // Interactive Live Swarm Activity & Seated Quarks Dock
@@ -1494,6 +1503,534 @@ impl super::Chamber {
             .child(canvas_container)
             .children(selected_hud)
             .child(self.render_split_canvas_section(cx))
+    }
+}
+
+/// Lavapipe-cached workspace crates & intra-crate modules topology graph.
+#[derive(Debug, Clone)]
+pub struct CachedCrateGraph {
+    pub content_hash: u64,
+    pub topology: hadron_forge::topology::WorkspaceTopologyGraph,
+    pub crate_layers: BTreeMap<String, usize>,
+    pub direct_modified_crates: HashSet<String>,
+    pub downstream_impacted_crates: HashSet<String>,
+    pub crate_positions: HashMap<String, (f32, f32)>,
+}
+
+impl CachedCrateGraph {
+    pub fn build(repo_root: &std::path::Path) -> Self {
+        let topology = hadron_forge::topology::WorkspaceTopologyGraph::from_workspace(repo_root);
+        let crate_layers = topology.compute_crate_layers();
+
+        let mut direct_modified_crates = HashSet::new();
+        let mut downstream_impacted_crates = HashSet::new();
+
+        let crates_dir = repo_root.join("crates");
+        if let Ok(entries) = std::fs::read_dir(&crates_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    if let Some(crate_name) = p.file_name().and_then(|s| s.to_str()) {
+                        let src_dir = p.join("src");
+                        if src_dir.is_dir() {
+                            // Crate directory exists
+                        }
+                    }
+                }
+            }
+        }
+
+        for edge in &topology.edges {
+            if edge.relation == "depends_on" {
+                if direct_modified_crates.contains(&edge.target_id) {
+                    downstream_impacted_crates.insert(edge.source_id.clone());
+                }
+            }
+        }
+
+        let mut layer_groups: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        for node in &topology.nodes {
+            if let hadron_forge::topology::TopologyNode::Crate { name, .. } = node {
+                let layer_ix = crate_layers.get(name).copied().unwrap_or(0);
+                layer_groups.entry(layer_ix).or_default().push(name.clone());
+            }
+        }
+
+        let mut crate_positions = HashMap::new();
+        for (layer_ix, crates_in_layer) in layer_groups {
+            let y_pos = 100.0 + (layer_ix as f32 * 130.0);
+            for (idx, crate_name) in crates_in_layer.into_iter().enumerate() {
+                let x_pos = 140.0 + (idx as f32 * 190.0);
+                crate_positions.insert(crate_name, (x_pos, y_pos));
+            }
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::Hash;
+        topology.nodes.len().hash(&mut hasher);
+        topology.edges.len().hash(&mut hasher);
+        let content_hash = std::hash::Hasher::finish(&hasher);
+
+        Self {
+            content_hash,
+            topology,
+            crate_layers,
+            direct_modified_crates,
+            downstream_impacted_crates,
+            crate_positions,
+        }
+    }
+}
+
+impl super::Chamber {
+    pub(super) fn visualizer_mode_switcher_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_mode = self.visualizer_mode;
+
+        h_flex()
+            .gap_1()
+            .items_center()
+            .p_0p5()
+            .rounded_lg()
+            .bg(theme::tab_bar_bg())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .children(VisualizerMode::ALL.map(|mode| {
+                let is_active = current_mode == mode;
+                let mode_label = mode.label();
+
+                div()
+                    .id(SharedString::from(format!("vis-mode-{}", mode.index())))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .bg(if is_active { theme::accent() } else { gpui::transparent_black() })
+                    .text_xs()
+                    .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .text_color(if is_active { theme::text_on_accent() } else { theme::text_secondary() })
+                    .hover(|s| if !is_active { s.text_color(theme::text()) } else { s })
+                    .child(mode_label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.visualizer_mode = mode;
+                        cx.notify();
+                    }))
+            }))
+    }
+
+    pub(super) fn crates_and_modules_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+
+        let mut cache_ref = self.cached_crate_graph.borrow_mut();
+        if cache_ref.is_none() {
+            *cache_ref = Some(CachedCrateGraph::build(&repo_root));
+        }
+        let cached = cache_ref.as_ref().unwrap();
+
+        let selected_crate = self.visualizer_selected_crate.clone();
+
+        // Header
+        let mode_switcher = self.visualizer_mode_switcher_header(cx);
+        let hud_stats = h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(theme::accent())
+                    .child(format!("{} Crates", cached.crate_positions.len())),
+            )
+            .child(
+                div()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(theme::text_secondary())
+                    .child(format!("{} Dependencies", cached.topology.edges.len())),
+            )
+            .when(!cached.direct_modified_crates.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2p5()
+                        .py_1()
+                        .rounded_full()
+                        .bg(theme::warning().opacity(0.18))
+                        .border_1()
+                        .border_color(theme::warning().opacity(0.4))
+                        .text_xs()
+                        .text_color(theme::warning())
+                        .child(format!("{} Direct Modified", cached.direct_modified_crates.len())),
+                )
+            })
+            .when(!cached.downstream_impacted_crates.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2p5()
+                        .py_1()
+                        .rounded_full()
+                        .bg(theme::info().opacity(0.18))
+                        .border_1()
+                        .border_color(theme::info().opacity(0.4))
+                        .text_xs()
+                        .text_color(theme::info())
+                        .child(format!("{} Downstream Impacted", cached.downstream_impacted_crates.len())),
+                )
+            });
+
+        let header = h_flex()
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .flex_wrap()
+            .gap_2()
+            .justify_between()
+            .items_center()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(theme::glass_highlight())
+            .child(mode_switcher)
+            .child(hud_stats);
+
+        // Canvas element with Bezier dependency curves
+        let edges_list = cached.topology.edges.clone();
+        let crate_pos_map = cached.crate_positions.clone();
+        let sel_crate = selected_crate.clone();
+        let direct_mod = cached.direct_modified_crates.clone();
+        let downstream_imp = cached.downstream_impacted_crates.clone();
+
+        let hit_pos_map = crate_pos_map.clone();
+
+        let canvas_elem = canvas(
+            move |bounds, _, _| bounds,
+            move |bounds, _, window, _cx| {
+                // Draw Bezier edges
+                for edge in &edges_list {
+                    if edge.relation == "depends_on" {
+                        if let (Some(&(x1, y1)), Some(&(x2, y2))) = (crate_pos_map.get(&edge.source_id), crate_pos_map.get(&edge.target_id)) {
+                            let mut builder = PathBuilder::stroke(px(1.5));
+                            builder.move_to(point(px(x1), px(y1)));
+                            let mid_y = (y1 + y2) * 0.5;
+                            builder.cubic_bezier_to(
+                                point(px(x2), px(y2)),
+                                point(px(x1), px(mid_y)),
+                                point(px(x2), px(mid_y)),
+                            );
+
+                            if let Ok(path) = builder.build() {
+                                let edge_color = if direct_mod.contains(&edge.target_id) {
+                                    gpui::rgb(0xe5c07b).opacity(0.8)
+                                } else if downstream_imp.contains(&edge.source_id) {
+                                    gpui::rgb(0x61afef).opacity(0.7)
+                                } else {
+                                    gpui::rgb(0xa87ffb).opacity(0.35)
+                                };
+                                window.paint_path(path, edge_color);
+                            }
+                        }
+                    }
+                }
+
+                // Draw Crate Nodes
+                for (crate_name, &(cx_pt, cy_pt)) in &crate_pos_map {
+                    let is_sel = sel_crate.as_deref() == Some(crate_name.as_str());
+                    let is_direct = direct_mod.contains(crate_name);
+                    let is_impacted = downstream_imp.contains(crate_name);
+
+                    let card_w = px(150.0);
+                    let card_h = px(48.0);
+                    let bounds = Bounds {
+                        origin: point(px(cx_pt) - card_w / 2.0, px(cy_pt) - card_h / 2.0),
+                        size: size(card_w, card_h),
+                    };
+
+                    let bg_color = if is_sel {
+                        theme::tab_bar_bg()
+                    } else if is_direct {
+                        theme::warning().opacity(0.18)
+                    } else if is_impacted {
+                        theme::info().opacity(0.18)
+                    } else {
+                        theme::bg_surface()
+                    };
+
+                    window.paint_quad(fill(bounds, bg_color).corner_radii(px(8.0)));
+                }
+            },
+        );
+
+        let canvas_container = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .cursor_pointer()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, _window, cx| {
+                    let click_x = f32::from(ev.position.x);
+                    let click_y = f32::from(ev.position.y);
+
+                    let mut clicked: Option<String> = None;
+                    let mut min_dist_sq = 80.0 * 80.0;
+
+                    for (c_name, &(cx_pt, cy_pt)) in &hit_pos_map {
+                        let dx = cx_pt - click_x;
+                        let dy = cy_pt - click_y;
+                        let d_sq = dx * dx + dy * dy;
+                        if d_sq < min_dist_sq {
+                            min_dist_sq = d_sq;
+                            clicked = Some(c_name.clone());
+                        }
+                    }
+
+                    if let Some(c_name) = clicked {
+                        this.visualizer_selected_crate = Some(c_name);
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(canvas_elem);
+
+        // Crate Chips Dock
+        let crate_chips_dock = h_flex()
+            .id("crates-dock")
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .flex_wrap()
+            .px_3()
+            .py_2()
+            .gap_1p5()
+            .border_t_1()
+            .border_color(theme::glass_highlight())
+            .bg(theme::bg_surface().opacity(0.40))
+            .children(cached.crate_positions.keys().map(|c_name| {
+                let name = c_name.clone();
+                let is_sel = selected_crate.as_deref() == Some(&name);
+                let is_direct = cached.direct_modified_crates.contains(&name);
+                let is_impacted = cached.downstream_impacted_crates.contains(&name);
+
+                let chip_bg = if is_sel {
+                    theme::tab_bar_bg()
+                } else if is_direct {
+                    theme::warning().opacity(0.15)
+                } else if is_impacted {
+                    theme::info().opacity(0.15)
+                } else {
+                    theme::tab_bar_bg().opacity(0.60)
+                };
+
+                h_flex()
+                    .id(SharedString::from(format!("crate-chip-{}", name)))
+                    .items_center()
+                    .gap_1p5()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .bg(chip_bg)
+                    .border_1()
+                    .border_color(if is_sel { theme::accent() } else { theme::glass_highlight().into() })
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(if is_sel { theme::text() } else { theme::text_secondary() })
+                            .child(name.clone()),
+                    )
+                    .when(is_direct, |chip| {
+                        chip.child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(theme::warning().opacity(0.2))
+                                .text_xs()
+                                .text_color(theme::warning())
+                                .child("modified"),
+                        )
+                    })
+                    .when(is_impacted, |chip| {
+                        chip.child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .bg(theme::info().opacity(0.2))
+                                .text_xs()
+                                .text_color(theme::info())
+                                .child("impacted"),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.visualizer_selected_crate = Some(name.clone());
+                        cx.notify();
+                    }))
+            }));
+
+        // Selected Crate & Intra-Crate Module Drill-Down Inspector
+        let crate_inspector = selected_crate.as_ref().map(|c_name| {
+            let layer_ix = cached.crate_layers.get(c_name).copied().unwrap_or(0);
+            let deps: Vec<String> = cached.topology.edges.iter()
+                .filter(|e| e.relation == "depends_on" && e.source_id == *c_name)
+                .map(|e| e.target_id.clone())
+                .collect();
+            let dependents: Vec<String> = cached.topology.edges.iter()
+                .filter(|e| e.relation == "depends_on" && e.target_id == *c_name)
+                .map(|e| e.source_id.clone())
+                .collect();
+
+            let modules: Vec<&hadron_forge::topology::CrateModuleNode> = cached.topology.crate_modules.iter()
+                .filter(|m| m.rel_path.starts_with(&format!("crates/{}/", c_name)))
+                .collect();
+
+            v_flex()
+                .w_full()
+                .p_3()
+                .gap_2()
+                .bg(theme::term_bg())
+                .border_t_1()
+                .border_color(theme::glass_highlight())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::accent())
+                                        .child(c_name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::tab_bar_bg())
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(format!("Layer L{}", layer_ix)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(format!("crates/{}", c_name)),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .items_center()
+                        .text_xs()
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(div().text_color(theme::text_muted()).child("Dependencies:"))
+                                .children(deps.iter().map(|d| {
+                                    let dep_name = d.clone();
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface())
+                                        .text_color(theme::text())
+                                        .cursor_pointer()
+                                        .child(dep_name.clone())
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.visualizer_selected_crate = Some(dep_name.clone());
+                                            cx.notify();
+                                        }))
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .items_center()
+                                .child(div().text_color(theme::text_muted()).child("Dependents:"))
+                                .children(dependents.iter().map(|d| {
+                                    let dep_name = d.clone();
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_surface())
+                                        .text_color(theme::text())
+                                        .cursor_pointer()
+                                        .child(dep_name.clone())
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.visualizer_selected_crate = Some(dep_name.clone());
+                                            cx.notify();
+                                        }))
+                                })),
+                        ),
+                )
+                .when(!modules.is_empty(), |this| {
+                    this.child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text_secondary())
+                                    .child("Intra-Crate Module Structure:"),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_wrap()
+                                    .gap_1p5()
+                                    .children(modules.iter().map(|m| {
+                                        div()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .bg(theme::bg_surface())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .text_color(theme::text())
+                                            .child(format!("{} ({} imports)", m.name, m.imports.len()))
+                                    })),
+                            ),
+                    )
+                })
+        });
+
+        v_flex()
+            .id("crates-modules-container")
+            .size_full()
+            .bg(theme::canvas_base())
+            .child(header)
+            .child(canvas_container)
+            .child(crate_chips_dock)
+            .children(crate_inspector)
+    }
+
+    /// Primary visualizer entrypoint dispatching across the 3 visualizer modes.
+    pub(super) fn visualizer_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.visualizer_mode {
+            VisualizerMode::Swarm3D => self.swarm_3d_view(cx).into_any_element(),
+            VisualizerMode::CratesAndModules => self.crates_and_modules_view(cx).into_any_element(),
+            VisualizerMode::NucleusGraph => self.nucleus_graph_view(cx).into_any_element(),
+        }
     }
 }
 

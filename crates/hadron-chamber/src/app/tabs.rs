@@ -138,23 +138,20 @@ impl GitSubtab {
 }
 
 /// The sub-views inside [`RightRailTab::Mission`]: implementation plan & wave DAG,
-/// live swarm task feed, shared Nucleus memory index/features, time-travel scrubber,
-/// and shared Artifact Bus.
+/// live swarm task feed, time-travel scrubber, and shared Artifact Bus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum MissionSubtab {
     #[default]
     Plan,
     Tasks,
-    Nucleus,
     TimeTravel,
     Artifacts,
 }
 
 impl MissionSubtab {
-    pub(super) const ALL: [MissionSubtab; 5] = [
+    pub(super) const ALL: [MissionSubtab; 4] = [
         MissionSubtab::Plan,
         MissionSubtab::Tasks,
-        MissionSubtab::Nucleus,
         MissionSubtab::TimeTravel,
         MissionSubtab::Artifacts,
     ];
@@ -163,9 +160,8 @@ impl MissionSubtab {
         match self {
             MissionSubtab::Plan => 0,
             MissionSubtab::Tasks => 1,
-            MissionSubtab::Nucleus => 2,
-            MissionSubtab::TimeTravel => 3,
-            MissionSubtab::Artifacts => 4,
+            MissionSubtab::TimeTravel => 2,
+            MissionSubtab::Artifacts => 3,
         }
     }
 
@@ -177,9 +173,46 @@ impl MissionSubtab {
         match self {
             MissionSubtab::Plan => "Plan & Waves",
             MissionSubtab::Tasks => "Swarm Tasks",
-            MissionSubtab::Nucleus => "Nucleus Memory",
             MissionSubtab::TimeTravel => "Time Travel",
             MissionSubtab::Artifacts => "Artifacts",
+        }
+    }
+}
+
+/// The active canvas mode inside [`RightRailTab::Visualizer`]: 3D Swarm Sphere,
+/// Workspace Crates & Modules dependency graph, or Force-Directed Nucleus Graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum VisualizerMode {
+    #[default]
+    Swarm3D,
+    CratesAndModules,
+    NucleusGraph,
+}
+
+impl VisualizerMode {
+    pub(super) const ALL: [VisualizerMode; 3] = [
+        VisualizerMode::Swarm3D,
+        VisualizerMode::CratesAndModules,
+        VisualizerMode::NucleusGraph,
+    ];
+
+    pub(super) fn index(self) -> usize {
+        match self {
+            VisualizerMode::Swarm3D => 0,
+            VisualizerMode::CratesAndModules => 1,
+            VisualizerMode::NucleusGraph => 2,
+        }
+    }
+
+    pub(super) fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(VisualizerMode::Swarm3D)
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            VisualizerMode::Swarm3D => "Swarm 3D",
+            VisualizerMode::CratesAndModules => "Crates & Modules",
+            VisualizerMode::NucleusGraph => "Nucleus Graph",
         }
     }
 }
@@ -298,15 +331,30 @@ mod tests {
         assert_eq!(RightRailTab::from_index(3), RightRailTab::Mission);
         assert_eq!(RightRailTab::from_index(4), RightRailTab::Visualizer);
         assert_eq!(RightRailTab::Mission.label(), "Mission");
-        assert_eq!(MissionSubtab::ALL.len(), 5);
+        assert_eq!(MissionSubtab::ALL.len(), 4);
         assert_eq!(MissionSubtab::default(), MissionSubtab::Plan);
         assert_eq!(MissionSubtab::from_index(0), MissionSubtab::Plan);
         assert_eq!(MissionSubtab::from_index(1), MissionSubtab::Tasks);
-        assert_eq!(MissionSubtab::from_index(2), MissionSubtab::Nucleus);
-        assert_eq!(MissionSubtab::from_index(3), MissionSubtab::TimeTravel);
-        assert_eq!(MissionSubtab::from_index(4), MissionSubtab::Artifacts);
+        assert_eq!(MissionSubtab::from_index(2), MissionSubtab::TimeTravel);
+        assert_eq!(MissionSubtab::from_index(3), MissionSubtab::Artifacts);
         assert_eq!(MissionSubtab::TimeTravel.label(), "Time Travel");
         assert_eq!(MissionSubtab::Artifacts.label(), "Artifacts");
         assert_eq!(GitSubtab::from_index(2), GitSubtab::Changes);
+    }
+
+    #[test]
+    fn test_visualizer_mode_indexing_and_defaults() {
+        assert_eq!(VisualizerMode::default(), VisualizerMode::Swarm3D);
+        assert_eq!(VisualizerMode::ALL.len(), 3);
+        assert_eq!(VisualizerMode::Swarm3D.index(), 0);
+        assert_eq!(VisualizerMode::CratesAndModules.index(), 1);
+        assert_eq!(VisualizerMode::NucleusGraph.index(), 2);
+        assert_eq!(VisualizerMode::from_index(0), VisualizerMode::Swarm3D);
+        assert_eq!(VisualizerMode::from_index(1), VisualizerMode::CratesAndModules);
+        assert_eq!(VisualizerMode::from_index(2), VisualizerMode::NucleusGraph);
+        assert_eq!(VisualizerMode::from_index(99), VisualizerMode::Swarm3D);
+        assert_eq!(VisualizerMode::Swarm3D.label(), "Swarm 3D");
+        assert_eq!(VisualizerMode::CratesAndModules.label(), "Crates & Modules");
+        assert_eq!(VisualizerMode::NucleusGraph.label(), "Nucleus Graph");
     }
 }
