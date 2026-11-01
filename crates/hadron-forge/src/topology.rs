@@ -93,6 +93,8 @@ impl WorkspaceTopologyGraph {
 
         let mut scanned_crates: Vec<(String, String, std::path::PathBuf)> = Vec::new();
 
+        let workspace_members = parse_workspace_members(&repo_root.join("Cargo.toml"));
+
         if crates_dir.is_dir() {
             if let Ok(entries) = fs::read_dir(&crates_dir) {
                 for entry in entries.flatten() {
@@ -101,22 +103,19 @@ impl WorkspaceTopologyGraph {
                         let cargo_toml = dir_path.join("Cargo.toml");
                         if cargo_toml.is_file() {
                             let dir_name = dir_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-                            let mut crate_name = dir_name.clone();
-                            if let Ok(content) = fs::read_to_string(&cargo_toml) {
-                                for line in content.lines() {
-                                    let trimmed = line.trim();
-                                    if trimmed.starts_with("name =") {
-                                        if let Some(val) = trimmed.split('=').nth(1) {
-                                            let cleaned = val.trim().trim_matches('"').trim_matches('\'');
-                                            if !cleaned.is_empty() {
-                                                crate_name = cleaned.to_string();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
+                            if dir_name.is_empty() || dir_name.starts_with('.') || dir_name == "gpui-component" {
+                                continue;
                             }
                             let rel_crate_path = format!("crates/{}", dir_name);
+                            if !workspace_members.is_empty() && !workspace_members.contains(&rel_crate_path) {
+                                continue;
+                            }
+                            let mut crate_name = dir_name.clone();
+                            if let Ok(content) = fs::read_to_string(&cargo_toml) {
+                                if let Some(pkg_name) = parse_package_name(&content) {
+                                    crate_name = pkg_name;
+                                }
+                            }
                             scanned_crates.push((crate_name, rel_crate_path, dir_path));
                         }
                     }
@@ -153,7 +152,7 @@ impl WorkspaceTopologyGraph {
             let cargo_toml = dir_path.join("Cargo.toml");
             if let Ok(content) = fs::read_to_string(&cargo_toml) {
                 for known in &known_crate_names {
-                    if known != crate_name && content.contains(known.as_str()) {
+                    if known != crate_name && cargo_toml_depends_on(&content, known) {
                         graph.add_dependency(crate_name, known);
                     }
                 }
@@ -265,6 +264,133 @@ impl WorkspaceTopologyGraph {
     }
 }
 
+fn parse_workspace_members(root_cargo_toml: &Path) -> Vec<String> {
+    let Ok(content) = fs::read_to_string(root_cargo_toml) else {
+        return Vec::new();
+    };
+    let mut in_workspace = false;
+    let mut in_members_array = false;
+    let mut members_raw = String::new();
+
+    for line in content.lines() {
+        let code = line.split('#').next().unwrap_or("").trim();
+        if code.starts_with('[') && code.ends_with(']') {
+            in_workspace = code == "[workspace]";
+            if !in_workspace && in_members_array {
+                break;
+            }
+            continue;
+        }
+        if !in_workspace {
+            continue;
+        }
+        if !in_members_array {
+            if let Some(rest) = code.strip_prefix("members") {
+                let rest = rest.trim_start();
+                if let Some(after_eq) = rest.strip_prefix('=') {
+                    in_members_array = true;
+                    members_raw.push_str(after_eq);
+                    if after_eq.contains(']') {
+                        break;
+                    }
+                }
+            }
+        } else {
+            members_raw.push(' ');
+            members_raw.push_str(code);
+            if code.contains(']') {
+                break;
+            }
+        }
+    }
+
+    let mut members = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in members_raw.chars() {
+        if ch == '"' || ch == '\'' {
+            if in_quotes {
+                let trimmed = current.trim().trim_end_matches('/');
+                if !trimmed.is_empty() && !trimmed.contains('*') {
+                    members.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            in_quotes = !in_quotes;
+        } else if in_quotes {
+            current.push(ch);
+        }
+    }
+    members
+}
+
+fn parse_package_name(cargo_toml_content: &str) -> Option<String> {
+    let mut in_package = false;
+    for line in cargo_toml_content.lines() {
+        let code = line.split('#').next().unwrap_or("").trim();
+        if code.starts_with('[') && code.ends_with(']') {
+            in_package = code == "[package]";
+            continue;
+        }
+        if in_package && code.starts_with("name") {
+            if let Some((key, val)) = code.split_once('=') {
+                if key.trim() == "name" {
+                    let cleaned = val.trim().trim_matches('"').trim_matches('\'');
+                    if !cleaned.is_empty() {
+                        return Some(cleaned.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Checks whether a `Cargo.toml` manifest declares `dep_name` as a dependency
+/// (`<dep> = ...`, `<dep>.workspace = true`, `[dependencies.<dep>]`, or `package = "<dep>"`),
+/// avoiding substring false positives (such as `"hadron"` matching `"hadron-lattice"`).
+pub fn cargo_toml_depends_on(cargo_toml_content: &str, dep_name: &str) -> bool {
+    let mut in_dep_section = false;
+    let dep_table_suffix = format!(".{}]", dep_name);
+
+    for line in cargo_toml_content.lines() {
+        let code = line.split('#').next().unwrap_or("").trim();
+        if code.is_empty() {
+            continue;
+        }
+        if code.starts_with('[') && code.ends_with(']') {
+            if code.contains("dependencies") && code.ends_with(&dep_table_suffix) {
+                return true;
+            }
+            in_dep_section = code.contains("dependencies") && !code.starts_with("[workspace.");
+            continue;
+        }
+        if !in_dep_section {
+            continue;
+        }
+        if let Some((lhs, rhs)) = code.split_once('=') {
+            let key = lhs.trim();
+            let base_key = key.strip_suffix(".workspace").map(str::trim).unwrap_or(key);
+            if base_key == dep_name {
+                return true;
+            }
+            // Check inline table rename `alias = { package = "dep_name", ... }`
+            if rhs.contains("package") {
+                for part in rhs.split(',') {
+                    if let Some((k, v)) = part.split_once('=') {
+                        let k_clean = k.trim().trim_start_matches('{').trim();
+                        let v_clean = v.trim().trim_end_matches('}').trim().trim_matches('"').trim_matches('\'');
+                        if k_clean == "package" && v_clean == dep_name {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn collect_rs_files(dir: &Path, acc: &mut Vec<std::path::PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -306,6 +432,92 @@ mod tests {
         assert!(layers.contains_key("hadron-chamber"));
         assert!(layers.contains_key("hadron-forge"));
         assert!(*layers.get("hadron-chamber").unwrap() > *layers.get("hadron-gluon").unwrap());
+    }
+
+    #[test]
+    fn test_cargo_toml_depends_on_avoids_prefix_false_positive_and_skips_vendor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[workspace]
+members = ["crates/hadron-lattice", "crates/hadron-forge", "crates/hadron-chamber"]
+"#,
+        )
+        .unwrap();
+
+        let lattice_dir = root.join("crates/hadron-lattice");
+        let forge_dir = root.join("crates/hadron-forge");
+        let chamber_dir = root.join("crates/hadron-chamber");
+        let vendor_dir = root.join("crates/gpui-component");
+
+        fs::create_dir_all(&lattice_dir).unwrap();
+        fs::create_dir_all(&forge_dir).unwrap();
+        fs::create_dir_all(&chamber_dir).unwrap();
+        fs::create_dir_all(&vendor_dir).unwrap();
+
+        fs::write(
+            lattice_dir.join("Cargo.toml"),
+            r#"[package]
+name = "hadron-lattice"
+description = "Core lattice for hadron swarm"
+[dependencies]
+serde = "1"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            forge_dir.join("Cargo.toml"),
+            r#"[package]
+name = "hadron-forge"
+[dependencies]
+hadron-lattice = { path = "../hadron-lattice" }
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            chamber_dir.join("Cargo.toml"),
+            r#"[package]
+name = "hadron"
+[[bin]]
+name = "hadron-gluon"
+[dependencies]
+hadron-lattice = { path = "../hadron-lattice" }
+hadron-forge.workspace = true
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            vendor_dir.join("Cargo.toml"),
+            r#"[package]
+name = "gpui-component"
+"#,
+        )
+        .unwrap();
+
+        let graph = WorkspaceTopologyGraph::from_workspace(root);
+        let crate_names: Vec<String> = graph
+            .nodes
+            .iter()
+            .filter_map(|n| match n {
+                TopologyNode::Crate { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(crate_names, vec!["hadron", "hadron-forge", "hadron-lattice"]);
+        assert!(!crate_names.contains(&"gpui-component".to_string()));
+
+        // Verify hadron-lattice and hadron-forge do NOT falsely depend on "hadron"
+        assert!(!graph.edges.iter().any(|e| e.target_id == "hadron"));
+
+        let layers = graph.compute_crate_layers();
+        assert_eq!(layers.get("hadron-lattice"), Some(&0));
+        assert_eq!(layers.get("hadron-forge"), Some(&1));
+        assert_eq!(layers.get("hadron"), Some(&2));
     }
 }
 

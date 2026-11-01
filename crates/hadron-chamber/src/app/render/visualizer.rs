@@ -1556,10 +1556,14 @@ impl CachedCrateGraph {
         }
 
         let mut crate_positions = HashMap::new();
-        for (layer_ix, crates_in_layer) in layer_groups {
+        for (layer_ix, mut crates_in_layer) in layer_groups {
+            crates_in_layer.sort();
             let y_pos = 100.0 + (layer_ix as f32 * 130.0);
+            let count = crates_in_layer.len();
+            let row_span = (count.saturating_sub(1) as f32) * 220.0;
+            let start_x = 400.0 - row_span * 0.5;
             for (idx, crate_name) in crates_in_layer.into_iter().enumerate() {
-                let x_pos = 140.0 + (idx as f32 * 190.0);
+                let x_pos = start_x + (idx as f32 * 220.0);
                 crate_positions.insert(crate_name, (x_pos, y_pos));
             }
         }
@@ -1572,6 +1576,48 @@ impl CachedCrateGraph {
             crate_positions,
         }
     }
+}
+
+/// Computes normalized viewport coordinates `(u, v)` in `[0.16, 0.84]` for each crate position
+/// so that both the Bezier dependency canvas and the positioned crate node cards share the exact
+/// same anchor points regardless of container resize.
+pub(crate) fn compute_normalized_crate_coords(
+    crate_positions: &HashMap<String, (f32, f32)>,
+) -> HashMap<String, (f32, f32)> {
+    if crate_positions.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+
+    for &(x, y) in crate_positions.values() {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+
+    let span_x = max_x - min_x;
+    let span_y = max_y - min_y;
+
+    let mut out = HashMap::with_capacity(crate_positions.len());
+    for (name, &(x, y)) in crate_positions {
+        let u = if span_x.abs() < 1e-3 {
+            0.5
+        } else {
+            0.22 + ((x - min_x) / span_x) * 0.56
+        };
+        let v = if span_y.abs() < 1e-3 {
+            0.5
+        } else {
+            0.16 + ((y - min_y) / span_y) * 0.68
+        };
+        out.insert(name.clone(), (u, v));
+    }
+    out
 }
 
 impl super::Chamber {
@@ -1743,7 +1789,8 @@ impl super::Chamber {
 
         // Canvas element with Bezier dependency curves and dynamically scaled layers
         let edges_list = cached.topology.edges.clone();
-        let crate_pos_map = cached.crate_positions.clone();
+        let norm_coords = compute_normalized_crate_coords(&cached.crate_positions);
+        let norm_coords_for_paint = norm_coords.clone();
         let sel_crate = selected_crate.clone();
         let direct_mod = cached.direct_modified_crates.clone();
         let downstream_imp = cached.downstream_impacted_crates.clone();
@@ -1759,32 +1806,8 @@ impl super::Chamber {
                 let origin_x = f32::from(bounds.origin.x);
                 let origin_y = f32::from(bounds.origin.y);
 
-                let mut min_x = f32::MAX;
-                let mut max_x = f32::MIN;
-                let mut min_y = f32::MAX;
-                let mut max_y = f32::MIN;
-
-                for &(x, y) in crate_pos_map.values() {
-                    min_x = min_x.min(x);
-                    max_x = max_x.max(x);
-                    min_y = min_y.min(y);
-                    max_y = max_y.max(y);
-                }
-
-                let range_x = (max_x - min_x).max(100.0);
-                let range_y = (max_y - min_y).max(100.0);
-
-                let avail_w = (w - 170.0).max(60.0);
-                let avail_h = (h - 90.0).max(60.0);
-                let scale = (avail_w / range_x).min(avail_h / range_y).min(2.0);
-
-                let center_orig_x = (min_x + max_x) * 0.5;
-                let center_orig_y = (min_y + max_y) * 0.5;
-
-                let project = |x: f32, y: f32| -> (f32, f32) {
-                    let sx = origin_x + (w / 2.0) + (x - center_orig_x) * scale;
-                    let sy = origin_y + (h / 2.0) + (y - center_orig_y) * scale;
-                    (sx, sy)
+                let project_uv = |u: f32, v: f32| -> (f32, f32) {
+                    (origin_x + w * u, origin_y + h * v)
                 };
 
                 let mut painted_hits = Vec::new();
@@ -1792,11 +1815,14 @@ impl super::Chamber {
                 // Draw Bezier edges
                 for edge in &edges_list {
                     if edge.relation == "depends_on" {
-                        if let (Some(&(x1, y1)), Some(&(x2, y2))) = (crate_pos_map.get(&edge.source_id), crate_pos_map.get(&edge.target_id)) {
-                            let (sx1, sy1) = project(x1, y1);
-                            let (sx2, sy2) = project(x2, y2);
+                        if let (Some(&(u1, v1)), Some(&(u2, v2))) = (
+                            norm_coords_for_paint.get(&edge.source_id),
+                            norm_coords_for_paint.get(&edge.target_id),
+                        ) {
+                            let (sx1, sy1) = project_uv(u1, v1);
+                            let (sx2, sy2) = project_uv(u2, v2);
 
-                            let mut builder = PathBuilder::stroke(px(1.5));
+                            let mut builder = PathBuilder::stroke(px(1.75));
                             builder.move_to(point(px(sx1), px(sy1)));
                             let mid_y = (sy1 + sy2) * 0.5;
                             builder.cubic_bezier_to(
@@ -1806,12 +1832,16 @@ impl super::Chamber {
                             );
 
                             if let Ok(path) = builder.build() {
-                                let edge_color = if direct_mod.contains(&edge.target_id) {
+                                let is_sel_edge = sel_crate.as_deref() == Some(edge.source_id.as_str())
+                                    || sel_crate.as_deref() == Some(edge.target_id.as_str());
+                                let edge_color = if is_sel_edge {
+                                    theme::accent().opacity(0.90)
+                                } else if direct_mod.contains(&edge.target_id) {
                                     gpui::rgb(0xe5c07b).opacity(0.8)
                                 } else if downstream_imp.contains(&edge.source_id) {
                                     gpui::rgb(0x61afef).opacity(0.7)
                                 } else {
-                                    gpui::rgb(0xa87ffb).opacity(0.35)
+                                    gpui::rgb(0xa87ffb).opacity(0.40)
                                 };
                                 window.paint_path(path, edge_color);
                             }
@@ -1819,42 +1849,136 @@ impl super::Chamber {
                     }
                 }
 
-                // Draw Crate Nodes
-                for (crate_name, &(cx_pt, cy_pt)) in &crate_pos_map {
-                    let (sx, sy) = project(cx_pt, cy_pt);
-                    let is_sel = sel_crate.as_deref() == Some(crate_name.as_str());
-                    let is_direct = direct_mod.contains(crate_name);
-                    let is_impacted = downstream_imp.contains(crate_name);
-
-                    let card_w = px(150.0);
-                    let card_h = px(48.0);
+                // Record hit bounds for each crate node card
+                for (crate_name, &(u, v)) in &norm_coords_for_paint {
+                    let (sx, sy) = project_uv(u, v);
+                    let card_w = px(168.0);
+                    let card_h = px(52.0);
                     let node_bounds = Bounds {
                         origin: point(px(sx) - card_w / 2.0, px(sy) - card_h / 2.0),
                         size: size(card_w, card_h),
                     };
-
                     painted_hits.push((crate_name.clone(), node_bounds));
-
-                    let bg_color = if is_sel {
-                        theme::tab_bar_bg()
-                    } else if is_direct {
-                        theme::warning().opacity(0.18)
-                    } else if is_impacted {
-                        theme::info().opacity(0.18)
-                    } else {
-                        theme::bg_surface()
-                    };
-
-                    window.paint_quad(fill(node_bounds, bg_color).corner_radii(px(8.0)));
                 }
 
                 if let Ok(mut cell) = hit_bounds_for_paint.try_borrow_mut() {
                     *cell = painted_hits;
                 }
             },
-        );
+        )
+        .size_full();
 
         let hit_bounds_for_click = hit_bounds_cell.clone();
+
+        // Positioned interactive crate node cards with package name, layer badge, and dependency count
+        let mut sorted_crates: Vec<String> = norm_coords.keys().cloned().collect();
+        sorted_crates.sort();
+        let node_cards = sorted_crates.into_iter().filter_map(|c_name| {
+            let (u, v) = norm_coords.get(&c_name).copied()?;
+            let layer_ix = cached.crate_layers.get(&c_name).copied().unwrap_or(0);
+            let dep_count = cached
+                .topology
+                .edges
+                .iter()
+                .filter(|e| e.relation == "depends_on" && e.source_id == c_name)
+                .count();
+            let rdep_count = cached
+                .topology
+                .edges
+                .iter()
+                .filter(|e| e.relation == "depends_on" && e.target_id == c_name)
+                .count();
+            let is_sel = selected_crate.as_deref() == Some(c_name.as_str());
+            let is_direct = cached.direct_modified_crates.contains(&c_name);
+            let is_impacted = cached.downstream_impacted_crates.contains(&c_name);
+
+            let card_bg = if is_sel {
+                theme::tab_bar_bg()
+            } else if is_direct {
+                theme::warning().opacity(0.18)
+            } else if is_impacted {
+                theme::info().opacity(0.18)
+            } else {
+                theme::bg_surface()
+            };
+
+            let border_col: Hsla = if is_sel {
+                theme::accent().into()
+            } else if is_direct {
+                theme::warning().opacity(0.55).into()
+            } else if is_impacted {
+                theme::info().opacity(0.55).into()
+            } else {
+                theme::glass_highlight().into()
+            };
+
+            let click_name = c_name.clone();
+            Some(
+                v_flex()
+                    .id(SharedString::from(format!("crate-node-card-{}", c_name)))
+                    .absolute()
+                    .left(gpui::relative(u))
+                    .top(gpui::relative(v))
+                    .ml(px(-84.0))
+                    .mt(px(-26.0))
+                    .w(px(168.0))
+                    .h(px(52.0))
+                    .px_2p5()
+                    .py_1p5()
+                    .justify_between()
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .bg(card_bg)
+                    .border_1()
+                    .border_color(border_col)
+                    .hover(|s| s.border_color(theme::accent()))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(if is_sel { theme::accent() } else { theme::text() })
+                                    .truncate()
+                                    .child(c_name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::tab_bar_bg())
+                                    .text_xs()
+                                    .text_color(theme::text_muted())
+                                    .child(format!("L{}", layer_ix)),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .items_center()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("{} deps · {} rdeps", dep_count, rdep_count))
+                            .when(is_direct, |row| {
+                                row.child(div().text_color(theme::warning()).child("● mod"))
+                            })
+                            .when(!is_direct && is_impacted, |row| {
+                                row.child(div().text_color(theme::info()).child("● imp"))
+                            }),
+                    )
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.visualizer_selected_crate = Some(click_name.clone());
+                        cx.notify();
+                    })),
+            )
+        });
 
         let canvas_container = div()
             .relative()
@@ -1880,7 +2004,8 @@ impl super::Chamber {
                     }
                 }),
             )
-            .child(canvas_elem);
+            .child(canvas_elem)
+            .children(node_cards);
 
         // Crate Chips Dock (top-anchored below header so selecting crates never shifts bottom layout)
         let crate_chips_dock = h_flex()
@@ -1959,7 +2084,7 @@ impl super::Chamber {
                     }))
             }));
 
-        // Selected Crate & Intra-Crate Module Drill-Down Inspector Drawer
+        // Selected Crate & Intra-Crate Module Drill-Down Inspector Dock (full-width bottom dock)
         let crate_inspector = selected_crate.as_ref().map(|c_name| {
             let layer_ix = cached.crate_layers.get(c_name).copied().unwrap_or(0);
             let deps: Vec<String> = cached.topology.edges.iter()
@@ -1971,25 +2096,32 @@ impl super::Chamber {
                 .map(|e| e.source_id.clone())
                 .collect();
 
+            let crate_rel_dir = cached
+                .topology
+                .nodes
+                .iter()
+                .find_map(|n| match n {
+                    hadron_forge::topology::TopologyNode::Crate { name, path } if name == c_name => {
+                        Some(path.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| format!("crates/{}", c_name));
+
+            let module_prefix = format!("{}/", crate_rel_dir);
             let modules: Vec<&hadron_forge::topology::CrateModuleNode> = cached.topology.crate_modules.iter()
-                .filter(|m| m.rel_path.starts_with(&format!("crates/{}/", c_name)))
+                .filter(|m| m.rel_path.starts_with(&module_prefix))
                 .collect();
 
             v_flex()
                 .id("crate-inspector-drawer")
-                .absolute()
-                .bottom_3()
-                .right_3()
-                .w(px(420.0))
-                .max_h(px(176.0))
+                .w_full()
+                .max_h(px(164.0))
                 .overflow_y_scroll()
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .p_3()
                 .gap_2()
-                .rounded_lg()
-                .bg(theme::term_bg())
-                .border_1()
+                .bg(theme::bg_surface().opacity(0.65))
+                .border_t_1()
                 .border_color(theme::glass_highlight())
                 .child(
                     h_flex()
@@ -2026,7 +2158,7 @@ impl super::Chamber {
                                     div()
                                         .text_xs()
                                         .text_color(theme::text_muted())
-                                        .child(format!("crates/{}", c_name)),
+                                        .child(crate_rel_dir),
                                 )
                                 .child(
                                     div()
@@ -2128,8 +2260,6 @@ impl super::Chamber {
                 })
         });
 
-        let canvas_container = canvas_container.children(crate_inspector);
-
         v_flex()
             .id("crates-modules-container")
             .size_full()
@@ -2137,6 +2267,7 @@ impl super::Chamber {
             .child(header)
             .child(crate_chips_dock)
             .child(canvas_container)
+            .children(crate_inspector)
             .into_any_element()
     }
 
@@ -2320,5 +2451,28 @@ mod tests {
         assert!((dist_inner - 160.0).abs() < 1e-3);
         assert!((dist_outer - 204.8).abs() < 1e-3);
         assert!(dist_outer > dist_inner);
+    }
+
+    #[test]
+    fn normalized_crate_coords_spreads_layers_cleanly() {
+        let mut raw = HashMap::new();
+        raw.insert("hadron-lattice".to_string(), (400.0, 100.0));
+        raw.insert("hadron-forge".to_string(), (290.0, 230.0));
+        raw.insert("hadron-gatekeeper".to_string(), (510.0, 230.0));
+        raw.insert("hadron".to_string(), (400.0, 490.0));
+
+        let coords = compute_normalized_crate_coords(&raw);
+        assert_eq!(coords.len(), 4);
+
+        let (u_lattice, v_lattice) = coords["hadron-lattice"];
+        let (u_forge, v_forge) = coords["hadron-forge"];
+        let (u_gatekeeper, v_gatekeeper) = coords["hadron-gatekeeper"];
+        let (u_hadron, v_hadron) = coords["hadron"];
+
+        assert!((u_lattice - 0.5).abs() < 1e-3);
+        assert!((u_hadron - 0.5).abs() < 1e-3);
+        assert!(u_forge < u_gatekeeper);
+        assert!((v_forge - v_gatekeeper).abs() < 1e-3);
+        assert!(v_lattice < v_forge && v_forge < v_hadron);
     }
 }

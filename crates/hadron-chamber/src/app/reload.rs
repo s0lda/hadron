@@ -431,11 +431,7 @@ impl super::Chamber {
                 }
                 if scan.files != self.file_tree_paths {
                     // Gitignored entries included, mirroring `new` — see the note there.
-                    *self.completion_files.borrow_mut() = scan
-                        .files
-                        .iter()
-                        .map(|(p, _)| p.clone())
-                        .collect();
+                    *self.completion_files.borrow_mut() = scan.files.clone();
                     self.file_tree_paths = scan.files;
                     changed = true;
                 }

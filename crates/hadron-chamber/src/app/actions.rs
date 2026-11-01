@@ -3341,11 +3341,7 @@ impl Chamber {
         self.file_tree_paths =
             crate::sys::list_workspace_files(repo_root, &self.file_tree_expanded);
         self.git_statuses = crate::vcs::get_git_statuses(repo_root);
-        *self.completion_files.borrow_mut() = self
-            .file_tree_paths
-            .iter()
-            .map(|(p, _)| p.clone())
-            .collect();
+        *self.completion_files.borrow_mut() = self.file_tree_paths.clone();
     }
 
     /// Begin an inline File Tree operation (`New File…`, `New Folder…`, or `Rename…`),

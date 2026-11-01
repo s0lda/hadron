@@ -1258,6 +1258,12 @@ impl super::Chamber {
                 let selected = i == sel;
                 let label = cand.label.clone();
                 let detail = cand.detail.clone();
+                let is_ignored = cand.is_ignored;
+                let label_color = if is_ignored {
+                    theme::text_muted()
+                } else {
+                    theme::text()
+                };
 
                 let left_content = if let Some(stripped) = label.strip_prefix("📄 ") {
                     h_flex()
@@ -1266,9 +1272,16 @@ impl super::Chamber {
                         .child(
                             gpui::img(crate::symbols::file_icon_path(stripped))
                                 .size_3p5()
-                                .flex_none(),
+                                .flex_none()
+                                .when(is_ignored, |img| img.opacity(0.55)),
                         )
-                        .child(div().text_sm().text_color(theme::text()).child(stripped.to_string()))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(label_color)
+                                .when(is_ignored, |d| d.italic())
+                                .child(stripped.to_string()),
+                        )
                 } else if let Some(stripped) = label.strip_prefix("📁 ") {
                     h_flex()
                         .items_center()
@@ -1276,9 +1289,16 @@ impl super::Chamber {
                         .child(
                             gpui::img(crate::symbols::folder_icon_path(stripped, false))
                                 .size_3p5()
-                                .flex_none(),
+                                .flex_none()
+                                .when(is_ignored, |img| img.opacity(0.55)),
                         )
-                        .child(div().text_sm().text_color(theme::text()).child(stripped.to_string()))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(label_color)
+                                .when(is_ignored, |d| d.italic())
+                                .child(stripped.to_string()),
+                        )
                 } else if label.starts_with('@') {
                     h_flex()
                         .items_center()
@@ -1320,6 +1340,7 @@ impl super::Chamber {
                             div()
                                 .text_xs()
                                 .text_color(theme::text_muted())
+                                .when(is_ignored, |d| d.italic())
                                 .child(detail),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {

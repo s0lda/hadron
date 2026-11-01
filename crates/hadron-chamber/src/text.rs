@@ -1477,6 +1477,7 @@ pub struct Candidate {
     pub label: String,
     pub detail: String,
     pub new_text: String,
+    pub is_ignored: bool,
 }
 
 /// The live completion query and the rows that answer it.
@@ -1501,7 +1502,7 @@ pub const MAX_CANDIDATES: usize = 50;
 /// so `📁 @target/` is a real candidate, not a stray.
 ///
 /// The two `@`-file loops below built this inline and identically; one home for it.
-fn file_candidate(file: &str) -> Candidate {
+fn file_candidate(file: &str, is_ignored: bool) -> Candidate {
     let is_dir = file.ends_with('/');
     let bare = file.trim_end_matches('/');
     let name = std::path::Path::new(bare)
@@ -1514,6 +1515,7 @@ fn file_candidate(file: &str) -> Candidate {
         label: format!("{icon} @{name}{slash}"),
         detail: file.to_string(),
         new_text: format!("@{file} "),
+        is_ignored,
     }
 }
 
@@ -1528,7 +1530,7 @@ pub fn completion_candidates(
     text: &str,
     cursor: usize,
     quarks: &[(String, Option<String>)],
-    files: &[String],
+    files: &[(String, bool)],
     sessions: &[crate::model::SessionInfo],
 ) -> Option<Completions> {
     completion_candidates_with_root(text, cursor, quarks, files, sessions, None)
@@ -1538,7 +1540,7 @@ pub fn completion_candidates_with_root(
     text: &str,
     cursor: usize,
     quarks: &[(String, Option<String>)],
-    files: &[String],
+    files: &[(String, bool)],
     sessions: &[crate::model::SessionInfo],
     repo_root: Option<&std::path::Path>,
 ) -> Option<Completions> {
@@ -1556,6 +1558,7 @@ pub fn completion_candidates_with_root(
                         label: format!("@{alias}"),
                         detail: detail.to_string(),
                         new_text: format!("@{alias} "),
+                        is_ignored: false,
                     });
                 }
             }
@@ -1571,15 +1574,17 @@ pub fn completion_candidates_with_root(
                         label: format!("@{name}"),
                         detail: "Quark".into(),
                         new_text: format!("@{name} "),
+                        is_ignored: false,
                     });
                 }
             }
-            for file in files {
+            let norm_query = query_lower.strip_prefix("./").unwrap_or(&query_lower);
+            for (file, is_ignored) in files {
                 if out.len() >= MAX_CANDIDATES {
                     break;
                 }
-                if query_lower.is_empty() || file.to_lowercase().contains(&query_lower) {
-                    out.push(file_candidate(file));
+                if norm_query.is_empty() || file.to_lowercase().contains(norm_query) {
+                    out.push(file_candidate(file, *is_ignored));
                 }
             }
         }
@@ -1646,6 +1651,7 @@ pub fn completion_candidates_with_root(
                         label: format!(":{shortcode} {glyph}"),
                         detail: "Emoji".into(),
                         new_text: glyph.to_string(),
+                        is_ignored: false,
                     });
                 }
             } else {
@@ -1667,6 +1673,7 @@ pub fn completion_candidates_with_root(
                         label: format!(":{shortcode} {glyph}"),
                         detail: "Emoji".into(),
                         new_text: glyph.to_string(),
+                        is_ignored: false,
                     });
                 }
             }
@@ -1682,6 +1689,7 @@ pub fn completion_candidates_with_root(
                         label: format!("/{}", cmd.name),
                         detail: cmd.detail.to_string(),
                         new_text: format!("/{} ", cmd.name),
+                        is_ignored: false,
                     });
                 }
             }
@@ -1692,6 +1700,7 @@ pub fn completion_candidates_with_root(
                         label: format!("/{stem}"),
                         detail: "Custom skill procedure".into(),
                         new_text: format!("/{stem} "),
+                        is_ignored: false,
                     });
                 }
             }
@@ -1724,6 +1733,7 @@ pub fn completion_candidates_with_root(
                         label,
                         detail: "Session".into(),
                         new_text: format!("{name_or_id} "),
+                        is_ignored: false,
                     });
                 }
             }
@@ -1745,18 +1755,20 @@ pub fn completion_candidates_with_root(
                         label: format!("@{name}"),
                         detail: "Quark".into(),
                         new_text: format!("@{name} "),
+                        is_ignored: false,
                     });
                 }
             }
         }
         CompletionTrigger::Arg(ArgSource::File) => {
             let f_query = query_lower.strip_prefix('@').unwrap_or(&query_lower);
-            for file in files {
+            let norm_f_query = f_query.strip_prefix("./").unwrap_or(f_query);
+            for (file, is_ignored) in files {
                 if out.len() >= MAX_CANDIDATES {
                     break;
                 }
-                if f_query.is_empty() || file.to_lowercase().contains(f_query) {
-                    out.push(file_candidate(file));
+                if norm_f_query.is_empty() || file.to_lowercase().contains(norm_f_query) {
+                    out.push(file_candidate(file, *is_ignored));
                 }
             }
         }
@@ -1773,6 +1785,7 @@ pub fn completion_candidates_with_root(
                         label: name.to_string(),
                         detail: detail.into(),
                         new_text: format!("{name} "),
+                        is_ignored: false,
                     });
                 }
             }
@@ -1797,7 +1810,7 @@ pub fn extract_ghost_completion(
     cursor: usize,
     history: &[String],
     quarks: &[(String, Option<String>)],
-    files: &[String],
+    files: &[(String, bool)],
     repo_root: Option<&std::path::Path>,
 ) -> Option<String> {
     let mut safe_cursor = cursor.min(text.len());
@@ -1868,11 +1881,14 @@ pub fn extract_ghost_completion(
                     return Some(format!("{suffix} "));
                 }
             }
-            for file in files {
-                if file.chars().count() > prefix_chars
-                    && file.to_lowercase().starts_with(&prefix_lower)
+            let file_prefix = prefix.strip_prefix("./").unwrap_or(prefix);
+            let file_prefix_lower = file_prefix.to_lowercase();
+            let file_prefix_chars = file_prefix.chars().count();
+            for (file, _) in files {
+                if file.chars().count() > file_prefix_chars
+                    && file.to_lowercase().starts_with(&file_prefix_lower)
                 {
-                    let suffix: String = file.chars().skip(prefix_chars).collect();
+                    let suffix: String = file.chars().skip(file_prefix_chars).collect();
                     return Some(format!("{suffix} "));
                 }
             }
@@ -1958,7 +1974,7 @@ pub fn extract_word_completion(
     text: &str,
     cursor: usize,
     history: &[String],
-    files: &[String],
+    files: &[(String, bool)],
 ) -> Option<String> {
     let mut safe_cursor = cursor.min(text.len());
     while safe_cursor > 0 && !text.is_char_boundary(safe_cursor) {
@@ -1999,7 +2015,7 @@ pub fn extract_word_completion(
 
     // 2. Workspace file/module stem tokens
     if candidate_word.is_none() {
-        for file in files {
+        for (file, _) in files {
             for part in file.split(|c: char| !c.is_alphanumeric() && c != '_') {
                 if part.chars().count() > trailing_char_count && part.to_lowercase().starts_with(&trailing_lower) {
                     candidate_word = Some(part);
@@ -2250,27 +2266,44 @@ mod tests {
 
     #[test]
     fn a_file_query_offers_files() {
-        let files = vec!["src/app.rs".to_string(), "README.md".to_string()];
+        let files = vec![
+            ("src/app.rs".to_string(), false),
+            ("README.md".to_string(), false),
+        ];
         let c = completion_candidates("@app", 4, &[], &files, &[]).expect("has rows");
         assert_eq!(c.candidates.len(), 1);
         assert_eq!(c.candidates[0].label, "📄 @app.rs");
         assert_eq!(c.candidates[0].detail, "src/app.rs");
         assert_eq!(c.candidates[0].new_text, "@src/app.rs ");
+        assert!(!c.candidates[0].is_ignored);
     }
 
     #[test]
     fn file_completion_supports_gitignored_files_and_formats_label_and_detail() {
-        let files = vec!["target/debug/hadron".to_string(), "node_modules/".to_string()];
+        let files = vec![
+            ("target/debug/hadron".to_string(), true),
+            ("node_modules/".to_string(), true),
+            (".hadron/assets/screenshot.png".to_string(), true),
+        ];
         let c = completion_candidates("@target", 7, &[], &files, &[]).expect("has rows");
         assert_eq!(c.candidates.len(), 1);
         assert_eq!(c.candidates[0].label, "📄 @hadron");
         assert_eq!(c.candidates[0].detail, "target/debug/hadron");
         assert_eq!(c.candidates[0].new_text, "@target/debug/hadron ");
+        assert!(c.candidates[0].is_ignored);
 
         let c_dir = completion_candidates("@node", 5, &[], &files, &[]).expect("has rows");
         assert_eq!(c_dir.candidates.len(), 1);
         assert_eq!(c_dir.candidates[0].label, "📁 @node_modules/");
         assert_eq!(c_dir.candidates[0].detail, "node_modules/");
+        assert!(c_dir.candidates[0].is_ignored);
+
+        // Leading "./" query normalization (`@./hadron/assets` matches `.hadron/assets/screenshot.png`)
+        let c_dot_slash =
+            completion_candidates("@./hadron/assets", 16, &[], &files, &[]).expect("has rows");
+        assert_eq!(c_dot_slash.candidates.len(), 1);
+        assert_eq!(c_dot_slash.candidates[0].detail, ".hadron/assets/screenshot.png");
+        assert!(c_dot_slash.candidates[0].is_ignored);
     }
 
     #[test]
@@ -3474,7 +3507,7 @@ mod tests {
     #[test]
     fn test_extract_word_completion_sources_and_case() {
         let history = vec!["Implemented the scheduled tasks engine yesterday".to_string()];
-        let files = vec!["crates/hadron-chamber/src/app/render/dag_visualizer.rs".to_string()];
+        let files = vec![("crates/hadron-chamber/src/app/render/dag_visualizer.rs".to_string(), false)];
 
         // 1. History word matching
         let comp_hist = extract_word_completion("We have already impl", 20, &history, &files);

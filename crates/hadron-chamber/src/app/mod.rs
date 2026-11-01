@@ -627,7 +627,7 @@ struct Chamber {
     file_tree_paths: Vec<(String, bool)>,
     _lock_file: Option<std::fs::File>,
     git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
-    completion_files: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    completion_files: std::rc::Rc<std::cell::RefCell<Vec<(String, bool)>>>,
     pub(super) update_state: UpdateState,
     file_tree_open: Option<(String, String)>,
     file_tree_expanded: std::collections::HashSet<String>,
@@ -773,12 +773,7 @@ impl Chamber {
         // `@`-mention autocomplete offers gitignored entries too (`d4679265`): a
         // wholly-ignored directory reaches us collapsed to one row (`target/`,
         // `.hadron/`), so the list gains ~16 entries, not the 51k files under them.
-        let completion_files = std::rc::Rc::new(std::cell::RefCell::new(
-            files
-                .iter()
-                .map(|(p, _)| p.clone())
-                .collect::<Vec<String>>(),
-        ));
+        let completion_files = std::rc::Rc::new(std::cell::RefCell::new(files.clone()));
 
         let selector_search = cx.new(|cx| {
             InputState::new(window, cx)

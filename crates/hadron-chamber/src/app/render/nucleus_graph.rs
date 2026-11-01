@@ -247,16 +247,15 @@ impl CachedNucleusGraph {
         let mut force_graph = ForceDirectedGraph::new();
         let mut orphaned_notes = Vec::new();
 
-        let num_nodes = nodes.len();
-        let radius = (num_nodes as f32 * 24.0).clamp(120.0, 260.0);
-
-        let mut i = 0;
-        for (slug, node) in &nodes {
-            let angle = (i as f32 / num_nodes.max(1) as f32) * std::f32::consts::TAU;
-            let init_x = 400.0 + radius * angle.cos();
-            let init_y = 300.0 + radius * angle.sin();
+        // Seed nodes on a Vogel golden-angle sunflower spiral so 200+ notes start evenly
+        // distributed across the 2D disc rather than crowded onto a 1D perimeter ring.
+        const GOLDEN_ANGLE: f32 = 2.399_963_1;
+        for (i, (slug, node)) in nodes.iter().enumerate() {
+            let r = 22.0 * ((i + 1) as f32).sqrt();
+            let angle = (i as f32) * GOLDEN_ANGLE;
+            let init_x = 400.0 + r * angle.cos();
+            let init_y = 300.0 + r * angle.sin();
             force_graph.add_node(slug, init_x, init_y);
-            i += 1;
 
             if node.incoming_links.is_empty() && node.outgoing_links.is_empty() {
                 orphaned_notes.push(slug.clone());
@@ -285,6 +284,51 @@ impl CachedNucleusGraph {
             positions,
         }
     }
+}
+
+/// Projects 2D simulation coordinates into `(origin_x, origin_y, w, h)` screen bounds,
+/// scaling X and Y independently with padding so large graphs fill wide or tall viewports cleanly.
+pub(crate) fn compute_nucleus_projection(
+    positions_map: &HashMap<String, (f32, f32)>,
+    origin_x: f32,
+    origin_y: f32,
+    w: f32,
+    h: f32,
+) -> (f32, f32, f32, f32, f32, f32) {
+    let cx_pt = origin_x + w / 2.0;
+    let cy_pt = origin_y + h / 2.0;
+
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+
+    for &(x, y) in positions_map.values() {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+
+    if min_x > max_x {
+        min_x = 0.0;
+        max_x = 100.0;
+        min_y = 0.0;
+        max_y = 100.0;
+    }
+
+    let range_x = (max_x - min_x).max(60.0);
+    let range_y = (max_y - min_y).max(60.0);
+
+    let avail_w = (w - 56.0).max(40.0);
+    let avail_h = (h - 56.0).max(40.0);
+    let scale_x = (avail_w / range_x).min(2.5);
+    let scale_y = (avail_h / range_y).min(2.5);
+
+    let center_orig_x = (min_x + max_x) * 0.5;
+    let center_orig_y = (min_y + max_y) * 0.5;
+
+    (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y)
 }
 
 impl super::Chamber {
@@ -453,34 +497,13 @@ impl super::Chamber {
                 let h = f32::from(bounds.size.height);
                 let origin_x = f32::from(bounds.origin.x);
                 let origin_y = f32::from(bounds.origin.y);
-                let cx_pt = origin_x + w / 2.0;
-                let cy_pt = origin_y + h / 2.0;
 
-                let mut min_x = f32::MAX;
-                let mut max_x = f32::MIN;
-                let mut min_y = f32::MAX;
-                let mut max_y = f32::MIN;
-
-                for &(x, y) in positions_map.values() {
-                    min_x = min_x.min(x);
-                    max_x = max_x.max(x);
-                    min_y = min_y.min(y);
-                    max_y = max_y.max(y);
-                }
-
-                let range_x = (max_x - min_x).max(60.0);
-                let range_y = (max_y - min_y).max(60.0);
-
-                let avail_w = (w - 48.0).max(40.0);
-                let avail_h = (h - 48.0).max(40.0);
-                let scale = (avail_w / range_x).min(avail_h / range_y).min(2.5);
-
-                let center_orig_x = (min_x + max_x) * 0.5;
-                let center_orig_y = (min_y + max_y) * 0.5;
+                let (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y) =
+                    compute_nucleus_projection(&positions_map, origin_x, origin_y, w, h);
 
                 let project = |x: f32, y: f32| -> (f32, f32) {
-                    let sx = cx_pt + (x - center_orig_x) * scale;
-                    let sy = cy_pt + (y - center_orig_y) * scale;
+                    let sx = cx_pt + (x - center_orig_x) * scale_x;
+                    let sy = cy_pt + (y - center_orig_y) * scale_y;
                     (sx, sy)
                 };
 
@@ -553,7 +576,8 @@ impl super::Chamber {
                     *cell = painted_hits;
                 }
             },
-        );
+        )
+        .size_full();
 
         let hit_positions_for_click = hit_positions_cell.clone();
 
@@ -1185,5 +1209,33 @@ mod tests {
         delete_orphan_note(&nucleus_dir, "orphan-b").unwrap();
         let (nodes, _) = hadron_forge::nucleus_graph::build_nucleus_graph(&nucleus_dir);
         assert!(!nodes.contains_key("orphan-b"));
+    }
+
+    #[test]
+    fn test_compute_nucleus_projection_distributes_across_viewport() {
+        let mut positions = HashMap::new();
+        for i in 0..240 {
+            let r = 22.0 * ((i + 1) as f32).sqrt();
+            let angle = (i as f32) * 2.399_963_1;
+            positions.insert(
+                format!("note-{i}"),
+                (400.0 + r * angle.cos(), 300.0 + r * angle.sin()),
+            );
+        }
+
+        let (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y) =
+            compute_nucleus_projection(&positions, 0.0, 0.0, 900.0, 400.0);
+
+        let mut min_sy = f32::MAX;
+        let mut max_sy = f32::MIN;
+        for &(x, y) in positions.values() {
+            let sx = cx_pt + (x - center_orig_x) * scale_x;
+            let sy = cy_pt + (y - center_orig_y) * scale_y;
+            assert!(sx >= 20.0 && sx <= 880.0, "sx out of viewport bounds: {sx}");
+            assert!(sy >= 20.0 && sy <= 380.0, "sy out of viewport bounds: {sy}");
+            min_sy = min_sy.min(sy);
+            max_sy = max_sy.max(sy);
+        }
+        assert!(max_sy - min_sy > 300.0, "Nodes should span vertical viewport height");
     }
 }

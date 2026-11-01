@@ -18,7 +18,7 @@ fn is_heavy_ignored_dir(rel_path: &str) -> bool {
             "target" | "node_modules" | ".git" | "trees" | "reaped" | "sessions"
             | "update" | "venv" | ".venv" | "dist" | "build" | "incremental"
             | "cache" | "live" | "prompt-cost" | "quota" | "steer" | "archive"
-            | "ledgers" => return true,
+            | "ledgers" | "gpui-component" | "__pycache__" => return true,
             _ => {}
         }
     }
@@ -26,14 +26,15 @@ fn is_heavy_ignored_dir(rel_path: &str) -> bool {
 }
 
 /// Ignored entries, with wholly-ignored heavy directories collapsed to a single entry.
-/// Non-heavy gitignored directories (e.g. `.hadron/docs/plans/`, `.hadron/nucleus/`, `internal/`)
-/// are automatically expanded so internal plans and documentation are discoverable in chat completions.
+/// Non-heavy gitignored directories (e.g. `.hadron/docs/plans/`, `.hadron/nucleus/`, `assets/screenshots/`)
+/// are automatically expanded without 9P stat storms by running a single `git ls-files` pass
+/// filtered by `!is_heavy_ignored_dir(line)` (synthesizing intermediate directory entries with trailing `/`).
 pub fn list_workspace_files(
     repo_root: &Path,
     expanded_dirs: &std::collections::HashSet<String>,
 ) -> Vec<(String, bool)> {
     let mut files: Vec<(String, bool)> = Vec::new();
-    let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(repo_root);
+    let _is_wsl = hadron_lattice::wsl::is_wsl_unc_path(repo_root);
 
     // Files tracked in the index that have been deleted from the working tree.
     // Querying git once avoids a per-file `stat` across 600+ files over WSL 9P.
@@ -71,10 +72,9 @@ pub fn list_workspace_files(
         }
     }
 
-    // Ignored entries, with wholly-ignored heavy directories collapsed to a single entry.
-    // Over WSL 9P (`is_wsl`), gitignored directories (like `.hadron/`) are only walked
-    // when explicitly expanded in the file tree, avoiding 300+ synchronous 9P RPCs per scan.
+    // Ignored directory-level entries (collapsed heavy directories and top-level ignored entries)
     let mut ignored_dirs_to_expand = Vec::new();
+    let mut non_heavy_ignored_roots = Vec::new();
     if let Ok(output) = hadron_lattice::wsl::git_command(repo_root)
         .args([
             "ls-files",
@@ -89,19 +89,15 @@ pub fn list_workspace_files(
         if output.status.success() {
             let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
             for line in cleaned.lines() {
-                // `--directory` never emits `.git/`, but guard anyway.
-                // `--others` walks the working tree directly, so emitted entries exist on disk.
                 let bare = line.trim_end_matches('/');
                 if !bare.is_empty() && !line.starts_with(".git/") {
                     files.push((line.to_string(), true));
                     if line.ends_with('/') {
                         let path_str = bare.to_string();
-                        let should_expand = if is_wsl {
-                            expanded_dirs.contains(&path_str)
-                        } else {
-                            !is_heavy_ignored_dir(&path_str) || expanded_dirs.contains(&path_str)
-                        };
-                        if should_expand {
+                        if !is_heavy_ignored_dir(&path_str) {
+                            non_heavy_ignored_roots.push(path_str.clone());
+                        }
+                        if expanded_dirs.contains(&path_str) {
                             ignored_dirs_to_expand.push(path_str);
                         }
                     }
@@ -110,7 +106,89 @@ pub fn list_workspace_files(
         }
     }
 
-    // Recursively expand gitignored directories
+    // Single pass to discover gitignored files/folders inside non-heavy ignored directories without 9P stat storms
+    if !non_heavy_ignored_roots.is_empty() {
+        for root in &non_heavy_ignored_roots {
+            if let Ok(entries) = std::fs::read_dir(repo_root.join(root)) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name == ".git" {
+                        continue;
+                    }
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    let entry_path = if is_dir {
+                        format!("{root}/{name}/")
+                    } else {
+                        format!("{root}/{name}")
+                    };
+                    files.push((entry_path, true));
+                }
+            }
+        }
+
+        let mut cmd = hadron_lattice::wsl::git_command(repo_root);
+        cmd.args([
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--deduplicate",
+            "--",
+        ]);
+        for root in &non_heavy_ignored_roots {
+            cmd.arg(root);
+        }
+        cmd.args([
+            ":(exclude).hadron/trees",
+            ":(exclude).hadron/reaped",
+            ":(exclude).hadron/sessions",
+            ":(exclude).hadron/update",
+            ":(exclude).hadron/live",
+            ":(exclude).hadron/prompt-cost",
+            ":(exclude).hadron/quota",
+            ":(exclude).hadron/steer",
+            ":(exclude).hadron/archive",
+            ":(exclude).hadron/ledgers",
+        ]);
+        if let Ok(output) = cmd.output() {
+            if output.status.success() {
+                let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+                for line in cleaned.lines() {
+                    if line.is_empty() || line.starts_with(".git/") {
+                        continue;
+                    }
+                    if is_heavy_ignored_dir(line) {
+                        let parts: Vec<&str> = line.split('/').collect();
+                        let mut running = String::new();
+                        for part in parts {
+                            running.push_str(part);
+                            running.push('/');
+                            if is_heavy_ignored_dir(part) {
+                                files.push((running, true));
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    files.push((line.to_string(), true));
+                    // Synthesize intermediate ignored directory entries with trailing '/' so both folders and files autocomplete
+                    let parts: Vec<&str> = line.split('/').collect();
+                    if parts.len() > 1 {
+                        let mut running = String::new();
+                        for part in &parts[..parts.len() - 1] {
+                            if !part.is_empty() {
+                                running.push_str(part);
+                                running.push('/');
+                                files.push((running.clone(), true));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Expand explicitly expanded heavy directories (if any)
     let mut i = 0;
     while i < ignored_dirs_to_expand.len() {
         let dir_rel = ignored_dirs_to_expand[i].clone();
@@ -129,15 +207,8 @@ pub fn list_workspace_files(
                     child_rel.clone()
                 };
                 files.push((entry_path, true));
-                if is_dir {
-                    let should_expand = if is_wsl {
-                        expanded_dirs.contains(&child_rel)
-                    } else {
-                        !is_heavy_ignored_dir(&child_rel) || expanded_dirs.contains(&child_rel)
-                    };
-                    if should_expand {
-                        ignored_dirs_to_expand.push(child_rel);
-                    }
+                if is_dir && expanded_dirs.contains(&child_rel) {
+                    ignored_dirs_to_expand.push(child_rel);
                 }
             }
         }
@@ -1990,6 +2061,57 @@ mod tests {
         let (wsl_prog, wsl_args) = resolve_gluon_spawn_target(wsl_field);
         assert_eq!(wsl_prog, resolve_gluon_binary());
         assert_eq!(wsl_args, vec![wsl_field.to_string_lossy().into_owned()]);
+    }
+
+    #[test]
+    fn list_workspace_files_expands_non_heavy_ignored_dirs_and_collapses_heavy_ones() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .status()
+            .expect("git init");
+
+        std::fs::write(
+            root.join(".gitignore"),
+            ".hadron/\nassets/screenshots/\ntarget/\ncrates/gpui-component/\n",
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        std::fs::create_dir_all(root.join(".hadron/assets")).unwrap();
+        std::fs::write(root.join(".hadron/assets/shot.png"), "png").unwrap();
+
+        std::fs::create_dir_all(root.join(".hadron/trees/worker")).unwrap();
+        std::fs::write(root.join(".hadron/trees/worker/file.rs"), "heavy").unwrap();
+
+        std::fs::create_dir_all(root.join("assets/screenshots")).unwrap();
+        std::fs::write(root.join("assets/screenshots/ui.png"), "png").unwrap();
+
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::write(root.join("target/debug/bin"), "bin").unwrap();
+
+        std::fs::create_dir_all(root.join("crates/gpui-component/src")).unwrap();
+        std::fs::write(root.join("crates/gpui-component/src/lib.rs"), "vendor").unwrap();
+
+        let expanded = std::collections::HashSet::new();
+        let files = list_workspace_files(root, &expanded);
+
+        assert!(files.contains(&("src/main.rs".to_string(), false)));
+        assert!(files.contains(&(".hadron/".to_string(), true)));
+        assert!(files.contains(&(".hadron/assets/".to_string(), true)));
+        assert!(files.contains(&(".hadron/assets/shot.png".to_string(), true)));
+        assert!(files.contains(&("assets/screenshots/ui.png".to_string(), true)));
+
+        // Heavy directories are collapsed, not expanded into individual files
+        assert!(files.contains(&("target/".to_string(), true)));
+        assert!(!files.iter().any(|(p, _)| p == "target/debug/bin"));
+        assert!(!files.iter().any(|(p, _)| p == ".hadron/trees/worker/file.rs"));
+        assert!(!files.iter().any(|(p, _)| p == "crates/gpui-component/src/lib.rs"));
     }
 }
 

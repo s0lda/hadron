@@ -2175,7 +2175,7 @@ mod milestone_3_tests {
         assert_eq!(start, 8);
 
         let quarks = vec![("acp-agy".to_string(), Some("AGY Quark".to_string()))];
-        let files = vec!["src/app/render/chat.rs".to_string()];
+        let files = vec![("src/app/render/chat.rs".to_string(), false)];
         let sessions = vec![];
 
         let comp = completion_candidates("@acp", 4, &quarks, &files, &sessions).expect("candidates");
@@ -2188,7 +2188,7 @@ mod milestone_3_tests {
         assert_eq!(comp_files.candidates[0].detail, "src/app/render/chat.rs");
 
         let gitignored_files = vec![
-            ".hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/master.md".to_string(),
+            (".hadron/docs/plans/2026-08-21-swarm-orchestration-and-teamwork/master.md".to_string(), true),
         ];
         let comp_plans = completion_candidates("@master", 7, &quarks, &gitignored_files, &sessions).expect("plan candidates");
         assert_eq!(comp_plans.candidates[0].label, "📄 @master.md");
