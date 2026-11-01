@@ -89,14 +89,15 @@ impl ForceDirectedGraph {
             }
         }
 
-        // 2. Attractive forces along edges (Hooke's law)
+        // 2. Attractive forces along edges (Hooke's law with ideal rest length so linked nodes don't collapse to 0)
+        const IDEAL_EDGE_LEN: f32 = 55.0;
         for edge in &self.edges {
             if let (Some(n1), Some(n2)) = (self.nodes.get(&edge.source), self.nodes.get(&edge.target)) {
                 let dx = n2.x - n1.x;
                 let dy = n2.y - n1.y;
                 let dist = (dx * dx + dy * dy).sqrt().max(1.0);
 
-                let force = dist * attraction_k;
+                let force = (dist - IDEAL_EDGE_LEN).max(0.0) * attraction_k;
                 let fx = (dx / dist) * force;
                 let fy = (dy / dist) * force;
 
@@ -331,6 +332,56 @@ pub(crate) fn compute_nucleus_projection(
     (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y)
 }
 
+pub const NUCLEUS_ZOOM_MIN: f32 = 0.5;
+pub const NUCLEUS_ZOOM_MAX: f32 = 8.0;
+
+/// Projects 2D simulation coordinates into screen bounds with interactive `zoom` and `(pan_x, pan_y)` offset.
+pub(crate) fn compute_nucleus_projection_with_view(
+    positions_map: &HashMap<String, (f32, f32)>,
+    origin_x: f32,
+    origin_y: f32,
+    w: f32,
+    h: f32,
+    zoom: f32,
+    pan_x: f32,
+    pan_y: f32,
+) -> (f32, f32, f32, f32, f32, f32) {
+    let (cx_pt, cy_pt, center_orig_x, center_orig_y, base_scale_x, base_scale_y) =
+        compute_nucleus_projection(positions_map, origin_x, origin_y, w, h);
+    let clamped_zoom = zoom.clamp(NUCLEUS_ZOOM_MIN, NUCLEUS_ZOOM_MAX);
+    (
+        cx_pt + pan_x,
+        cy_pt + pan_y,
+        center_orig_x,
+        center_orig_y,
+        base_scale_x * clamped_zoom,
+        base_scale_y * clamped_zoom,
+    )
+}
+
+/// Applies a zoom delta anchored at `cursor_pos` relative to `canvas_center` so the graph point
+/// directly under the mouse cursor stays stationary on screen while zooming in or out.
+pub(crate) fn apply_nucleus_zoom_at_cursor(
+    current_zoom: f32,
+    current_pan: (f32, f32),
+    zoom_delta: f32,
+    cursor_pos: (f32, f32),
+    canvas_center: (f32, f32),
+) -> (f32, (f32, f32)) {
+    let old_zoom = current_zoom.clamp(NUCLEUS_ZOOM_MIN, NUCLEUS_ZOOM_MAX);
+    let factor = (1.0 + zoom_delta).clamp(0.5, 2.0);
+    let new_zoom = (old_zoom * factor).clamp(NUCLEUS_ZOOM_MIN, NUCLEUS_ZOOM_MAX);
+    if (new_zoom - old_zoom).abs() < f32::EPSILON {
+        return (new_zoom, current_pan);
+    }
+    let ratio = new_zoom / old_zoom;
+    let mx = cursor_pos.0 - canvas_center.0;
+    let my = cursor_pos.1 - canvas_center.1;
+    let new_pan_x = mx - (mx - current_pan.0) * ratio;
+    let new_pan_y = my - (my - current_pan.1) * ratio;
+    (new_zoom, (new_pan_x, new_pan_y))
+}
+
 impl super::Chamber {
     pub(super) fn nucleus_graph_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
@@ -393,12 +444,105 @@ impl super::Chamber {
         let cached = cache_ref.as_ref().unwrap();
 
         let selected_note = self.visualizer_selected_note.clone();
+        let hovered_note = self.nucleus_graph_hovered_note.clone();
         let filter_str = self.visualizer_nucleus_filter.as_deref().unwrap_or("").trim().to_lowercase();
+        let zoom = self.nucleus_graph_zoom.clamp(NUCLEUS_ZOOM_MIN, NUCLEUS_ZOOM_MAX);
+        let (pan_x, pan_y) = self.nucleus_graph_pan;
 
-        // Header Stats Badges
+        // Zoom Controls + Header Stats Badges
+        let zoom_controls = h_flex()
+            .gap_1()
+            .items_center()
+            .child(
+                div()
+                    .id("nucleus-zoom-out")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .hover(|s| s.text_color(theme::text()))
+                    .child("−")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let center = this.nucleus_graph_canvas_center.get();
+                        let (nz, np) = apply_nucleus_zoom_at_cursor(
+                            this.nucleus_graph_zoom,
+                            this.nucleus_graph_pan,
+                            -0.20,
+                            center,
+                            center,
+                        );
+                        this.nucleus_graph_zoom = nz;
+                        this.nucleus_graph_pan = np;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .px_1p5()
+                    .py_0p5()
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .child(format!("{:.0}%", zoom * 100.0)),
+            )
+            .child(
+                div()
+                    .id("nucleus-zoom-in")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .hover(|s| s.text_color(theme::text()))
+                    .child("+")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let center = this.nucleus_graph_canvas_center.get();
+                        let (nz, np) = apply_nucleus_zoom_at_cursor(
+                            this.nucleus_graph_zoom,
+                            this.nucleus_graph_pan,
+                            0.25,
+                            center,
+                            center,
+                        );
+                        this.nucleus_graph_zoom = nz;
+                        this.nucleus_graph_pan = np;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("nucleus-zoom-reset")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(theme::text_muted())
+                    .hover(|s| s.text_color(theme::text()))
+                    .child("Reset")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.nucleus_graph_zoom = 1.0;
+                        this.nucleus_graph_pan = (0.0, 0.0);
+                        cx.notify();
+                    })),
+            );
+
         let stats_hud = h_flex()
             .gap_2()
+            .flex_wrap()
             .items_center()
+            .child(zoom_controls)
             .child(
                 div()
                     .px_2p5()
@@ -486,9 +630,12 @@ impl super::Chamber {
         let orphaned_set: HashSet<String> = cached.orphaned_notes.iter().cloned().collect();
         let dead_targets: HashSet<String> = cached.dead_links.iter().map(|(_, t)| t.clone()).collect();
         let sel_slug = selected_note.clone();
+        let hov_slug = hovered_note.clone();
 
         let hit_positions_cell = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, Bounds<Pixels>, f32, f32)>::new()));
         let hit_positions_for_paint = hit_positions_cell.clone();
+        let canvas_center_cell = std::rc::Rc::new(std::cell::Cell::new(self.nucleus_graph_canvas_center.get()));
+        let canvas_center_for_paint = canvas_center_cell.clone();
 
         let canvas_elem = canvas(
             move |bounds, _, _| bounds,
@@ -498,8 +645,19 @@ impl super::Chamber {
                 let origin_x = f32::from(bounds.origin.x);
                 let origin_y = f32::from(bounds.origin.y);
 
+                canvas_center_for_paint.set((origin_x + w * 0.5, origin_y + h * 0.5));
+
                 let (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y) =
-                    compute_nucleus_projection(&positions_map, origin_x, origin_y, w, h);
+                    compute_nucleus_projection_with_view(
+                        &positions_map,
+                        origin_x,
+                        origin_y,
+                        w,
+                        h,
+                        zoom,
+                        pan_x,
+                        pan_y,
+                    );
 
                 let project = |x: f32, y: f32| -> (f32, f32) {
                     let sx = cx_pt + (x - center_orig_x) * scale_x;
@@ -538,18 +696,29 @@ impl super::Chamber {
                         let center = point(px(sx), px(sy));
 
                         let is_selected = sel_slug.as_deref() == Some(slug.as_str());
+                        let is_hovered = hov_slug.as_deref() == Some(slug.as_str());
                         let is_orphan = orphaned_set.contains(slug);
 
-                        let radius = px(if is_selected { 9.0 } else { 6.5 });
+                        let radius = px(if is_selected {
+                            9.0
+                        } else if is_hovered {
+                            8.0
+                        } else {
+                            6.5
+                        });
 
-                        if is_selected {
-                            let glow_r = radius + px(6.0);
+                        if is_selected || is_hovered {
+                            let glow_r = radius + px(if is_selected { 6.0 } else { 4.5 });
                             let glow_bounds = Bounds {
                                 origin: point(center.x - glow_r, center.y - glow_r),
                                 size: size(glow_r * 2.0, glow_r * 2.0),
                             };
                             window.paint_quad(
-                                fill(glow_bounds, theme::accent().opacity(0.30)).corner_radii(glow_r),
+                                fill(
+                                    glow_bounds,
+                                    theme::accent().opacity(if is_selected { 0.30 } else { 0.20 }),
+                                )
+                                .corner_radii(glow_r),
                             );
                         }
 
@@ -562,7 +731,7 @@ impl super::Chamber {
 
                         let node_bg = if is_orphan {
                             theme::warning().into()
-                        } else if is_selected {
+                        } else if is_selected || is_hovered {
                             theme::accent()
                         } else {
                             theme::info().into()
@@ -579,41 +748,147 @@ impl super::Chamber {
         )
         .size_full();
 
-        let hit_positions_for_click = hit_positions_cell.clone();
+        let hit_positions_for_up = hit_positions_cell.clone();
+        let hit_positions_for_move = hit_positions_cell.clone();
+        let canvas_center_for_scroll = canvas_center_cell.clone();
+
+        let hud_focus_node = hovered_note
+            .as_ref()
+            .or(selected_note.as_ref())
+            .and_then(|slug| cached.nodes.get(slug));
+
+        let canvas_hud_overlay = h_flex()
+            .absolute()
+            .top_2()
+            .right_3()
+            .max_w(px(360.0))
+            .px_2p5()
+            .py_1()
+            .rounded_md()
+            .bg(theme::bg_surface().opacity(0.85))
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .text_xs()
+            .text_color(if hud_focus_node.is_some() {
+                theme::text()
+            } else {
+                theme::text_muted()
+            })
+            .truncate()
+            .child(if let Some(node) = hud_focus_node {
+                node.title.clone()
+            } else {
+                "Scroll to zoom · Drag to pan · Click node to inspect".to_string()
+            });
 
         let canvas_container = div()
+            .id("nucleus-graph-canvas-viewport")
             .relative()
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .cursor_pointer()
+            .cursor_grab()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, ev: &gpui::MouseDownEvent, _window, cx| {
-                    let click_pos = ev.position;
-                    let click_x = f32::from(click_pos.x);
-                    let click_y = f32::from(click_pos.y);
-
-                    let mut closest_slug: Option<String> = None;
-                    let mut min_dist_sq = 28.0 * 28.0;
-
-                    for (slug, _bounds, sx, sy) in hit_positions_for_click.borrow().iter() {
-                        let dx = *sx - click_x;
-                        let dy = *sy - click_y;
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, _window, _cx| {
+                    this.nucleus_graph_last_mouse = Some(ev.position);
+                    this.nucleus_graph_drag_moved = false;
+                }),
+            )
+            .on_mouse_move(cx.listener(move |this, ev: &gpui::MouseMoveEvent, _window, cx| {
+                this.nucleus_graph_canvas_center.set(canvas_center_cell.get());
+                if ev.pressed_button == Some(MouseButton::Left) {
+                    if let Some(last_pos) = this.nucleus_graph_last_mouse {
+                        let dx = f32::from(ev.position.x - last_pos.x);
+                        let dy = f32::from(ev.position.y - last_pos.y);
+                        if this.nucleus_graph_drag_moved || (dx * dx + dy * dy) > 4.0 {
+                            this.nucleus_graph_drag_moved = true;
+                            this.nucleus_graph_pan.0 += dx;
+                            this.nucleus_graph_pan.1 += dy;
+                            this.nucleus_graph_last_mouse = Some(ev.position);
+                            cx.notify();
+                        }
+                    } else {
+                        this.nucleus_graph_last_mouse = Some(ev.position);
+                    }
+                } else {
+                    this.nucleus_graph_last_mouse = None;
+                    let mx = f32::from(ev.position.x);
+                    let my = f32::from(ev.position.y);
+                    let mut closest_hover: Option<String> = None;
+                    let mut min_dist_sq = 18.0 * 18.0;
+                    for (slug, _bounds, sx, sy) in hit_positions_for_move.borrow().iter() {
+                        let dx = *sx - mx;
+                        let dy = *sy - my;
                         let d_sq = dx * dx + dy * dy;
                         if d_sq < min_dist_sq {
                             min_dist_sq = d_sq;
-                            closest_slug = Some(slug.clone());
+                            closest_hover = Some(slug.clone());
                         }
                     }
-
-                    if let Some(slug) = closest_slug {
-                        this.visualizer_selected_note = Some(slug);
+                    if this.nucleus_graph_hovered_note != closest_hover {
+                        this.nucleus_graph_hovered_note = closest_hover;
                         cx.notify();
                     }
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &gpui::MouseUpEvent, _window, cx| {
+                    this.nucleus_graph_last_mouse = None;
+                    if !this.nucleus_graph_drag_moved {
+                        let click_pos = ev.position;
+                        let click_x = f32::from(click_pos.x);
+                        let click_y = f32::from(click_pos.y);
+
+                        let mut closest_slug: Option<String> = None;
+                        let mut min_dist_sq = 28.0 * 28.0;
+
+                        for (slug, _bounds, sx, sy) in hit_positions_for_up.borrow().iter() {
+                            let dx = *sx - click_x;
+                            let dy = *sy - click_y;
+                            let d_sq = dx * dx + dy * dy;
+                            if d_sq < min_dist_sq {
+                                min_dist_sq = d_sq;
+                                closest_slug = Some(slug.clone());
+                            }
+                        }
+
+                        if let Some(slug) = closest_slug {
+                            this.visualizer_selected_note = Some(slug);
+                            cx.notify();
+                        }
+                    }
+                    this.nucleus_graph_drag_moved = false;
                 }),
             )
-            .child(canvas_elem);
+            .on_scroll_wheel(cx.listener(move |this, ev: &gpui::ScrollWheelEvent, _window, cx| {
+                cx.stop_propagation();
+                let center = canvas_center_for_scroll.get();
+                this.nucleus_graph_canvas_center.set(center);
+                let delta = match ev.delta {
+                    gpui::ScrollDelta::Lines(d) => d.y * 0.15,
+                    gpui::ScrollDelta::Pixels(d) => f32::from(d.y) * 0.0025,
+                };
+                let cursor_pos = (f32::from(ev.position.x), f32::from(ev.position.y));
+                let center_ref = if center.0 == 0.0 && center.1 == 0.0 {
+                    cursor_pos
+                } else {
+                    center
+                };
+                let (new_zoom, new_pan) = apply_nucleus_zoom_at_cursor(
+                    this.nucleus_graph_zoom,
+                    this.nucleus_graph_pan,
+                    delta,
+                    cursor_pos,
+                    center_ref,
+                );
+                this.nucleus_graph_zoom = new_zoom;
+                this.nucleus_graph_pan = new_pan;
+                cx.notify();
+            }))
+            .child(canvas_elem)
+            .child(canvas_hud_overlay);
 
         // Searchable Note Inspector Dock with Filter Pills
         let filter_mode = self.visualizer_nucleus_filter.as_deref().unwrap_or("all");
@@ -1237,5 +1512,51 @@ mod tests {
             max_sy = max_sy.max(sy);
         }
         assert!(max_sy - min_sy > 300.0, "Nodes should span vertical viewport height");
+    }
+
+    #[test]
+    fn test_nucleus_zoom_and_cursor_anchored_pan() {
+        let mut positions = HashMap::new();
+        positions.insert("center".to_string(), (400.0, 300.0));
+        positions.insert("right".to_string(), (500.0, 300.0));
+        positions.insert("left".to_string(), (300.0, 200.0));
+
+        let canvas_center = (450.0, 200.0);
+        let cursor = (520.0, 230.0);
+
+        // Project "right" before zoom
+        let (cx1, cy1, ox1, oy1, sx1, sy1) =
+            compute_nucleus_projection_with_view(&positions, 0.0, 0.0, 900.0, 400.0, 1.0, 0.0, 0.0);
+        let target_screen_x = cx1 + (500.0 - ox1) * sx1;
+        let target_screen_y = cy1 + (300.0 - oy1) * sy1;
+
+        // Place cursor directly over the "right" node and zoom in by +50%
+        let (new_zoom, (pan_x, pan_y)) = apply_nucleus_zoom_at_cursor(
+            1.0,
+            (0.0, 0.0),
+            0.5,
+            (target_screen_x, target_screen_y),
+            canvas_center,
+        );
+        assert!((new_zoom - 1.5).abs() < 1e-4);
+
+        let (cx2, cy2, ox2, oy2, sx2, sy2) = compute_nucleus_projection_with_view(
+            &positions, 0.0, 0.0, 900.0, 400.0, new_zoom, pan_x, pan_y,
+        );
+        // Scale should increase by 1.5x, separating tightly clustered nodes
+        assert!((sx2 - sx1 * 1.5).abs() < 1e-4);
+        assert!((sy2 - sy1 * 1.5).abs() < 1e-4);
+
+        // And the node under the cursor stays at the exact same screen coordinates
+        let after_screen_x = cx2 + (500.0 - ox2) * sx2;
+        let after_screen_y = cy2 + (300.0 - oy2) * sy2;
+        assert!((after_screen_x - target_screen_x).abs() < 1e-3);
+        assert!((after_screen_y - target_screen_y).abs() < 1e-3);
+
+        // Clamping bounds (0.5x to 8.0x)
+        let (max_z, _) = apply_nucleus_zoom_at_cursor(7.5, (pan_x, pan_y), 0.5, cursor, canvas_center);
+        assert_eq!(max_z, NUCLEUS_ZOOM_MAX);
+        let (min_z, _) = apply_nucleus_zoom_at_cursor(0.55, (pan_x, pan_y), -0.5, cursor, canvas_center);
+        assert_eq!(min_z, NUCLEUS_ZOOM_MIN);
     }
 }
