@@ -278,6 +278,22 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     format!("{}\n{TRUNCATION_MARKER}", &out[..cut])
 }
 
+/// Returns true if an error string from a CLI subprocess execution represents
+/// a transient/retryable network error (e.g. gRPC EOF, connection drops, 429 TPM, 503).
+pub fn is_retryable_cli_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("\"retryable\":true")
+        || lower.contains("\"retryable\": true")
+        || lower.contains("there was a network issue connecting to the server")
+        || (lower.contains("request failed: post") && lower.contains("eof"))
+        || (lower.contains("streamgeneratecontent") && lower.contains("eof"))
+        || lower.contains("429 too many requests")
+        || lower.contains("resource_exhausted")
+        || lower.contains("503 service unavailable")
+        || lower.contains("connection reset by peer")
+        || lower.contains("broken pipe")
+}
+
 /// Fit a prompt into budget, using SlidingContextPruner first to preserve recent turns and
 /// summarized older context, falling back to hard truncation if still over budget.
 pub fn fit_prompt_with_sliding_pruner(
@@ -643,46 +659,86 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let cwd = turn.cwd.clone();
-        // A resumed conversation already holds everything we sent before, so re-sending
-        // the field window and static cache prefix would pay for the same history twice —
-        // the whole point of going resident. Send the new instruction only; the CLI still has the rest.
-        // Only true when this CLI actually supports resuming (`spec.resume` is not
-        // `None`) — a generic CLI with no resume flag never gets to drop context it
-        // has no way to recall.
-        let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
-        let turn = if resuming {
-            crate::adapter::prompt::without_static_prefix(without_field_window(turn))
-        } else {
-            turn
-        };
-        if let Some(dir) = &self.prompt_cost_dir {
-            let breakdown = crate::adapter::prompt::measure(&turn, &self.id);
-            let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
+
+        let max_attempts = 3;
+        let mut last_err = None;
+
+        for attempt in 0..max_attempts {
+            if attempt > 0 {
+                // On a retry, reset resident state so we don't try --continue on a dead/corrupted session
+                self.resident = false;
+                tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64))).await;
+            }
+
+            // A resumed conversation already holds everything we sent before, so re-sending
+            // the field window and static cache prefix would pay for the same history twice —
+            // the whole point of going resident. Send the new instruction only; the CLI still has the rest.
+            // Only true when this CLI actually supports resuming (`spec.resume` is not
+            // `None`) — a generic CLI with no resume flag never gets to drop context it
+            // has no way to recall.
+            let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
+            let prepared_turn = if resuming {
+                crate::adapter::prompt::without_static_prefix(without_field_window(turn.clone()))
+            } else {
+                turn.clone()
+            };
+
+            if attempt == 0 {
+                if let Some(dir) = &self.prompt_cost_dir {
+                    let breakdown = crate::adapter::prompt::measure(&prepared_turn, &self.id);
+                    let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
+                }
+            }
+
+            // The argv guard only applies when the spec says the prompt rides as one
+            // argv element with no stdin fallback (`execve` on Linux rejects an over-long one
+            // with E2BIG; `CreateProcessW` on Windows returns error 206 before the CLI ever starts).
+            // Otherwise fit the prompt through `SlidingContextPruner` first when oversized.
+            let prompt = if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
+                fit_prompt(&prepared_turn, &self.id)
+            } else {
+                fit_prompt_with_sliding_pruner(
+                    &prepared_turn,
+                    &self.id,
+                    SAFE_ARG_BYTES,
+                    &crate::sliding_pruner::SlidingPrunerConfig::default(),
+                )
+            };
+
+            let invocation = self.invocation(prompt, mode, cwd.clone());
+            let res = if let Some(stream) = self.spec.stream.clone() {
+                self.run_streaming(invocation, stream).await
+            } else {
+                let result = self.runner.run(invocation).await;
+                result.map(|r| reply_to_outcome(&r))
+            };
+
+            match res {
+                Ok(outcome) => {
+                    self.resident = true;
+                    return Ok(outcome);
+                }
+                Err(err) => {
+                    let err_msg = err.to_string();
+                    if is_retryable_cli_error(&err_msg) && attempt + 1 < max_attempts {
+                        eprintln!(
+                            "CliQuark {} turn attempt {} failed with retryable error, retrying: {err_msg}",
+                            self.id.as_str(),
+                            attempt + 1
+                        );
+                        last_err = Some(err);
+                        continue;
+                    } else {
+                        // Unretryable error or retries exhausted: reset resident state so future turns start fresh
+                        self.resident = false;
+                        return Err(err);
+                    }
+                }
+            }
         }
-        // The argv guard only applies when the spec says the prompt rides as one
-        // argv element with no stdin fallback (`execve` on Linux rejects an over-long one
-        // with E2BIG; `CreateProcessW` on Windows returns error 206 before the CLI ever starts).
-        // Otherwise fit the prompt through `SlidingContextPruner` first when oversized.
-        let prompt = if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
-            fit_prompt(&turn, &self.id)
-        } else {
-            fit_prompt_with_sliding_pruner(
-                &turn,
-                &self.id,
-                SAFE_ARG_BYTES,
-                &crate::sliding_pruner::SlidingPrunerConfig::default(),
-            )
-        };
-        let invocation = self.invocation(prompt, mode, cwd);
-        let outcome = if let Some(stream) = self.spec.stream.clone() {
-            self.run_streaming(invocation, stream).await?
-        } else {
-            let result = self.runner.run(invocation).await?;
-            reply_to_outcome(&result)
-        };
-        // Only a turn that actually ran leaves a conversation behind to resume.
-        self.resident = true;
-        Ok(outcome)
+
+        self.resident = false;
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("CliQuark turn execution failed")))
     }
 }
 
@@ -1456,5 +1512,55 @@ mod tests {
         assert!(fitted.contains("EVENT-049"), "newest event must survive");
         assert!(fitted.contains("EVENT-045"), "recent events fitting budget must survive");
         assert!(!fitted.contains("EVENT-000"), "oldest events must be dropped");
+    }
+
+    #[test]
+    fn detects_retryable_cli_errors() {
+        let agy_err = "Quark cli-agy turn errored: agy exited with 3: error: There was a network issue connecting to the server, please try again.\nAGY_ERROR: {\"short_error\":\"agent executor error: generating and executing: request failed: Post \\\"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\\\": EOF\",\"status\":\"UNKNOWN\",\"error_code\":2,\"code_kind\":\"grpc\",\"retryable\":true,\"error_id\":\"2c0ddb97-6a2c-4e84-be79-08dded829bf7-77\"}";
+        assert!(is_retryable_cli_error(agy_err));
+
+        assert!(is_retryable_cli_error("429 Too Many Requests"));
+        assert!(is_retryable_cli_error("503 Service Unavailable"));
+        assert!(is_retryable_cli_error("connection reset by peer"));
+        assert!(!is_retryable_cli_error("command not found: foobar"));
+    }
+
+    #[tokio::test]
+    async fn cli_quark_retries_transient_network_error_and_resets_resident_state() {
+        use crate::adapter::runner::CliResult;
+
+        struct RetryableFakeRunner {
+            attempts: std::sync::atomic::AtomicUsize,
+        }
+
+        #[async_trait]
+        impl CliRunner for RetryableFakeRunner {
+            async fn run(&self, _inv: CliInvocation) -> anyhow::Result<CliResult> {
+                let attempt = self.attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if attempt == 0 {
+                    anyhow::bail!("agy exited with 3: error: There was a network issue connecting to the server, please try again.\nAGY_ERROR: {{\"retryable\":true}}");
+                }
+                Ok(CliResult { stdout: "Success after retry".to_string(), exit: 0, usage: None })
+            }
+            async fn run_streaming(&self, inv: CliInvocation, _on_line: &mut (dyn for<'a> FnMut(&'a str) + Send)) -> anyhow::Result<CliResult> {
+                self.run(inv).await
+            }
+        }
+
+        let runner = RetryableFakeRunner { attempts: std::sync::atomic::AtomicUsize::new(0) };
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
+        let mut quark = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Worker,
+            "gemini-3.6-flash",
+            spec,
+            runner,
+        );
+
+        // Turn 1 fails on attempt 0 with retryable error, then retries and succeeds!
+        let outcome = quark.excite(projection("do task")).await.unwrap();
+        assert_eq!(outcome.message.as_deref(), Some("Success after retry"));
+        assert_eq!(quark.runner.attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 }
