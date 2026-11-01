@@ -649,14 +649,15 @@ impl super::Chamber {
             .py_2()
             .border_b_1()
             .border_color(theme::glass_highlight())
+            .child(mode_switcher)
+            .child(hud_summary)
             .child(
                 h_flex()
-                    .gap_2()
+                    .w_full()
+                    .justify_end()
                     .items_center()
-                    .child(mode_switcher)
-                    .child(hud_summary),
-            )
-            .child(hud_controls);
+                    .child(hud_controls),
+            );
 
         // Interactive Live Swarm Activity & Seated Quarks Dock
         let seated_nodes: Vec<ProjectedQuarkNode> = nodes.iter().filter(|n| n.is_seated).cloned().collect();
