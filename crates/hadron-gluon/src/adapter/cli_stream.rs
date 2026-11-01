@@ -163,6 +163,9 @@ impl StreamAccumulator {
                     {
                         self.error_step_count = 0;
                         self.in_error_state = false;
+                        if self.status == "error message" || self.status == "error" {
+                            self.status.clear();
+                        }
                     }
                 }
                 if let Some(v) = path_as_u32(value, "step_update.usage.input_tokens") {
@@ -744,9 +747,21 @@ mod tests {
         acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Rate limited"}}"#);
         assert_eq!(acc.error_step_count(), 1);
         assert!(acc.in_error_state());
+        assert_eq!(acc.status(), "error message");
+
+        // A DONE thinking-only agent_response step (emitted before tool calls on retry)
+        // must clear `in_error_state`, replace `"error message"` status, and return `true`
+        // so `live/<quark>.json` does not remain stuck on `"error message"`.
+        let recovered = acc.on_line(
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","state":"DONE","thinking":"Retrying the tool call"}}"#,
+        );
+        assert!(recovered);
+        assert_eq!(acc.error_step_count(), 0);
+        assert!(!acc.in_error_state());
+        assert_eq!(acc.status(), "thinking: Retrying the tool call");
 
         acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"error_message","message":"Rate limited again"}}"#);
-        assert_eq!(acc.error_step_count(), 2);
+        assert_eq!(acc.error_step_count(), 1);
 
         acc.on_line(r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"recovered"}}"#);
         assert_eq!(acc.error_step_count(), 0);

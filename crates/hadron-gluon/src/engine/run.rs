@@ -38,6 +38,7 @@ async fn until_silent(
     let mut effective_deadline = deadline;
     let mut last_sign = std::time::Instant::now();
     let mut newest_seen: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut in_error_detail = false;
     loop {
         let tick = (effective_deadline / 4)
             .min(std::time::Duration::from_secs(5))
@@ -46,13 +47,26 @@ async fn until_silent(
         if let Some(activity) = hadron_lattice::live::read(live_dir, quark, chrono::Utc::now()) {
             let is_error_detail = activity.detail == "error message" || activity.detail == "error";
             if is_error_detail {
-                effective_deadline = effective_deadline.min(std::time::Duration::from_secs(30));
-            } else if newest_seen.is_none_or(|seen| activity.at > seen) {
-                newest_seen = Some(activity.at);
-                last_sign = std::time::Instant::now();
+                if !in_error_detail {
+                    in_error_detail = true;
+                    // Start the 30s error grace window from when the error arrived rather than
+                    // retroactively counting healthy work that preceded the stream interruption.
+                    if newest_seen.is_some() && newest_seen.is_none_or(|seen| activity.at > seen) {
+                        newest_seen = Some(activity.at);
+                        last_sign = std::time::Instant::now();
+                    }
+                }
+                effective_deadline = deadline.min(std::time::Duration::from_secs(30));
+            } else {
+                in_error_detail = false;
+                effective_deadline = deadline;
+                if newest_seen.is_none_or(|seen| activity.at > seen) {
+                    newest_seen = Some(activity.at);
+                    last_sign = std::time::Instant::now();
+                }
             }
         } else if let Some(age) = hadron_lattice::live::last_heartbeat_age(live_dir, quark) {
-            if age < last_sign.elapsed() {
+            if !in_error_detail && age < last_sign.elapsed() {
                 last_sign = std::time::Instant::now()
                     .checked_sub(age)
                     .unwrap_or_else(std::time::Instant::now);
@@ -93,7 +107,11 @@ where
                  reaped — if this fired on healthy work, that quark's \
                  transport publishes nothing (CLI seats do not).",
                 quark.as_str(),
-                silent_for.as_secs().max(stall_deadline.as_secs()),
+                if silent_for >= stall_deadline {
+                    silent_for.as_secs().max(stall_deadline.as_secs())
+                } else {
+                    silent_for.as_secs()
+                },
             )
         ),
         _ = tokio::time::sleep(max_wall_clock) => Err(
@@ -1568,5 +1586,47 @@ mod tests {
             "until_silent must enforce fast <=30s error deadline when activity.detail is 'error message', took {:?}",
             start.elapsed()
         );
+    }
+
+    #[tokio::test]
+    async fn until_silent_restores_deadline_when_error_recovers() {
+        let temp = tempfile::tempdir().unwrap();
+        let qid = QuarkId::new("test-quark");
+        let live_dir = temp.path().to_path_buf();
+
+        let mut err_act = hadron_lattice::live::Activity::new(
+            qid.clone(),
+            hadron_lattice::live::Doing::Working,
+            "error message",
+        );
+        crate::adapter::telemetry::TurnTelemetrySink::publish_activity(&live_dir, &mut err_act);
+
+        let live_clone = live_dir.clone();
+        let qid_clone = qid.clone();
+        let excite_fut = async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let mut rec_act = hadron_lattice::live::Activity::new(
+                qid_clone,
+                hadron_lattice::live::Doing::Thinking,
+                "thinking: retrying step",
+            );
+            crate::adapter::telemetry::TurnTelemetrySink::publish_activity(&live_clone, &mut rec_act);
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            Ok(TurnOutcome {
+                message: Some("recovered".to_string()),
+                ..Default::default()
+            })
+        };
+
+        let out = excite_with_liveness_watchdog(
+            excite_fut,
+            &live_dir,
+            &qid,
+            std::time::Duration::from_millis(120),
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .expect("turn that recovers from error message must not be killed");
+        assert_eq!(out.message.as_deref(), Some("recovered"));
     }
 }

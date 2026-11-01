@@ -292,6 +292,7 @@ pub fn is_retryable_cli_error(msg: &str) -> bool {
         || lower.contains("503 service unavailable")
         || lower.contains("connection reset by peer")
         || lower.contains("broken pipe")
+        || lower.contains("the stream was interrupted")
 }
 
 /// Fit a prompt into budget, using SlidingContextPruner first to preserve recent turns and
@@ -1539,6 +1540,7 @@ mod tests {
         assert!(is_retryable_cli_error("429 Too Many Requests"));
         assert!(is_retryable_cli_error("503 Service Unavailable"));
         assert!(is_retryable_cli_error("connection reset by peer"));
+        assert!(is_retryable_cli_error("Error: The stream was interrupted. Please continue the task you were working on."));
         assert!(!is_retryable_cli_error("command not found: foobar"));
     }
 
