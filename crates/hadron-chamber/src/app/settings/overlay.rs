@@ -116,9 +116,70 @@ impl super::Chamber {
                     .child("ROSTER"),
             )
             .child(self.settings_nav_row(SettingsTarget::Human, &target, cx));
-        for r in &self.view.roster {
-            nav =
-                nav.child(self.settings_nav_row(SettingsTarget::Quark(r.id.clone()), &target, cx));
+
+        let (active_quark_ids, catalogue_quark_ids) =
+            partition_and_sort_settings_roster(&self.view.roster, |id| {
+                self.resolve_identity(id).name
+            });
+
+        if !active_quark_ids.is_empty() {
+            nav = nav.child(
+                h_flex()
+                    .px_1()
+                    .pt_2()
+                    .pb_0p5()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme::accent())
+                            .child("ACTIVE"),
+                    )
+                    .child(
+                        div()
+                            .px_1p5()
+                            .rounded_full()
+                            .bg(theme::bg_surface_raised())
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("{}", active_quark_ids.len())),
+                    ),
+            );
+            for qid in active_quark_ids {
+                nav = nav.child(self.settings_nav_row(SettingsTarget::Quark(qid), &target, cx));
+            }
+        }
+
+        if !catalogue_quark_ids.is_empty() {
+            nav = nav.child(
+                h_flex()
+                    .px_1()
+                    .pt_2()
+                    .pb_0p5()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme::text_muted())
+                            .child("CATALOGUE"),
+                    )
+                    .child(
+                        div()
+                            .px_1p5()
+                            .rounded_full()
+                            .bg(theme::bg_surface_raised())
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("{}", catalogue_quark_ids.len())),
+                    ),
+            );
+            for qid in catalogue_quark_ids {
+                nav = nav.child(self.settings_nav_row(SettingsTarget::Quark(qid), &target, cx));
+            }
         }
 
         // "+ Add Quark" quick action at the bottom of sidebar roster list
@@ -841,8 +902,30 @@ impl super::Chamber {
             ),
             SettingsTarget::Quark(qid) => {
                 let dot = if let Some(r) = self.view.roster.iter().find(|r| &r.id == qid) {
-                    let effective_state = effective_presence_state(r.state, r.adopted, r.enabled, false);
-                    Some(self.render_halo_dot(effective_state, r.enabled).into_any_element())
+                    let has_activity = self
+                        .last_live_activities
+                        .get(qid)
+                        .and_then(|a| a.as_ref())
+                        .is_some();
+                    let effective_state =
+                        effective_presence_state(r.state, r.adopted, r.enabled, has_activity);
+                    Some(
+                        h_flex()
+                            .items_center()
+                            .gap_1p5()
+                            .flex_shrink_0()
+                            .child(
+                                div()
+                                    .px_1()
+                                    .rounded_sm()
+                                    .bg(theme::bg_surface())
+                                    .text_size(px(10.0))
+                                    .text_color(theme::text_muted())
+                                    .child(r.transport.code()),
+                            )
+                            .child(self.render_halo_dot(effective_state, r.enabled))
+                            .into_any_element(),
+                    )
                 } else {
                     None
                 };
@@ -858,6 +941,12 @@ impl super::Chamber {
             .px_2()
             .py_1p5()
             .rounded_md()
+            .border_1()
+            .border_color(if selected {
+                theme::glass_highlight()
+            } else {
+                gpui::transparent_black()
+            })
             .bg(if selected {
                 theme::bg_surface_raised()
             } else {
@@ -1676,5 +1765,84 @@ impl super::Chamber {
             .gap_4()
             .child(configured_section)
             .child(create_section)
+    }
+}
+
+/// Splits roster quarks into `(active_ids, catalogue_ids)` where active seats are
+/// `adopted && enabled`, sorting each bucket case-insensitively by resolved display
+/// name then quark ID.
+pub(crate) fn partition_and_sort_settings_roster<F>(
+    roster: &[RosterRow],
+    resolve_name: F,
+) -> (Vec<String>, Vec<String>)
+where
+    F: Fn(&str) -> String,
+{
+    let mut active: Vec<(String, String)> = Vec::new();
+    let mut catalogue: Vec<(String, String)> = Vec::new();
+
+    for r in roster {
+        let name = resolve_name(&r.id);
+        if r.adopted && r.enabled {
+            active.push((r.id.clone(), name));
+        } else {
+            catalogue.push((r.id.clone(), name));
+        }
+    }
+
+    let cmp = |a: &(String, String), b: &(String, String)| {
+        a.1.to_lowercase()
+            .cmp(&b.1.to_lowercase())
+            .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+    };
+    active.sort_by(cmp);
+    catalogue.sort_by(cmp);
+
+    (
+        active.into_iter().map(|(id, _)| id).collect(),
+        catalogue.into_iter().map(|(id, _)| id).collect(),
+    )
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    fn dummy_row(id: &str, adopted: bool, enabled: bool) -> RosterRow {
+        RosterRow {
+            id: id.to_string(),
+            display_name: None,
+            state: hadron_lattice::QuarkState::Ground,
+            mode: hadron_lattice::Mode::Ask,
+            mode_is_override: false,
+            vendor: "agy".to_string(),
+            model: "gemini".to_string(),
+            flavor: None,
+            transport: hadron_lattice::Transport::Acp,
+            effort: None,
+            enabled,
+            adopted,
+            tokens: 0,
+            unknown_turns: 0,
+        }
+    }
+
+    #[test]
+    fn partition_and_sort_settings_roster_splits_active_and_catalogue_alphabetically() {
+        let roster = vec![
+            dummy_row("cli-zeta", true, true),
+            dummy_row("acp-beta", false, false),
+            dummy_row("acp-alpha", true, true),
+            dummy_row("http-disabled", true, false),
+        ];
+        let (active, catalogue) = partition_and_sort_settings_roster(&roster, |id| match id {
+            "cli-zeta" => "Zeta".to_string(),
+            "acp-alpha" => "Alpha".to_string(),
+            "acp-beta" => "Beta".to_string(),
+            "http-disabled" => "Gamma".to_string(),
+            other => other.to_string(),
+        });
+        assert_eq!(active, vec!["acp-alpha", "cli-zeta"]);
+        assert_eq!(catalogue, vec!["acp-beta", "http-disabled"]);
     }
 }

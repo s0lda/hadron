@@ -1623,12 +1623,11 @@ impl super::Chamber {
         if self.cached_crate_graph.borrow().is_none() {
             if !self.cached_crate_graph_loading.get() {
                 self.cached_crate_graph_loading.set(true);
-                let repo_root_for_bg = repo_root.clone();
                 cx.spawn(async move |this, cx| {
                     let graph = cx
                         .background_executor()
                         .spawn(async move {
-                            CachedCrateGraph::build(&repo_root_for_bg)
+                            CachedCrateGraph::build(&repo_root)
                         })
                         .await;
                     let _ = this.update(cx, |chamber, cx| {
@@ -1783,9 +1782,9 @@ impl super::Chamber {
                 let range_x = (max_x - min_x).max(100.0);
                 let range_y = (max_y - min_y).max(100.0);
 
-                let scale_x = (w * 0.75) / range_x;
-                let scale_y = (h * 0.70) / range_y;
-                let scale = scale_x.min(scale_y).clamp(0.4, 2.0);
+                let avail_w = (w - 170.0).max(60.0);
+                let avail_h = (h - 90.0).max(60.0);
+                let scale = (avail_w / range_x).min(avail_h / range_y).min(2.0);
 
                 let center_orig_x = (min_x + max_x) * 0.5;
                 let center_orig_y = (min_y + max_y) * 0.5;
@@ -1891,7 +1890,7 @@ impl super::Chamber {
             )
             .child(canvas_elem);
 
-        // Crate Chips Dock
+        // Crate Chips Dock (top-anchored below header so selecting crates never shifts bottom layout)
         let crate_chips_dock = h_flex()
             .id("crates-dock")
             .w_full()
@@ -1901,7 +1900,7 @@ impl super::Chamber {
             .px_3()
             .py_2()
             .gap_1p5()
-            .border_t_1()
+            .border_b_1()
             .border_color(theme::glass_highlight())
             .bg(theme::bg_surface().opacity(0.40))
             .children(cached.crate_positions.keys().map(|c_name| {
@@ -1985,15 +1984,20 @@ impl super::Chamber {
                 .collect();
 
             v_flex()
-                .id("crate-inspector-panel")
-                .w_full()
-                .h(px(160.0))
-                .max_h(px(160.0))
+                .id("crate-inspector-drawer")
+                .absolute()
+                .bottom_3()
+                .right_3()
+                .w(px(420.0))
+                .max_h(px(176.0))
                 .overflow_y_scroll()
+                .occlude()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .p_3()
                 .gap_2()
+                .rounded_lg()
                 .bg(theme::term_bg())
-                .border_t_1()
+                .border_1()
                 .border_color(theme::glass_highlight())
                 .child(
                     h_flex()
@@ -2132,14 +2136,15 @@ impl super::Chamber {
                 })
         });
 
+        let canvas_container = canvas_container.children(crate_inspector);
+
         v_flex()
             .id("crates-modules-container")
             .size_full()
             .bg(theme::canvas_base())
             .child(header)
-            .child(canvas_container)
             .child(crate_chips_dock)
-            .children(crate_inspector)
+            .child(canvas_container)
             .into_any_element()
     }
 

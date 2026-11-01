@@ -130,6 +130,18 @@ impl Chamber {
         };
 
         let tab_title = tab.title.clone();
+        let (status_label, status_color, dims_label) = if let Some(term) = &tab.term {
+            let (cols, rows) = term.size();
+            (
+                if is_active { "Active" } else { "Running" },
+                if is_active { theme::accent() } else { theme::success() },
+                Some(format!("{cols}×{rows}")),
+            )
+        } else if tab.error.is_some() {
+            ("Error", theme::error(), None)
+        } else {
+            ("Starting", theme::warning(), None)
+        };
         let view_entity = cx.entity().clone();
         v_flex()
             .id(SharedString::from(format!("pty-grid-card-{tab_ix}")))
@@ -168,7 +180,7 @@ impl Chamber {
                     .flex_shrink_0()
                     .justify_between()
                     .items_center()
-                    .px_2()
+                    .px_2p5()
                     .py_1()
                     .bg(header_bg)
                     .border_b_1()
@@ -177,10 +189,12 @@ impl Chamber {
                         h_flex()
                             .gap_1p5()
                             .items_center()
+                            .min_w_0()
                             .child(
                                 div()
                                     .size(px(6.0))
                                     .rounded_full()
+                                    .flex_shrink_0()
                                     .bg(if is_active { theme::halo_active() } else { theme::halo_idle() }),
                             )
                             .child(
@@ -188,23 +202,98 @@ impl Chamber {
                                     .text_xs()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(if is_active { theme::accent() } else { theme::text() })
+                                    .truncate()
                                     .child(tab_title),
-                            ),
+                            )
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::bg_base())
+                                    .text_size(px(10.0))
+                                    .text_color(status_color)
+                                    .child(status_label),
+                            )
+                            .when_some(dims_label, |this, dims| {
+                                this.child(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::bg_base())
+                                        .text_size(px(10.0))
+                                        .text_color(theme::text_muted())
+                                        .child(dims),
+                                )
+                            }),
                     )
                     .child(
-                        div()
-                            .id(SharedString::from(format!("pty-grid-close-{tab_ix}")))
-                            .px_1p5()
-                            .py_0p5()
-                            .rounded_full()
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::glass_surface()).text_color(theme::text()))
-                            .text_color(theme::text_muted())
-                            .text_xs()
-                            .child("×")
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.close_terminal(tab_ix, cx);
-                            })),
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("pty-grid-clear-{tab_ix}")))
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::glass_surface()).text_color(theme::text()))
+                                    .text_color(theme::text_muted())
+                                    .text_size(px(10.0))
+                                    .child("Clear")
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        if let Some(term) = this
+                                            .terminals
+                                            .get_mut(tab_ix)
+                                            .and_then(|t| t.term.as_mut())
+                                        {
+                                            term.scroll_to_bottom();
+                                            term.send_input(&[0x0c]);
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("pty-grid-sigint-{tab_ix}")))
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::glass_surface()).text_color(theme::warning()))
+                                    .text_color(theme::text_muted())
+                                    .text_size(px(10.0))
+                                    .child("^C")
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        if let Some(term) = this
+                                            .terminals
+                                            .get_mut(tab_ix)
+                                            .and_then(|t| t.term.as_mut())
+                                        {
+                                            term.scroll_to_bottom();
+                                            term.send_input(&[0x03]);
+                                            cx.notify();
+                                        }
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("pty-grid-close-{tab_ix}")))
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::glass_surface()).text_color(theme::text()))
+                                    .text_color(theme::text_muted())
+                                    .text_xs()
+                                    .child("×")
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.close_terminal(tab_ix, cx);
+                                    })),
+                            ),
                     ),
             )
             .child(pty_content)

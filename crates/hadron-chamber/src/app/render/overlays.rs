@@ -1891,9 +1891,44 @@ impl super::Chamber {
     /// kill switch here would have nothing real to act on.
     pub(super) fn process_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = self.resolve_running_processes();
+        let now = chrono::Utc::now();
 
-        let mut list = v_flex().gap_1p5();
+        let active_seats_count = self
+            .view
+            .roster
+            .iter()
+            .filter(|r| r.adopted && r.enabled)
+            .count();
+        let excited_count = self
+            .view
+            .roster
+            .iter()
+            .filter(|r| {
+                r.adopted
+                    && r.enabled
+                    && (matches!(r.state, QuarkState::Excited | QuarkState::Thinking)
+                        || self
+                            .last_live_activities
+                            .get(&r.id)
+                            .and_then(|a| a.as_ref())
+                            .is_some())
+            })
+            .count();
+        let restartable_acp_ids: Vec<String> = rows
+            .iter()
+            .filter(|r| r.id != "gluon" && r.can_restart)
+            .map(|r| r.id.clone())
+            .collect();
+
+        let mut list = v_flex().gap_2();
         for row in rows {
+            let roster_row = self.view.roster.iter().find(|r| r.id == row.id);
+            let activity = self.last_live_activities.get(&row.id).and_then(|a| a.as_ref());
+            let is_gating = self
+                .last_gate_activities
+                .iter()
+                .any(|g| g.quark.as_str() == row.id);
+
             // Determine dot color & presence label using Hadron SSOT halo dot logic (matching Roster)
             let (dot, status_label) = if row.id == "gluon" {
                 if row.status == "Running" {
@@ -1901,20 +1936,19 @@ impl super::Chamber {
                 } else {
                     (theme::halo_error(), "Stopped".to_string())
                 }
-            } else if let Some(roster_row) = self.view.roster.iter().find(|r| r.id == row.id) {
-                let activity = self.last_live_activities.get(&row.id).and_then(|a| a.as_ref());
+            } else if let Some(r) = roster_row {
                 let effective_state = effective_presence_state(
-                    roster_row.state,
-                    roster_row.adopted,
-                    roster_row.enabled,
+                    r.state,
+                    r.adopted,
+                    r.enabled,
                     activity.is_some(),
                 );
-                if roster_row.enabled {
+                if r.enabled {
                     (
                         theme::halo_dot(effective_state),
                         theme::presence_label(effective_state).to_string(),
                     )
-                } else if !roster_row.adopted {
+                } else if !r.adopted {
                     (theme::presence_disabled().into(), "available".to_string())
                 } else {
                     (theme::presence_disabled().into(), "disabled".to_string())
@@ -1928,18 +1962,57 @@ impl super::Chamber {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(24.0))
+                    .size(px(28.0))
                     .rounded_full()
                     .bg(theme::bg_surface_raised())
-                    .text_color(theme::text_secondary())
+                    .text_color(theme::accent())
                     .child(Icon::new(IconName::Cpu).small())
                     .into_any_element()
             } else {
                 let resolved = self.resolve_identity(&row.id);
-                identity_avatar(&resolved, 24.0).into_any_element()
+                identity_avatar(&resolved, 28.0).into_any_element()
             };
 
-            let mut row_actions = h_flex().gap_1p5();
+            let transport_code = if row.id == "gluon" {
+                "DAEMON"
+            } else {
+                roster_row.map(|r| r.transport.code()).unwrap_or("SEAT")
+            };
+
+            let model_label = roster_row
+                .map(|r| r.model_label())
+                .filter(|m| !m.is_empty());
+
+            let is_orchestrator = roster_row
+                .is_some_and(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator));
+
+            let subtitle = if row.id == "gluon" {
+                activity
+                    .map(|a| a.detail.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        Some(if row.enabled {
+                            "Swarm Engine, Router & Merge Gate".to_string()
+                        } else {
+                            "Daemon process not running".to_string()
+                        })
+                    })
+            } else if is_gating {
+                Some("Running Merge Gate verification...".to_string())
+            } else if let Some(act) = activity {
+                let elapsed = act
+                    .started
+                    .or(Some(act.at))
+                    .map(|st| (now - st).num_seconds().max(0))
+                    .unwrap_or(0);
+                let detail = act.detail.trim();
+                let label = if detail.is_empty() { "thinking" } else { detail };
+                Some(format!("{label} ({elapsed}s)"))
+            } else {
+                None
+            };
+
+            let mut row_actions = h_flex().items_center().gap_1p5();
             if row.can_restart {
                 let id = row.id.clone();
                 let is_gluon = id == "gluon";
@@ -1964,6 +2037,34 @@ impl super::Chamber {
                     ),
                 );
             }
+            if row.id != "gluon" {
+                let id_for_settings = row.id.clone();
+                row_actions = row_actions.child(
+                    div()
+                        .id(SharedString::from(format!("proc-settings-{}", row.id)))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(24.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme::border())
+                        .bg(theme::bg_base())
+                        .text_color(theme::text_secondary())
+                        .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+                        .cursor_pointer()
+                        .child(Icon::new(IconName::Settings).xsmall())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.process_manager_open = false;
+                            this.settings_open = true;
+                            this.select_settings_target(
+                                SettingsTarget::Quark(id_for_settings.clone()),
+                                window,
+                                cx,
+                            );
+                        })),
+                );
+            }
 
             list = list.child(
                 h_flex()
@@ -1972,26 +2073,100 @@ impl super::Chamber {
                     .justify_between()
                     .gap_3()
                     .px_3()
-                    .py_2()
-                    .rounded_md()
+                    .py_2p5()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(theme::glass_highlight())
                     .bg(theme::bg_surface())
                     .hover(|s| s.bg(theme::bg_surface_raised()))
                     .child(
                         h_flex()
                             .items_center()
                             .gap_2p5()
+                            .flex_1()
+                            .min_w_0()
                             .child(avatar_or_icon)
-                            .child(div().size(px(7.0)).rounded_full().bg(dot))
-                            .child(div().text_sm().font_weight(gpui::FontWeight::MEDIUM).text_color(theme::text()).child(row.label)),
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .min_w_0()
+                                            .child(div().size(px(7.0)).rounded_full().flex_shrink_0().bg(dot))
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .text_color(theme::text())
+                                                    .truncate()
+                                                    .child(row.label),
+                                            )
+                                            .when(is_orchestrator, |this| {
+                                                this.child(
+                                                    div()
+                                                        .px_1p5()
+                                                        .py_0p5()
+                                                        .rounded_sm()
+                                                        .bg(theme::accent().opacity(0.15))
+                                                        .text_size(px(10.0))
+                                                        .font_weight(gpui::FontWeight::BOLD)
+                                                        .text_color(theme::accent())
+                                                        .child("ORCH"),
+                                                )
+                                            })
+                                            .child(
+                                                div()
+                                                    .px_1p5()
+                                                    .py_0p5()
+                                                    .rounded_sm()
+                                                    .bg(theme::bg_surface_raised())
+                                                    .text_size(px(10.0))
+                                                    .text_color(theme::text_muted())
+                                                    .child(transport_code),
+                                            )
+                                            .when_some(model_label, |this, model| {
+                                                this.child(
+                                                    div()
+                                                        .px_1p5()
+                                                        .py_0p5()
+                                                        .rounded_sm()
+                                                        .bg(theme::bg_base())
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::text_secondary())
+                                                        .truncate()
+                                                        .max_w(px(150.0))
+                                                        .child(model),
+                                                )
+                                            }),
+                                    )
+                                    .when_some(subtitle, |this, sub| {
+                                        this.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme::text_muted())
+                                                .truncate()
+                                                .child(sub),
+                                        )
+                                    }),
+                            ),
                     )
                     .child(
                         h_flex()
                             .items_center()
-                            .gap_3()
+                            .flex_shrink_0()
+                            .gap_2p5()
                             .child(
                                 div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(theme::bg_base())
                                     .text_xs()
-                                    .text_color(theme::text_muted())
+                                    .text_color(theme::text_secondary())
                                     .child(status_label),
                             )
                             .child(row_actions),
@@ -1999,12 +2174,81 @@ impl super::Chamber {
             );
         }
 
+        let summary_strip = h_flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .flex_wrap()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_full()
+                            .bg(theme::tab_bar_bg())
+                            .border_1()
+                            .border_color(theme::glass_highlight())
+                            .text_xs()
+                            .text_color(if self.last_gluon_running {
+                                theme::success()
+                            } else {
+                                theme::error()
+                            })
+                            .child(if self.last_gluon_running {
+                                "Daemon Online"
+                            } else {
+                                "Daemon Stopped"
+                            }),
+                    )
+                    .child(
+                        div()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_full()
+                            .bg(theme::tab_bar_bg())
+                            .border_1()
+                            .border_color(theme::glass_highlight())
+                            .text_xs()
+                            .text_color(theme::text_secondary())
+                            .child(format!("{active_seats_count} Active Seats")),
+                    )
+                    .when(excited_count > 0, |this| {
+                        this.child(
+                            div()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_full()
+                                .bg(theme::accent().opacity(0.16))
+                                .border_1()
+                                .border_color(theme::accent().opacity(0.4))
+                                .text_xs()
+                                .text_color(theme::accent())
+                                .child(format!("{excited_count} Excited")),
+                        )
+                    }),
+            )
+            .when(!restartable_acp_ids.is_empty(), |this| {
+                let ids = restartable_acp_ids.clone();
+                this.child(
+                    text_button("proc-restart-all-acp", "Restart All ACP").on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            for id in &ids {
+                                this.reboot_quark(id, cx);
+                            }
+                        },
+                    )),
+                )
+            });
+
         let card = v_flex()
             .occlude()
-            .w(px(500.0))
-            .max_h(px(560.0))
+            .w(px(580.0))
+            .max_h(px(600.0))
             .p_4()
-            .gap_4()
+            .gap_3()
             .rounded(INNER_RADIUS)
             .bg(theme::glass_card())
             .border_1()
@@ -2045,6 +2289,7 @@ impl super::Chamber {
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_process_manager(cx))),
                     ),
             )
+            .child(summary_strip)
             .child(
                 div()
                     .id("processes-scroll")

@@ -115,8 +115,14 @@ impl ForceDirectedGraph {
             }
         }
 
-        // 3. Apply velocity and damping
+        // 3. Centering gravity toward (400.0, 300.0) so orphan/disconnected nodes stay compact
+        //    and Apply velocity + damping
+        const CENTER_X: f32 = 400.0;
+        const CENTER_Y: f32 = 300.0;
+        const GRAVITY_K: f32 = 0.035;
         for node in self.nodes.values_mut() {
+            node.vx += (CENTER_X - node.x) * GRAVITY_K;
+            node.vy += (CENTER_Y - node.y) * GRAVITY_K;
             node.x += node.vx;
             node.y += node.vy;
             node.vx *= damping;
@@ -145,7 +151,7 @@ impl CachedNucleusGraph {
         let mut orphaned_notes = Vec::new();
 
         let num_nodes = nodes.len();
-        let radius = (num_nodes as f32 * 35.0).max(180.0);
+        let radius = (num_nodes as f32 * 24.0).clamp(120.0, 260.0);
 
         let mut i = 0;
         for (slug, node) in &nodes {
@@ -166,7 +172,7 @@ impl CachedNucleusGraph {
 
         // Run force simulation ticks to reach layout equilibrium
         for _ in 0..140 {
-            force_graph.step_simulation(8000.0, 0.05, 0.85);
+            force_graph.step_simulation(5500.0, 0.05, 0.85);
         }
 
         let mut positions = HashMap::new();
@@ -198,12 +204,12 @@ impl super::Chamber {
         if self.cached_nucleus_graph.borrow().is_none() {
             if !self.cached_nucleus_graph_loading.get() {
                 self.cached_nucleus_graph_loading.set(true);
-                let repo_root_for_bg = repo_root.clone();
+                let root_for_build = repo_root.clone();
                 cx.spawn(async move |this, cx| {
                     let graph = cx
                         .background_executor()
                         .spawn(async move {
-                            CachedNucleusGraph::build(&repo_root_for_bg)
+                            CachedNucleusGraph::build(&root_for_build)
                         })
                         .await;
                     let _ = this.update(cx, |chamber, cx| {
@@ -360,12 +366,12 @@ impl super::Chamber {
                     max_y = max_y.max(y);
                 }
 
-                let range_x = (max_x - min_x).max(100.0);
-                let range_y = (max_y - min_y).max(100.0);
+                let range_x = (max_x - min_x).max(60.0);
+                let range_y = (max_y - min_y).max(60.0);
 
-                let scale_x = (w * 0.75) / range_x;
-                let scale_y = (h * 0.70) / range_y;
-                let scale = scale_x.min(scale_y).clamp(0.4, 2.5);
+                let avail_w = (w - 48.0).max(40.0);
+                let avail_h = (h - 48.0).max(40.0);
+                let scale = (avail_w / range_x).min(avail_h / range_y).min(2.5);
 
                 let center_orig_x = (min_x + max_x) * 0.5;
                 let center_orig_y = (min_y + max_y) * 0.5;
@@ -453,6 +459,7 @@ impl super::Chamber {
             .relative()
             .flex_1()
             .min_h_0()
+            .overflow_hidden()
             .cursor_pointer()
             .on_mouse_down(
                 MouseButton::Left,
@@ -546,7 +553,7 @@ impl super::Chamber {
             );
 
         let note_chips_dock = v_flex()
-            .id("nucleus-note-chips-dock")
+            .id("nucleus-notes-dock-scroll")
             .w_full()
             .max_h(px(140.0))
             .overflow_y_scroll()
@@ -666,10 +673,31 @@ impl super::Chamber {
                                 }),
                         )
                         .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .child(n.path.clone()),
+                            h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(n.path.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id("close-nucleus-note-inspector")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .cursor_pointer()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .hover(|s| s.text_color(theme::text()))
+                                        .child("✕")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.visualizer_selected_note = None;
+                                            cx.notify();
+                                        })),
+                                ),
                         ),
                 )
                 .child(
