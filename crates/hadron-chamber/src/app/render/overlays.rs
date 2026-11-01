@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.34",
+        date: Some("2026-11-01"),
+        added: &[
+            "Persistent Disk Caching & Startup Revalidation for Dependencies and Nucleus Graph: Added VisualizerGraphsDiskCache (.hadron/cache/visualizer_graphs.json) with FNV-1a metadata fingerprinting, wired Chamber::warm_visualizer_graphs at startup and on workspace/nucleus scans to hydrate cached graphs immediately and rebuild only stale graphs in the background, persisted Nucleus Graph remediation updates, and added a Checking changes badge during background revalidation",
+        ],
+        changed: &[
+            "Stats Tab Cleanup: Removed the redundant Milestone Timeline stepper card from Chamber::stats_view",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.33",
         date: Some("2026-11-01"),
         added: &[

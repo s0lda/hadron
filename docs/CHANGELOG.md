@@ -5,6 +5,16 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.34] - 2026-11-01
+
+### Added
+- **Persistent Disk Caching & Startup Revalidation for `Dependencies` and `Nucleus Graph` (`hadron-chamber`)**:
+  - Added `VisualizerGraphsDiskCache` (`.hadron/cache/visualizer_graphs.json`) with FNV-1a metadata fingerprinting across `Cargo.toml` / `crates/*/src/**/*.rs` and `.hadron/nucleus/`, wired `Chamber::warm_visualizer_graphs` at startup and on workspace file/nucleus scans to hydrate cached graphs immediately and rebuild only stale graphs in the background, persisted `Nucleus Graph` updates on orphan and dead-link remediation actions, and surfaced a `Checking changes` badge during background revalidation (`crates/hadron-chamber/src/app/render/visualizer.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/reload.rs`).
+
+### Changed
+- **Stats Tab Cleanup (`hadron-chamber`)**:
+  - Removed the redundant `Milestone Timeline` stepper card and `timeline_view` from `Chamber::stats_view` (`crates/hadron-chamber/src/app/render/stats.rs`, `crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/widgets.rs`).
+
 ## [0.33.33] - 2026-11-01
 
 ### Added
