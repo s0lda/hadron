@@ -1509,8 +1509,6 @@ impl super::Chamber {
 /// Lavapipe-cached workspace crates & intra-crate modules topology graph.
 #[derive(Debug, Clone)]
 pub struct CachedCrateGraph {
-    #[allow(dead_code)]
-    pub content_hash: u64,
     pub topology: hadron_forge::topology::WorkspaceTopologyGraph,
     pub crate_layers: BTreeMap<String, usize>,
     pub direct_modified_crates: HashSet<String>,
@@ -1566,14 +1564,7 @@ impl CachedCrateGraph {
             }
         }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        use std::hash::Hash;
-        topology.nodes.len().hash(&mut hasher);
-        topology.edges.len().hash(&mut hasher);
-        let content_hash = std::hash::Hasher::finish(&hasher);
-
         Self {
-            content_hash,
             topology,
             crate_layers,
             direct_modified_crates,

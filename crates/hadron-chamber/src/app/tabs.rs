@@ -28,7 +28,7 @@ impl ChatTab {
     /// Sizes every per-tab array. A tab added to `ALL` without growing those
     /// arrays is an index-out-of-bounds the moment the tab is opened, so they
     /// take their length from here rather than restating it.
-    #[allow(dead_code)] // arrays currently size from ALL.len() directly
+    #[cfg(test)]
     pub(super) const COUNT: usize = Self::ALL.len();
 
     pub(super) fn index(self) -> usize {

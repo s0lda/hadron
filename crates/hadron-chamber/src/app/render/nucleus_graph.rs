@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use super::*;
 use gpui::{canvas, fill, point, px, size, Bounds, MouseButton, PathBuilder};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForceNode {
     pub slug: String,
@@ -19,21 +18,18 @@ pub struct ForceNode {
     pub vy: f32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForceEdge {
     pub source: String,
     pub target: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ForceDirectedGraph {
     pub nodes: HashMap<String, ForceNode>,
     pub edges: Vec<ForceEdge>,
 }
 
-#[allow(dead_code)]
 impl ForceDirectedGraph {
     pub fn new() -> Self {
         Self {
@@ -134,8 +130,6 @@ impl ForceDirectedGraph {
 /// Lavapipe-cached Nucleus Graph topology and layout calculation.
 #[derive(Debug, Clone)]
 pub struct CachedNucleusGraph {
-    #[allow(dead_code)]
-    pub content_hash: u64,
     pub nodes: BTreeMap<String, hadron_forge::nucleus_graph::NucleusNode>,
     pub dead_links: Vec<(String, String)>,
     pub orphaned_notes: Vec<String>,
@@ -283,14 +277,7 @@ impl CachedNucleusGraph {
             positions.insert(slug.clone(), (fn_node.x, fn_node.y));
         }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        use std::hash::Hash;
-        nodes.len().hash(&mut hasher);
-        dead_links.len().hash(&mut hasher);
-        let content_hash = std::hash::Hasher::finish(&hasher);
-
         Self {
-            content_hash,
             nodes,
             dead_links,
             orphaned_notes,
