@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.35] - 2026-11-01
+
+### Changed
+- **Visualizer Header HUD Right-Alignment & 2400% Nucleus Graph Max Zoom (`hadron-chamber`)**:
+  - Placed `mode_switcher` and `hud_summary` as direct children of the `justify_between` header row in `Swarm 3D` and wrapped secondary HUD control rows in full-width `justify_end` flex containers across both `Swarm 3D` (`hud_controls`) and `Nucleus Graph` (`stats_hud`) so tabs sit left and status/HUD controls align uniformly to the right (`crates/hadron-chamber/src/app/render/visualizer.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+  - Increased `NUCLEUS_ZOOM_MAX` from `8.0` (`800%`) to `24.0` (`2400%`) in `Nucleus Graph` for inspecting dense memory graphs (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+
 ## [0.33.34] - 2026-11-01
 
 ### Added

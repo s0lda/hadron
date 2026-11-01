@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.35",
+        date: Some("2026-11-01"),
+        added: &[],
+        changed: &[
+            "Visualizer Header HUD Right-Alignment & 2400% Nucleus Graph Max Zoom: Aligned Swarm 3D status info with header tabs using space-between, right-aligned wrapped HUD control rows across Swarm 3D and Nucleus Graph, and raised NUCLEUS_ZOOM_MAX from 8.0 (800%) to 24.0 (2400%)",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.34",
         date: Some("2026-11-01"),
         added: &[
