@@ -1507,13 +1507,275 @@ impl super::Chamber {
 }
 
 /// Lavapipe-cached workspace crates & intra-crate modules topology graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CachedCrateGraph {
     pub topology: hadron_forge::topology::WorkspaceTopologyGraph,
     pub crate_layers: BTreeMap<String, usize>,
     pub direct_modified_crates: HashSet<String>,
     pub downstream_impacted_crates: HashSet<String>,
     pub crate_positions: HashMap<String, (f32, f32)>,
+}
+
+pub const VISUALIZER_GRAPHS_CACHE_VERSION: u32 = 1;
+
+const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x00000100000001b3;
+
+fn fnv1a_update(mut hash: u64, bytes: &[u8]) -> u64 {
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn collect_rs_entries_meta(
+    dir: &std::path::Path,
+    rel_prefix: &str,
+    out: &mut Vec<(String, u64, u128)>,
+) {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in read_dir.flatten() {
+        let file_name = entry.file_name();
+        let Some(name_str) = file_name.to_str() else {
+            continue;
+        };
+        if name_str.starts_with('.') {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let rel = format!("{}/{}", rel_prefix, name_str);
+        if file_type.is_dir() {
+            collect_rs_entries_meta(&entry.path(), &rel, out);
+        } else if file_type.is_file() && name_str.ends_with(".rs") {
+            if let Ok(meta) = entry.metadata() {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                out.push((rel, meta.len(), mtime));
+            }
+        }
+    }
+}
+
+/// Computes a fast, deterministic 64-bit metadata fingerprint across `Cargo.toml`,
+/// `crates/*/Cargo.toml`, and `crates/*/src/**/*.rs` without reading file contents.
+pub fn compute_crate_graph_fingerprint(repo_root: &std::path::Path) -> u64 {
+    let mut entries_meta: Vec<(String, u64, u128)> = Vec::new();
+
+    let root_cargo = repo_root.join("Cargo.toml");
+    if let Ok(meta) = std::fs::metadata(&root_cargo) {
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        entries_meta.push(("Cargo.toml".to_string(), meta.len(), mtime));
+    }
+
+    let crates_dir = repo_root.join("crates");
+    if let Ok(read_dir) = std::fs::read_dir(&crates_dir) {
+        for entry in read_dir.flatten() {
+            let file_name = entry.file_name();
+            let Some(dir_name) = file_name.to_str() else {
+                continue;
+            };
+            if dir_name.is_empty() || dir_name.starts_with('.') || dir_name == "gpui-component" {
+                continue;
+            }
+            let dir_path = entry.path();
+            if !dir_path.is_dir() {
+                continue;
+            }
+            let cargo_toml = dir_path.join("Cargo.toml");
+            if let Ok(meta) = std::fs::metadata(&cargo_toml) {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                entries_meta.push((format!("crates/{}/Cargo.toml", dir_name), meta.len(), mtime));
+                let src_dir = dir_path.join("src");
+                if src_dir.is_dir() {
+                    collect_rs_entries_meta(
+                        &src_dir,
+                        &format!("crates/{}/src", dir_name),
+                        &mut entries_meta,
+                    );
+                }
+            }
+        }
+    }
+
+    entries_meta.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hash = fnv1a_update(FNV_OFFSET_BASIS, &VISUALIZER_GRAPHS_CACHE_VERSION.to_le_bytes());
+    for (rel, len, mtime) in entries_meta {
+        hash = fnv1a_update(hash, rel.as_bytes());
+        hash = fnv1a_update(hash, &[0xff]);
+        hash = fnv1a_update(hash, &len.to_le_bytes());
+        hash = fnv1a_update(hash, &mtime.to_le_bytes());
+    }
+    hash
+}
+
+/// Computes a fast, deterministic 64-bit metadata fingerprint across `.hadron/nucleus/index.md`
+/// and `.hadron/nucleus/notes/*.md` using directory entry metadata.
+pub fn compute_nucleus_graph_fingerprint(repo_root: &std::path::Path) -> u64 {
+    let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+    let mut entries_meta: Vec<(String, u64, u128)> = Vec::new();
+
+    let index_path = nucleus_dir.join("index.md");
+    if let Ok(meta) = std::fs::metadata(&index_path) {
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        entries_meta.push(("index.md".to_string(), meta.len(), mtime));
+    }
+
+    let notes_dir = nucleus_dir.join("notes");
+    if let Ok(read_dir) = std::fs::read_dir(&notes_dir) {
+        for entry in read_dir.flatten() {
+            let file_name = entry.file_name();
+            let Some(name_str) = file_name.to_str() else {
+                continue;
+            };
+            if !name_str.ends_with(".md") {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                let mtime = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                entries_meta.push((format!("notes/{}", name_str), meta.len(), mtime));
+            }
+        }
+    }
+
+    entries_meta.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hash = fnv1a_update(FNV_OFFSET_BASIS, &VISUALIZER_GRAPHS_CACHE_VERSION.to_le_bytes());
+    for (rel, len, mtime) in entries_meta {
+        hash = fnv1a_update(hash, rel.as_bytes());
+        hash = fnv1a_update(hash, &[0xff]);
+        hash = fnv1a_update(hash, &len.to_le_bytes());
+        hash = fnv1a_update(hash, &mtime.to_le_bytes());
+    }
+    hash
+}
+
+/// On-disk cache for `Dependencies` (`CachedCrateGraph`) and `Nucleus Graph` (`CachedNucleusGraph`)
+/// stored at `.hadron/cache/visualizer_graphs.json` for instant startup hydration while Hadron
+/// checks for workspace changes in the background.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct VisualizerGraphsDiskCache {
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub crate_fingerprint: Option<u64>,
+    #[serde(default)]
+    pub crate_graph: Option<CachedCrateGraph>,
+    #[serde(default)]
+    pub nucleus_fingerprint: Option<u64>,
+    #[serde(default)]
+    pub nucleus_graph: Option<super::nucleus_graph::CachedNucleusGraph>,
+}
+
+impl VisualizerGraphsDiskCache {
+    pub fn cache_path(repo_root: &std::path::Path) -> std::path::PathBuf {
+        repo_root
+            .join(".hadron")
+            .join("cache")
+            .join("visualizer_graphs.json")
+    }
+
+    pub fn load(repo_root: &std::path::Path) -> Self {
+        let path = Self::cache_path(repo_root);
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        match serde_json::from_str::<Self>(&body) {
+            Ok(cache) if cache.version == VISUALIZER_GRAPHS_CACHE_VERSION => cache,
+            _ => Self::default(),
+        }
+    }
+
+    pub fn save(&self, repo_root: &std::path::Path) -> std::io::Result<()> {
+        let path = Self::cache_path(repo_root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut payload = self.clone();
+        payload.version = VISUALIZER_GRAPHS_CACHE_VERSION;
+        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        let body = serde_json::to_string(&payload)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(&tmp, body)?;
+        std::fs::rename(&tmp, &path)
+    }
+
+    /// Compares workspace metadata fingerprints against `self`, rebuilds only missing or stale
+    /// graphs, updates `self`, and persists `.hadron/cache/visualizer_graphs.json` atomically.
+    pub fn revalidate(
+        &mut self,
+        repo_root: &std::path::Path,
+        force_crate: bool,
+        force_nucleus: bool,
+    ) -> (
+        Option<CachedCrateGraph>,
+        Option<super::nucleus_graph::CachedNucleusGraph>,
+    ) {
+        let crate_fp = compute_crate_graph_fingerprint(repo_root);
+        let nucleus_fp = compute_nucleus_graph_fingerprint(repo_root);
+
+        let crate_stale =
+            force_crate || self.crate_fingerprint != Some(crate_fp) || self.crate_graph.is_none();
+        let nucleus_stale = force_nucleus
+            || self.nucleus_fingerprint != Some(nucleus_fp)
+            || self.nucleus_graph.is_none();
+
+        let new_crate = if crate_stale {
+            Some(CachedCrateGraph::build(repo_root))
+        } else {
+            None
+        };
+        let new_nucleus = if nucleus_stale {
+            Some(super::nucleus_graph::CachedNucleusGraph::build(repo_root))
+        } else {
+            None
+        };
+
+        if new_crate.is_some() || new_nucleus.is_some() {
+            if let Some(ref cg) = new_crate {
+                self.crate_fingerprint = Some(crate_fp);
+                self.crate_graph = Some(cg.clone());
+            }
+            if let Some(ref ng) = new_nucleus {
+                self.nucleus_fingerprint = Some(nucleus_fp);
+                self.nucleus_graph = Some(ng.clone());
+            }
+            if repo_root.join(".hadron").is_dir() {
+                let _ = self.save(repo_root);
+            }
+        }
+
+        (new_crate, new_nucleus)
+    }
 }
 
 impl CachedCrateGraph {
@@ -1655,26 +1917,87 @@ impl super::Chamber {
             }))
     }
 
-    pub(super) fn crates_and_modules_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+    /// Hydrates `cached_crate_graph` and `cached_nucleus_graph` immediately from
+    /// `.hadron/cache/visualizer_graphs.json` if not yet in memory, then verifies
+    /// workspace metadata fingerprints in the background and rebuilds only stale graphs.
+    pub(crate) fn warm_visualizer_graphs(&self, cx: &mut Context<Self>) {
+        if self.cached_crate_graph_loading.get() || self.cached_nucleus_graph_loading.get() {
+            return;
+        }
+        self.cached_crate_graph_loading.set(true);
+        self.cached_nucleus_graph_loading.set(true);
 
-        if self.cached_crate_graph.borrow().is_none() {
-            if !self.cached_crate_graph_loading.get() {
-                self.cached_crate_graph_loading.set(true);
-                cx.spawn(async move |this, cx| {
-                    let graph = cx
-                        .background_executor()
-                        .spawn(async move {
-                            CachedCrateGraph::build(&repo_root)
-                        })
-                        .await;
-                    let _ = this.update(cx, |chamber, cx| {
-                        *chamber.cached_crate_graph.borrow_mut() = Some(graph);
-                        chamber.cached_crate_graph_loading.set(false);
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let need_hydration = self.cached_crate_graph.borrow().is_none()
+            || self.cached_nucleus_graph.borrow().is_none();
+
+        cx.spawn(async move |this, cx| {
+            // Phase 1: Fast disk cache load so both tabs render immediately at startup
+            let repo_for_load = repo_root.clone();
+            let mut disk_cache = cx
+                .background_executor()
+                .spawn(async move { VisualizerGraphsDiskCache::load(&repo_for_load) })
+                .await;
+
+            let mut had_crate_in_mem = !need_hydration;
+            let mut had_nucleus_in_mem = !need_hydration;
+
+            if need_hydration {
+                let hydrated_crate = disk_cache.crate_graph.clone();
+                let hydrated_nucleus = disk_cache.nucleus_graph.clone();
+                let _ = this.update(cx, |chamber, cx| {
+                    let mut hydrated = false;
+                    if chamber.cached_crate_graph.borrow().is_none() {
+                        if let Some(cg) = hydrated_crate {
+                            *chamber.cached_crate_graph.borrow_mut() = Some(cg);
+                            hydrated = true;
+                        }
+                    }
+                    if chamber.cached_nucleus_graph.borrow().is_none() {
+                        if let Some(ng) = hydrated_nucleus {
+                            *chamber.cached_nucleus_graph.borrow_mut() = Some(ng);
+                            hydrated = true;
+                        }
+                    }
+                    had_crate_in_mem = chamber.cached_crate_graph.borrow().is_some();
+                    had_nucleus_in_mem = chamber.cached_nucleus_graph.borrow().is_some();
+                    if hydrated {
                         cx.notify();
-                    });
-                }).detach();
+                    }
+                });
             }
+
+            // Phase 2: Check metadata fingerprints in background and rebuild only stale graphs
+            let repo_for_revalidate = repo_root.clone();
+            let (rebuilt_crate, rebuilt_nucleus) = cx
+                .background_executor()
+                .spawn(async move {
+                    disk_cache.revalidate(
+                        &repo_for_revalidate,
+                        !had_crate_in_mem,
+                        !had_nucleus_in_mem,
+                    )
+                })
+                .await;
+
+            let _ = this.update(cx, |chamber, cx| {
+                if let Some(cg) = rebuilt_crate {
+                    *chamber.cached_crate_graph.borrow_mut() = Some(cg);
+                }
+                if let Some(ng) = rebuilt_nucleus {
+                    *chamber.cached_nucleus_graph.borrow_mut() = Some(ng);
+                }
+                chamber.cached_crate_graph_loading.set(false);
+                chamber.cached_nucleus_graph_loading.set(false);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn crates_and_modules_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.cached_crate_graph.borrow().is_none() {
+            self.warm_visualizer_graphs(cx);
         }
 
         let cache_ref = self.cached_crate_graph.borrow();
@@ -1714,11 +2037,26 @@ impl super::Chamber {
 
         let cached = cache_ref.as_ref().unwrap();
         let selected_crate = self.visualizer_selected_crate.clone();
+        let is_revalidating = self.cached_crate_graph_loading.get();
 
         // Header Stats
         let hud_stats = h_flex()
             .gap_2()
             .items_center()
+            .when(is_revalidating, |this| {
+                this.child(
+                    div()
+                        .px_2p5()
+                        .py_1()
+                        .rounded_full()
+                        .bg(theme::tab_bar_bg())
+                        .border_1()
+                        .border_color(theme::glass_highlight())
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child("Checking changes…"),
+                )
+            })
             .child(
                 div()
                     .px_2p5()
@@ -2474,5 +2812,94 @@ mod tests {
         assert!(u_forge < u_gatekeeper);
         assert!((v_forge - v_gatekeeper).abs() < 1e-3);
         assert!(v_lattice < v_forge && v_forge < v_hadron);
+    }
+
+    #[test]
+    fn visualizer_graphs_disk_cache_roundtrip_and_fingerprint_invalidation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Setup minimal workspace + .hadron/nucleus
+        let crate_src = root.join("crates/alpha/src");
+        let notes_dir = root.join(".hadron/nucleus/notes");
+        std::fs::create_dir_all(&crate_src).unwrap();
+        std::fs::create_dir_all(&notes_dir).unwrap();
+
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/alpha\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("crates/alpha/Cargo.toml"),
+            "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(crate_src.join("lib.rs"), "pub mod sub;\n").unwrap();
+
+        std::fs::write(
+            root.join(".hadron/nucleus/index.md"),
+            "- [note-a](notes/note-a.md) — First note\n",
+        )
+        .unwrap();
+        std::fs::write(
+            notes_dir.join("note-a.md"),
+            "---\nname: note-a\ndescription: First note\n---\nHello world.\n",
+        )
+        .unwrap();
+
+        let crate_fp_1 = compute_crate_graph_fingerprint(root);
+        let nucleus_fp_1 = compute_nucleus_graph_fingerprint(root);
+        assert_eq!(crate_fp_1, compute_crate_graph_fingerprint(root));
+        assert_eq!(nucleus_fp_1, compute_nucleus_graph_fingerprint(root));
+
+        // Initial revalidate populates .hadron/cache/visualizer_graphs.json
+        let mut cache = VisualizerGraphsDiskCache::load(root);
+        let (cg_1_opt, ng_1_opt) = cache.revalidate(root, false, false);
+        let cg_1 = cg_1_opt.expect("cold cache must build crate graph");
+        let ng_1 = ng_1_opt.expect("cold cache must build nucleus graph");
+        assert!(VisualizerGraphsDiskCache::cache_path(root).is_file());
+
+        // Second revalidate with unchanged files is a pure cache hit (returns None, None)
+        let mut disk = VisualizerGraphsDiskCache::load(root);
+        assert_eq!(disk.version, VISUALIZER_GRAPHS_CACHE_VERSION);
+        assert_eq!(disk.crate_fingerprint, Some(crate_fp_1));
+        assert_eq!(disk.nucleus_fingerprint, Some(nucleus_fp_1));
+        assert_eq!(disk.crate_graph.as_ref(), Some(&cg_1));
+        assert_eq!(disk.nucleus_graph.as_ref(), Some(&ng_1));
+        let (hit_cg, hit_ng) = disk.revalidate(root, false, false);
+        assert!(hit_cg.is_none(), "unchanged crate graph should not rebuild");
+        assert!(hit_ng.is_none(), "unchanged nucleus graph should not rebuild");
+
+        // Mutating a note invalidates only the nucleus fingerprint and rebuilds only Nucleus Graph
+        std::fs::write(
+            notes_dir.join("note-b.md"),
+            "---\nname: note-b\ndescription: Second note\n---\nLinks to [[note-a]].\n",
+        )
+        .unwrap();
+        let nucleus_fp_2 = compute_nucleus_graph_fingerprint(root);
+        assert_ne!(nucleus_fp_1, nucleus_fp_2);
+        assert_eq!(crate_fp_1, compute_crate_graph_fingerprint(root));
+
+        let (rebuilt_cg, rebuilt_ng) = disk.revalidate(root, false, false);
+        assert!(rebuilt_cg.is_none(), "crate graph should stay cached when only notes change");
+        let ng_2 = rebuilt_ng.expect("nucleus graph must rebuild when a note is added");
+        assert_eq!(ng_2.nodes.len(), 2);
+        let disk_after_note = VisualizerGraphsDiskCache::load(root);
+        assert_eq!(disk_after_note.nucleus_fingerprint, Some(nucleus_fp_2));
+        assert_eq!(disk_after_note.crate_fingerprint, Some(crate_fp_1));
+
+        // Mutating a crate source file invalidates only the crate fingerprint and rebuilds only Crate Graph
+        std::fs::write(crate_src.join("extra.rs"), "use crate::sub;\n").unwrap();
+        let crate_fp_2 = compute_crate_graph_fingerprint(root);
+        assert_ne!(crate_fp_1, crate_fp_2);
+
+        let mut disk_2 = VisualizerGraphsDiskCache::load(root);
+        let (rebuilt_cg_2, rebuilt_ng_2) = disk_2.revalidate(root, false, false);
+        assert!(rebuilt_ng_2.is_none(), "nucleus graph should stay cached when only crate src changes");
+        let cg_2 = rebuilt_cg_2.expect("crate graph must rebuild when src changes");
+        assert_eq!(cg_2.topology.crate_modules.len(), 2);
+        let disk_after_crate = VisualizerGraphsDiskCache::load(root);
+        assert_eq!(disk_after_crate.crate_fingerprint, Some(crate_fp_2));
     }
 }

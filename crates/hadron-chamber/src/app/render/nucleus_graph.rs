@@ -24,7 +24,7 @@ pub struct ForceEdge {
     pub target: String,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForceDirectedGraph {
     pub nodes: HashMap<String, ForceNode>,
     pub edges: Vec<ForceEdge>,
@@ -129,7 +129,7 @@ impl ForceDirectedGraph {
 }
 
 /// Lavapipe-cached Nucleus Graph topology and layout calculation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CachedNucleusGraph {
     pub nodes: BTreeMap<String, hadron_forge::nucleus_graph::NucleusNode>,
     pub dead_links: Vec<(String, String)>,
@@ -241,6 +241,18 @@ pub fn create_stub_note(nucleus_dir: &std::path::Path, slug: &str) -> std::io::R
 }
 
 impl CachedNucleusGraph {
+    pub fn build_and_save(repo_root: &std::path::Path) -> Self {
+        let built = Self::build(repo_root);
+        if repo_root.join(".hadron").is_dir() {
+            let fp = super::visualizer::compute_nucleus_graph_fingerprint(repo_root);
+            let mut disk_cache = super::visualizer::VisualizerGraphsDiskCache::load(repo_root);
+            disk_cache.nucleus_fingerprint = Some(fp);
+            disk_cache.nucleus_graph = Some(built.clone());
+            let _ = disk_cache.save(repo_root);
+        }
+        built
+    }
+
     pub fn build(repo_root: &std::path::Path) -> Self {
         let nucleus_dir = repo_root.join(".hadron/nucleus");
         let (nodes, dead_links) = hadron_forge::nucleus_graph::build_nucleus_graph(&nucleus_dir);
@@ -418,23 +430,7 @@ impl super::Chamber {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
 
         if self.cached_nucleus_graph.borrow().is_none() {
-            if !self.cached_nucleus_graph_loading.get() {
-                self.cached_nucleus_graph_loading.set(true);
-                let root_for_build = repo_root.clone();
-                cx.spawn(async move |this, cx| {
-                    let graph = cx
-                        .background_executor()
-                        .spawn(async move {
-                            CachedNucleusGraph::build(&root_for_build)
-                        })
-                        .await;
-                    let _ = this.update(cx, |chamber, cx| {
-                        *chamber.cached_nucleus_graph.borrow_mut() = Some(graph);
-                        chamber.cached_nucleus_graph_loading.set(false);
-                        cx.notify();
-                    });
-                }).detach();
-            }
+            self.warm_visualizer_graphs(cx);
         }
 
         let cache_ref = self.cached_nucleus_graph.borrow();
@@ -573,11 +569,27 @@ impl super::Chamber {
                     })),
             );
 
+        let is_revalidating = self.cached_nucleus_graph_loading.get();
+
         let stats_hud = h_flex()
             .gap_2()
             .flex_wrap()
             .items_center()
             .child(zoom_controls)
+            .when(is_revalidating, |this| {
+                this.child(
+                    div()
+                        .px_2p5()
+                        .py_1()
+                        .rounded_full()
+                        .bg(theme::tab_bar_bg())
+                        .border_1()
+                        .border_color(theme::glass_highlight())
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child("Checking changes…"),
+                )
+            })
             .child(
                 div()
                     .px_2p5()
@@ -1042,7 +1054,7 @@ impl super::Chamber {
                                     for slug in &orphans_to_index {
                                         let _ = index_orphan_note(&nucleus_dir, slug);
                                     }
-                                    *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_root_for_orphans));
+                                    *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_root_for_orphans));
                                     cx.notify();
                                 })),
                         )
@@ -1065,7 +1077,7 @@ impl super::Chamber {
                                         let _ = delete_orphan_note(&nucleus_dir, slug);
                                     }
                                     this.visualizer_selected_note = None;
-                                    *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_root_for_delete_orphans));
+                                    *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_root_for_delete_orphans));
                                     cx.notify();
                                 })),
                         ),
@@ -1090,7 +1102,7 @@ impl super::Chamber {
                             for (src, tgt) in &dead_links_for_bulk {
                                 let _ = remove_dead_link_from_note(&nucleus_dir, src, tgt);
                             }
-                            *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_root_for_dead));
+                            *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_root_for_dead));
                             cx.notify();
                         })),
                 )
@@ -1319,7 +1331,7 @@ impl super::Chamber {
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 let nucleus_dir = repo_for_index.join(".hadron/nucleus");
                                                 let _ = index_orphan_note(&nucleus_dir, &slug_for_index);
-                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_for_index));
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_for_index));
                                                 cx.notify();
                                             })),
                                     )
@@ -1338,7 +1350,7 @@ impl super::Chamber {
                                                 let nucleus_dir = repo_for_delete.join(".hadron/nucleus");
                                                 let _ = delete_orphan_note(&nucleus_dir, &slug_for_delete);
                                                 this.visualizer_selected_note = None;
-                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_for_delete));
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_for_delete));
                                                 cx.notify();
                                             })),
                                     ),
@@ -1402,7 +1414,7 @@ impl super::Chamber {
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 let nucleus_dir = repo_unlink.join(".hadron/nucleus");
                                                 let _ = remove_dead_link_from_note(&nucleus_dir, &src_for_unlink, &tgt_for_unlink);
-                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_unlink));
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_unlink));
                                                 cx.notify();
                                             })),
                                     )
@@ -1420,7 +1432,7 @@ impl super::Chamber {
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 let nucleus_dir = repo_stub.join(".hadron/nucleus");
                                                 let _ = create_stub_note(&nucleus_dir, &tgt_for_stub);
-                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build(&repo_stub));
+                                                *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_stub));
                                                 cx.notify();
                                             })),
                                     )

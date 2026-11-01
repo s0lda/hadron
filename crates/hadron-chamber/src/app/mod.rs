@@ -1917,6 +1917,9 @@ impl Chamber {
         if workspace_mode != WorkspaceMode::Selector && !is_wsl {
             chamber.update_active_plan();
         }
+        if workspace_mode != WorkspaceMode::Selector {
+            chamber.warm_visualizer_graphs(cx);
+        }
         if workspace_mode != WorkspaceMode::Selector && is_wsl {
             let sessions_dir_bg = sessions_dir.clone();
             cx.spawn(async move |this, cx| {

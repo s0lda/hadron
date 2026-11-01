@@ -427,12 +427,14 @@ impl super::Chamber {
                 }
                 if scan.nucleus_docs != self.cached_nucleus_docs {
                     self.cached_nucleus_docs = scan.nucleus_docs;
+                    self.warm_visualizer_graphs(cx);
                     changed = true;
                 }
                 if scan.files != self.file_tree_paths {
                     // Gitignored entries included, mirroring `new` — see the note there.
                     *self.completion_files.borrow_mut() = scan.files.clone();
                     self.file_tree_paths = scan.files;
+                    self.warm_visualizer_graphs(cx);
                     changed = true;
                 }
 
