@@ -27,10 +27,25 @@ use super::*;
 /// one, which is what makes it safe to land on the dispatch path.
 ///
 /// Returns how long the silence lasted, so the error can say it.
+/// Grace window after a single `"error"` / `"error message"` step before the silence
+/// watchdog reaps the turn. `agy` CLI retries transient upstream stream `EOF` errors
+/// with a ~64s–85s backoff before `attempt 2` fires, so 30s reaped recoverable turns
+/// mid-backoff while 3 consecutive error steps still abort immediately in `cli.rs`.
+const ERROR_GRACE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+
 async fn until_silent(
     live_dir: &std::path::Path,
     quark: &QuarkId,
     deadline: std::time::Duration,
+) -> std::time::Duration {
+    until_silent_with_error_grace(live_dir, quark, deadline, ERROR_GRACE_DEADLINE).await
+}
+
+async fn until_silent_with_error_grace(
+    live_dir: &std::path::Path,
+    quark: &QuarkId,
+    deadline: std::time::Duration,
+    error_grace: std::time::Duration,
 ) -> std::time::Duration {
     // Poll well inside `live::STALE_AFTER_SECS`, or a write could go stale between
     // two ticks and never be seen. Derived from the deadline so a test with a tiny
@@ -49,14 +64,14 @@ async fn until_silent(
             if is_error_detail {
                 if !in_error_detail {
                     in_error_detail = true;
-                    // Start the 30s error grace window from when the error arrived rather than
+                    // Start the error grace window from when the error arrived rather than
                     // retroactively counting healthy work that preceded the stream interruption.
                     if newest_seen.is_some() && newest_seen.is_none_or(|seen| activity.at > seen) {
                         newest_seen = Some(activity.at);
                         last_sign = std::time::Instant::now();
                     }
                 }
-                effective_deadline = deadline.min(std::time::Duration::from_secs(30));
+                effective_deadline = deadline.min(error_grace);
             } else {
                 in_error_detail = false;
                 effective_deadline = deadline;
@@ -1567,6 +1582,11 @@ mod tests {
 
     #[tokio::test]
     async fn until_silent_triggers_fast_error_deadline_on_error_activity() {
+        assert_eq!(
+            ERROR_GRACE_DEADLINE,
+            std::time::Duration::from_secs(90),
+            "production error grace deadline must be 90s to accommodate agy's ~64s-85s EOF retry backoff"
+        );
         let temp = tempfile::tempdir().unwrap();
         let qid = QuarkId::new("test-quark");
         let live_dir = temp.path().to_path_buf();
@@ -1579,11 +1599,17 @@ mod tests {
         crate::adapter::telemetry::TurnTelemetrySink::publish_activity(&live_dir, &mut activity.clone());
 
         let start = std::time::Instant::now();
-        let silent_duration = until_silent(&live_dir, &qid, std::time::Duration::from_secs(600)).await;
+        let silent_duration = until_silent_with_error_grace(
+            &live_dir,
+            &qid,
+            std::time::Duration::from_secs(600),
+            std::time::Duration::from_millis(80),
+        )
+        .await;
 
         assert!(
-            silent_duration < std::time::Duration::from_secs(35),
-            "until_silent must enforce fast <=30s error deadline when activity.detail is 'error message', took {:?}",
+            silent_duration < std::time::Duration::from_secs(6),
+            "until_silent_with_error_grace must clamp 600s deadline to error_grace after the initial 5s poll tick when activity.detail is 'error message', took {:?}",
             start.elapsed()
         );
     }

@@ -29,6 +29,11 @@ from google.antigravity.types import Text, Thought, ToolCall, ToolResult
 # advertises, so the picker can never advertise a model we don't actually run.
 SEAT_MODEL = "gemini-3.6-flash"
 
+# Default context window size for Gemini 3.x / 4.x models in Antigravity (1M = 2^20 tokens,
+# matching `context_window_size: 1048576` in `agy` CLI statusLine and Gemini API `input_token_limit`).
+DEFAULT_CONTEXT_WINDOW_SIZE = 1048576
+MODEL_CONTEXT_WINDOWS: Dict[str, int] = {}
+
 # Default supported Gemini models in the Antigravity Python SDK fallback.
 DEFAULT_SUPPORTED_MODELS = [
     {"value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
@@ -55,6 +60,9 @@ def fetch_sdk_models():
             val = raw_name[7:] if raw_name.startswith("models/") else raw_name
             if "gemini" in val.lower():
                 display_name = getattr(m, "display_name", "") or val
+                input_limit = getattr(m, "input_token_limit", None)
+                if isinstance(input_limit, int) and input_limit > 0:
+                    MODEL_CONTEXT_WINDOWS[val] = input_limit
                 discovered.append({"value": val, "name": display_name})
         if discovered:
             return discovered
@@ -158,6 +166,74 @@ def _format_tool_call_title(call: ToolCall) -> str:
 MAX_RESIDENT_CONTEXT_TOKENS = 150000
 
 
+def _parse_transcript_context_used(contents: str) -> Optional[int]:
+    """Parse the final `PLANNER_RESPONSE` step's prompt window occupancy
+    (`input_tokens + cache_read_tokens`) from an Antigravity `transcript.jsonl`."""
+    for line in reversed(contents.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(obj, dict) or obj.get("type") != "PLANNER_RESPONSE":
+            continue
+        usage_obj = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+        inp = obj.get("input_tokens")
+        if not isinstance(inp, int):
+            inp = usage_obj.get("input_tokens", 0)
+        cache_read = obj.get("cache_read_tokens")
+        if not isinstance(cache_read, int):
+            cache_read = usage_obj.get("cache_read_tokens", 0)
+        total = (inp if isinstance(inp, int) else 0) + (
+            cache_read if isinstance(cache_read, int) else 0
+        )
+        if total > 0:
+            return total
+    return None
+
+
+def _read_transcript_context_used(agent: Any) -> Optional[int]:
+    """Read the true end-of-turn context window occupancy from the localharness
+    `transcript.jsonl` for `agent`'s conversation, if available on disk."""
+    conv = getattr(agent, "_conversation", None) or getattr(agent, "conversation", None)
+    cid = getattr(conv, "conversation_id", None)
+    if not isinstance(cid, str):
+        return None
+    cid = cid.strip()
+    if not cid or "/" in cid or "\\" in cid or ".." in cid:
+        return None
+    homes = []
+    for raw_home in (
+        os.environ.get("HOME"),
+        os.environ.get("USERPROFILE"),
+        os.path.expanduser("~"),
+    ):
+        if raw_home and raw_home not in homes:
+            homes.append(raw_home)
+    for home in homes:
+        for app_dir in ("antigravity", "antigravity-cli"):
+            path = os.path.join(
+                home,
+                ".gemini",
+                app_dir,
+                "brain",
+                cid,
+                ".system_generated",
+                "logs",
+                "transcript.jsonl",
+            )
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    used = _parse_transcript_context_used(f.read())
+                if used is not None:
+                    return used
+            except OSError:
+                continue
+    return None
+
+
 def _transient_tpm_retry_delay_secs(exc: Exception) -> Optional[float]:
     msg = str(exc)
     msg_upper = msg.upper()
@@ -208,26 +284,21 @@ async def handle_prompt(msg_id, session_id, prompt):
                 text_accumulated = []
                 thought_accumulated = []
                 llm_steps = 1
-                in_tool_batch = False
                 async for chunk in response.chunks:
                     if isinstance(chunk, Text):
-                        in_tool_batch = False
                         text_accumulated.append(chunk.text)
                         send_session_update(session_id, {
                             "sessionUpdate": "agent_message_chunk",
                             "content": {"type": "text", "text": chunk.text}
                         })
                     elif isinstance(chunk, Thought):
-                        in_tool_batch = False
                         thought_accumulated.append(chunk.text)
                         send_session_update(session_id, {
                             "sessionUpdate": "agent_thought_chunk",
                             "content": {"type": "text", "text": chunk.text}
                         })
                     elif isinstance(chunk, ToolCall):
-                        if not in_tool_batch:
-                            llm_steps += 1
-                            in_tool_batch = True
+                        llm_steps += 1
                         title = _format_tool_call_title(chunk)
                         call_id = str(getattr(chunk, "id", None) or uuid.uuid4())
                         send_session_update(session_id, {
@@ -283,11 +354,24 @@ async def handle_prompt(msg_id, session_id, prompt):
             total_tokens = getattr(usage, "total_token_count", 0) or (
                 input_tokens + output_tokens + cached_tokens
             )
-            max_tokens = getattr(usage, "context_window_size", 2000000) or 2000000
-            invocations = max(1, llm_steps)
-            raw_context = input_tokens + cached_tokens
-            if invocations > 1:
-                raw_context = raw_context // invocations
+            model_name = session_data.get("model", SEAT_MODEL)
+            default_window = MODEL_CONTEXT_WINDOWS.get(
+                model_name, DEFAULT_CONTEXT_WINDOW_SIZE
+            )
+            raw_window = getattr(usage, "context_window_size", None)
+            max_tokens = (
+                raw_window
+                if isinstance(raw_window, int) and not isinstance(raw_window, bool) and raw_window > 0
+                else default_window
+            )
+            transcript_used = _read_transcript_context_used(agent)
+            if transcript_used is not None:
+                raw_context = transcript_used
+            else:
+                invocations = max(1, llm_steps)
+                raw_context = input_tokens + cached_tokens
+                if invocations > 1:
+                    raw_context = raw_context // invocations
             prev_used = session_data.get("last_used_tokens", 0) or 0
             used = min(max_tokens, max(raw_context, prev_used))
             session_data["last_used_tokens"] = used

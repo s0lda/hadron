@@ -57,6 +57,7 @@ pub struct StreamAccumulator {
     context_used: Option<u32>,
     context_window: Option<u32>,
     conversation_id: Option<String>,
+    work_dir: Option<std::path::PathBuf>,
     error_step_count: u32,
     in_error_state: bool,
 }
@@ -74,9 +75,17 @@ impl StreamAccumulator {
             context_used: None,
             context_window: None,
             conversation_id: None,
+            work_dir: None,
             error_step_count: 0,
             in_error_state: false,
         }
+    }
+
+    /// Provide the invocation working directory so WSL UNC workspaces launched from a
+    /// Windows host can locate `transcript.jsonl` inside the WSL user's `~/.gemini/` home.
+    pub fn with_work_dir(mut self, work_dir: impl Into<std::path::PathBuf>) -> Self {
+        self.work_dir = Some(work_dir.into());
+        self
     }
 
     /// Feed one stdout line. Returns whether it moved anything a watcher should see
@@ -258,9 +267,9 @@ impl StreamAccumulator {
     }
 
     pub fn latest_error_message(&self) -> Option<String> {
-        self.conversation_id
-            .as_deref()
-            .and_then(read_agy_transcript_latest_error_message)
+        self.conversation_id.as_deref().and_then(|cid| {
+            read_agy_transcript_latest_error_message_in(cid, self.work_dir.as_deref())
+        })
     }
 
     /// The full text accumulated so far — what a throttled `live::publish` should
@@ -285,10 +294,11 @@ impl StreamAccumulator {
     /// model, and optional context window telemetry.
     pub fn finish_result(self) -> StreamResult {
         let message = self.final_text.or_else(|| (!self.draft.is_empty()).then_some(self.draft));
+        let work_dir = self.work_dir.as_deref();
         let context_used = self.context_used.or_else(|| {
             self.conversation_id
                 .as_deref()
-                .and_then(read_agy_transcript_context_used)
+                .and_then(|cid| read_agy_transcript_context_used_in(cid, work_dir))
         });
         StreamResult {
             message,
@@ -374,52 +384,85 @@ pub fn parse_transcript_latest_error_message(contents: &str) -> Option<String> {
     None
 }
 
+fn agy_candidate_homes(work_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    let mut homes = Vec::new();
+    if let Some(w) = work_dir {
+        if let Some(wsl_hadron) = hadron_lattice::wsl::wsl_user_hadron_dir_for_field(w) {
+            let s = wsl_hadron.to_string_lossy();
+            let trimmed = s
+                .strip_suffix(r"\.hadron")
+                .or_else(|| s.strip_suffix("/.hadron"))
+                .unwrap_or(&s);
+            if !trimmed.is_empty() {
+                homes.push(std::path::PathBuf::from(trimmed));
+            }
+        }
+    }
+    for var in ["HOME", "USERPROFILE"] {
+        if let Some(val) = std::env::var_os(var) {
+            let p = std::path::PathBuf::from(val);
+            if !p.as_os_str().is_empty() && !homes.contains(&p) {
+                homes.push(p);
+            }
+        }
+    }
+    homes
+}
+
 pub fn read_agy_transcript_latest_error_message(conversation_id: &str) -> Option<String> {
+    read_agy_transcript_latest_error_message_in(conversation_id, None)
+}
+
+pub fn read_agy_transcript_latest_error_message_in(
+    conversation_id: &str,
+    work_dir: Option<&std::path::Path>,
+) -> Option<String> {
     let cid = conversation_id.trim();
     if cid.is_empty() || cid.contains('/') || cid.contains('\\') || cid.contains("..") {
         return None;
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)?;
-    for app_dir in ["antigravity-cli", "antigravity"] {
-        let path = home
-            .join(".gemini")
-            .join(app_dir)
-            .join("brain")
-            .join(cid)
-            .join(".system_generated")
-            .join("logs")
-            .join("transcript.jsonl");
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if let Some(err_msg) = parse_transcript_latest_error_message(&contents) {
-                return Some(err_msg);
+    for home in agy_candidate_homes(work_dir) {
+        for app_dir in ["antigravity-cli", "antigravity"] {
+            let path = home
+                .join(".gemini")
+                .join(app_dir)
+                .join("brain")
+                .join(cid)
+                .join(".system_generated")
+                .join("logs")
+                .join("transcript.jsonl");
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if let Some(err_msg) = parse_transcript_latest_error_message(&contents) {
+                    return Some(err_msg);
+                }
             }
         }
     }
     None
 }
 
-fn read_agy_transcript_context_used(conversation_id: &str) -> Option<u32> {
+fn read_agy_transcript_context_used_in(
+    conversation_id: &str,
+    work_dir: Option<&std::path::Path>,
+) -> Option<u32> {
     let cid = conversation_id.trim();
     if cid.is_empty() || cid.contains('/') || cid.contains('\\') || cid.contains("..") {
         return None;
     }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(std::path::PathBuf::from)?;
-    for app_dir in ["antigravity-cli", "antigravity"] {
-        let path = home
-            .join(".gemini")
-            .join(app_dir)
-            .join("brain")
-            .join(cid)
-            .join(".system_generated")
-            .join("logs")
-            .join("transcript.jsonl");
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            if let Some(used) = parse_transcript_context_used(&contents) {
-                return Some(used);
+    for home in agy_candidate_homes(work_dir) {
+        for app_dir in ["antigravity-cli", "antigravity"] {
+            let path = home
+                .join(".gemini")
+                .join(app_dir)
+                .join("brain")
+                .join(cid)
+                .join(".system_generated")
+                .join("logs")
+                .join("transcript.jsonl");
+            if let Ok(contents) = std::fs::read_to_string(&path) {
+                if let Some(used) = parse_transcript_context_used(&contents) {
+                    return Some(used);
+                }
             }
         }
     }
@@ -778,6 +821,20 @@ mod tests {
         assert_eq!(
             parse_transcript_latest_error_message(transcript),
             Some("Quota limit exceeded for model".to_string())
+        );
+    }
+
+    #[test]
+    fn agy_candidate_homes_includes_wsl_unc_home_from_work_dir() {
+        let wsl_work_dir = std::path::Path::new(
+            r"\\wsl.localhost\Ubuntu\home\Jake\dev\hadron\.hadron\trees\cli-agy",
+        );
+        let homes = agy_candidate_homes(Some(wsl_work_dir));
+        assert!(
+            homes
+                .iter()
+                .any(|p| p == std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\Jake")),
+            "WSL UNC work_dir must resolve the WSL user home for transcript lookup, got: {homes:?}"
         );
     }
 }

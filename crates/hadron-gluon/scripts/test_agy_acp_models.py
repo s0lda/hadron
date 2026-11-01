@@ -194,6 +194,67 @@ class TestAgyAcpModels(unittest.TestCase):
         self.assertEqual(usage_updates[0]["used"], 200_000)
         self.assertEqual(usage_updates[0]["size"], 2_000_000)
 
+    def test_handle_prompt_prefers_transcript_final_planner_response_and_1m_default_window(self):
+        import asyncio
+        import tempfile
+
+        session_id = "test-session-transcript-usage"
+        mock_agent = MagicMock()
+        cid = "8106722d6bb1902882cf1fe831a25713"
+        mock_agent._conversation.conversation_id = cid
+
+        class FakeResponse:
+            @property
+            async def chunks(self):
+                yield agy_acp.Text(text="done")
+
+            async def text(self):
+                return "done"
+
+            @property
+            def usage_metadata(self):
+                u = MagicMock()
+                # Simulate 100+ internal manage_task steps summing to 6.9M cumulative prompt tokens
+                u.prompt_token_count = 6_928_180
+                u.cached_content_token_count = 6_350_000
+                u.candidates_token_count = 12_000
+                u.thoughts_token_count = 4_000
+                u.total_token_count = 6_944_180
+                u.context_window_size = None
+                return u
+
+        async def fake_chat(prompt):
+            return FakeResponse()
+
+        mock_agent.chat.side_effect = fake_chat
+        agy_acp.sessions[session_id] = {
+            "agent": mock_agent,
+            "model": "gemini-3.6-flash",
+            "cwd": "",
+            "current_task": None,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_dir = os.path.join(
+                tmpdir, ".gemini", "antigravity", "brain", cid, ".system_generated", "logs"
+            )
+            os.makedirs(log_dir, exist_ok=True)
+            with open(os.path.join(log_dir, "transcript.jsonl"), "w", encoding="utf-8") as f:
+                f.write('{"step_index":1,"type":"PLANNER_RESPONSE","input_tokens":18000,"cache_read_tokens":0}\n')
+                f.write('{"step_index":240,"type":"PLANNER_RESPONSE","input_tokens":2776,"cache_read_tokens":81626}\n')
+
+            updates = []
+            responses = []
+            with patch.dict(os.environ, {"HOME": tmpdir}, clear=False), \
+                 patch("agy_acp.send_session_update", side_effect=lambda sid, upd: updates.append((sid, upd))), \
+                 patch("agy_acp.send_response", side_effect=lambda mid, res: responses.append((mid, res))):
+                asyncio.run(agy_acp.handle_prompt(100, session_id, [{"type": "text", "text": "go"}]))
+
+        usage_updates = [upd for _, upd in updates if upd.get("sessionUpdate") == "usage_update"]
+        self.assertEqual(len(usage_updates), 1)
+        self.assertEqual(usage_updates[0]["used"], 2776 + 81626)
+        self.assertEqual(usage_updates[0]["size"], 1_048_576)
+
 if __name__ == "__main__":
     unittest.main()
 

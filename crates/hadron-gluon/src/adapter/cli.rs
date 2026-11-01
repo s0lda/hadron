@@ -529,7 +529,7 @@ impl<R: CliRunner> CliQuark<R> {
         let dir = self.live_dir.clone();
         let quark_id = self.id.clone();
         let turn_started = chrono::Utc::now();
-        let mut acc = StreamAccumulator::new(stream.format);
+        let mut acc = StreamAccumulator::new(stream.format).with_work_dir(inv.cwd.clone());
         let mut last_publish: Option<Instant> = None;
         let mut last_heartbeat: Option<Instant> = None;
         let mut on_line = |line: &str| -> bool {
@@ -613,7 +613,9 @@ impl<R: CliRunner> CliQuark<R> {
             }
         });
         let context = context_tokens.map(|used| {
-            let size = res.context_window.unwrap_or(2_000_000);
+            let size = res
+                .context_window
+                .unwrap_or_else(|| default_cli_context_window_size(model.as_deref()));
             hadron_lattice::ContextUsage {
                 used_tokens: used,
                 context_window_size: size,
@@ -635,6 +637,22 @@ impl<R: CliRunner> CliQuark<R> {
             ..Default::default()
         })
     }
+}
+
+/// Default context window size when a streaming CLI (`agy --output-format stream-json`,
+/// `claude --output-format stream-json`) omits `context_window_size` on stdout.
+///
+/// Google's `agy` CLI (`BuildStatusLineData` / `Store.ModelMaxTokens`) and Gemini models
+/// report a 1M (`1_048_576` = $2^{20}$) context window, whereas Claude models default to
+/// `200_000` unless `1m` is present in the model identifier.
+fn default_cli_context_window_size(model: Option<&str>) -> u32 {
+    if let Some(m) = model {
+        let lower = m.to_ascii_lowercase();
+        if lower.contains("claude") {
+            return if lower.contains("1m") { 1_000_000 } else { 200_000 };
+        }
+    }
+    1_048_576
 }
 
 #[async_trait]
@@ -1409,6 +1427,10 @@ mod tests {
         assert_eq!(
             ctx.used_tokens, 443_232,
             "cumulative cache_read_tokens (14.4M) must never be folded into context.used_tokens"
+        );
+        assert_eq!(
+            ctx.context_window_size, 1_048_576,
+            "agy / Gemini models must default to a 1M (1_048_576) context window matching agy statusLine"
         );
     }
 
