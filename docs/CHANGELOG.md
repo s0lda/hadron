@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.30] - 2026-11-01
+
+### Added
+- **Workspace Topology Graph Scanner & Crate Layers (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Added workspace topology graph scanner and crate layer mapper (`crates/hadron-forge/src/topology.rs`), nucleus graph hook enrichment (`crates/hadron-forge/src/nucleus_graph.rs`), and MCP topology tool integration (`crates/hadron-forge-mcp/src/tools/topology.rs`).
+
+### Fixed
+- **Transient CLI Error Retries & Session Reset on Error (`hadron-gluon`)**:
+  - Added transient network error detection and exponential retry backoff in `CliQuark::excite` (`crates/hadron-gluon/src/adapter/cli.rs`), resetting resident state on error so retries start fresh without stale session history.
+- **Quark Error Fast-Abort & Fast Error Liveness Deadline (`hadron-gluon`)**:
+  - Added fast abort streaming callback in `CliRunner` / `CliQuark` (`crates/hadron-gluon/src/adapter/cli_stream.rs`, `runner.rs`) to interrupt long-running CLI streams on step errors, and enforced a fast <=30s liveness deadline in `until_silent` (`crates/hadron-gluon/src/engine/run.rs`) when activity detail reports an error.
+
 ## [0.33.29] - 2026-10-31
 
 ### Fixed

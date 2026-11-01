@@ -20,6 +20,18 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.30",
+        date: Some("2026-11-01"),
+        added: &[
+            "Workspace Topology Graph Scanner & Crate Layers: Added workspace topology graph scanner, crate layer mapper, nucleus graph hook enrichment, and MCP topology tool integration",
+        ],
+        changed: &[],
+        fixed: &[
+            "Transient CLI Error Retries & Session Reset on Error: Added transient network error detection and exponential retry backoff in CliQuark::excite, resetting resident session state on error so retries start fresh without stale session history",
+            "Quark Error Fast-Abort & Fast Error Liveness Deadline: Added fast abort streaming callback in CliRunner / CliQuark to interrupt long-running CLI streams on step errors, and enforced a fast <=30s liveness deadline in until_silent when activity detail reports an error",
+        ],
+    },
+    Release {
         version: "0.33.29",
         date: Some("2026-10-31"),
         added: &[],
