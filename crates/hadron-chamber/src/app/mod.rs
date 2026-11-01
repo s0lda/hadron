@@ -298,8 +298,10 @@ struct Chamber {
     pub(super) visualizer_nucleus_filter: Option<String>,
     pub(super) cached_crate_graph:
         std::cell::RefCell<Option<render::visualizer::CachedCrateGraph>>,
+    pub(super) cached_crate_graph_loading: std::cell::Cell<bool>,
     pub(super) cached_nucleus_graph:
         std::cell::RefCell<Option<render::nucleus_graph::CachedNucleusGraph>>,
+    pub(super) cached_nucleus_graph_loading: std::cell::Cell<bool>,
     /// Keyboard cursor over the roster (index into `view.roster`), moved by the
     /// quark-nav keys and drawn as a highlighted row. `None` = nothing selected.
     selected_quark_ix: Option<usize>,
@@ -1660,7 +1662,9 @@ impl Chamber {
             visualizer_selected_note: None,
             visualizer_nucleus_filter: None,
             cached_crate_graph: std::cell::RefCell::new(None),
+            cached_crate_graph_loading: std::cell::Cell::new(false),
             cached_nucleus_graph: std::cell::RefCell::new(None),
+            cached_nucleus_graph_loading: std::cell::Cell::new(false),
             selected_quark_ix: None,
             roster_tab: RosterTab::Active,
             app_menu_open: false,

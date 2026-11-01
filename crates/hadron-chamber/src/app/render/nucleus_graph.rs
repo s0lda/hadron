@@ -193,19 +193,66 @@ impl CachedNucleusGraph {
 
 impl super::Chamber {
     pub(super) fn nucleus_graph_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_root = crate::vcs::repo_root_of(&self.path);
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
 
-        let mut cache_ref = self.cached_nucleus_graph.borrow_mut();
-        if cache_ref.is_none() {
-            *cache_ref = Some(CachedNucleusGraph::build(&repo_root));
+        if self.cached_nucleus_graph.borrow().is_none() {
+            if !self.cached_nucleus_graph_loading.get() {
+                self.cached_nucleus_graph_loading.set(true);
+                cx.spawn(async move |this, cx| {
+                    let graph = cx
+                        .background_executor()
+                        .spawn(async move {
+                            CachedNucleusGraph::build(&repo_root)
+                        })
+                        .await;
+                    let _ = this.update(cx, |chamber, cx| {
+                        *chamber.cached_nucleus_graph.borrow_mut() = Some(graph);
+                        chamber.cached_nucleus_graph_loading.set(false);
+                        cx.notify();
+                    });
+                }).detach();
+            }
         }
+
+        let cache_ref = self.cached_nucleus_graph.borrow();
+        let mode_switcher = self.visualizer_mode_switcher_header(cx);
+
+        if cache_ref.is_none() {
+            return v_flex()
+                .id("nucleus-graph-container")
+                .size_full()
+                .bg(theme::canvas_base())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .px_4()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(theme::glass_highlight())
+                        .child(mode_switcher),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Simulating Nucleus knowledge graph layout..."),
+                        ),
+                )
+                .into_any_element();
+        }
+
         let cached = cache_ref.as_ref().unwrap();
 
         let selected_note = self.visualizer_selected_note.clone();
         let filter_str = self.visualizer_nucleus_filter.as_deref().unwrap_or("").trim().to_lowercase();
-
-        // Header Mode Switcher Capsule
-        let mode_switcher = self.visualizer_mode_switcher_header(cx);
 
         // Header Stats Badges
         let stats_hud = h_flex()
@@ -287,15 +334,18 @@ impl super::Chamber {
         let dead_targets: HashSet<String> = cached.dead_links.iter().map(|(_, t)| t.clone()).collect();
         let sel_slug = selected_note.clone();
 
-        let hit_positions = positions_map.clone();
+        let hit_positions_cell = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, Bounds<Pixels>, f32, f32)>::new()));
+        let hit_positions_for_paint = hit_positions_cell.clone();
 
         let canvas_elem = canvas(
             move |bounds, _, _| bounds,
             move |bounds, _, window, _cx| {
                 let w = f32::from(bounds.size.width);
                 let h = f32::from(bounds.size.height);
-                let cx_pt = f32::from(bounds.origin.x) + w / 2.0;
-                let cy_pt = f32::from(bounds.origin.y) + h / 2.0;
+                let origin_x = f32::from(bounds.origin.x);
+                let origin_y = f32::from(bounds.origin.y);
+                let cx_pt = origin_x + w / 2.0;
+                let cy_pt = origin_y + h / 2.0;
 
                 let mut min_x = f32::MAX;
                 let mut max_x = f32::MIN;
@@ -324,6 +374,8 @@ impl super::Chamber {
                     let sy = cy_pt + (y - center_orig_y) * scale;
                     (sx, sy)
                 };
+
+                let mut painted_hits = Vec::new();
 
                 // 1. Edges
                 for edge in &edges_list {
@@ -369,10 +421,12 @@ impl super::Chamber {
                             );
                         }
 
-                        let bounds = Bounds {
+                        let node_bounds = Bounds {
                             origin: point(center.x - radius, center.y - radius),
                             size: size(radius * 2.0, radius * 2.0),
                         };
+
+                        painted_hits.push((slug.clone(), node_bounds, sx, sy));
 
                         let node_bg = if is_orphan {
                             theme::warning().into()
@@ -382,11 +436,17 @@ impl super::Chamber {
                             theme::info().into()
                         };
 
-                        window.paint_quad(fill(bounds, node_bg).corner_radii(radius));
+                        window.paint_quad(fill(node_bounds, node_bg).corner_radii(radius));
                     }
+                }
+
+                if let Ok(mut cell) = hit_positions_for_paint.try_borrow_mut() {
+                    *cell = painted_hits;
                 }
             },
         );
+
+        let hit_positions_for_click = hit_positions_cell.clone();
 
         let canvas_container = div()
             .relative()
@@ -395,42 +455,17 @@ impl super::Chamber {
             .cursor_pointer()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
-                    let click_x = f32::from(ev.position.x);
-                    let click_y = f32::from(ev.position.y);
-
-                    let bounds = window.viewport_size();
-                    let w = f32::from(bounds.width);
-                    let h = f32::from(bounds.height);
-
-                    let mut min_x = f32::MAX;
-                    let mut max_x = f32::MIN;
-                    let mut min_y = f32::MAX;
-                    let mut max_y = f32::MIN;
-
-                    for &(x, y) in hit_positions.values() {
-                        min_x = min_x.min(x);
-                        max_x = max_x.max(x);
-                        min_y = min_y.min(y);
-                        max_y = max_y.max(y);
-                    }
-
-                    let range_x = (max_x - min_x).max(100.0);
-                    let range_y = (max_y - min_y).max(100.0);
-                    let scale_x = (w * 0.75) / range_x;
-                    let scale_y = (h * 0.70) / range_y;
-                    let scale = scale_x.min(scale_y).clamp(0.4, 2.5);
-                    let center_orig_x = (min_x + max_x) * 0.5;
-                    let center_orig_y = (min_y + max_y) * 0.5;
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, _window, cx| {
+                    let click_pos = ev.position;
+                    let click_x = f32::from(click_pos.x);
+                    let click_y = f32::from(click_pos.y);
 
                     let mut closest_slug: Option<String> = None;
                     let mut min_dist_sq = 28.0 * 28.0;
 
-                    for (slug, &(x, y)) in &hit_positions {
-                        let sx = (w / 2.0) + (x - center_orig_x) * scale;
-                        let sy = (h / 2.0) + (y - center_orig_y) * scale;
-                        let dx = sx - click_x;
-                        let dy = sy - click_y;
+                    for (slug, _bounds, sx, sy) in hit_positions_for_click.borrow().iter() {
+                        let dx = *sx - click_x;
+                        let dy = *sy - click_y;
                         let d_sq = dx * dx + dy * dy;
                         if d_sq < min_dist_sq {
                             min_dist_sq = d_sq;
@@ -446,12 +481,18 @@ impl super::Chamber {
             )
             .child(canvas_elem);
 
-        // Searchable Note Inspector Dock
+        // Searchable Note Inspector Dock with Filter Pills
+        let filter_mode = self.visualizer_nucleus_filter.as_deref().unwrap_or("all");
+        let is_orphan_filter = filter_mode == "orphans";
+
         let filtered_notes: Vec<hadron_forge::nucleus_graph::NucleusNode> = cached
             .nodes
             .values()
             .filter(|n| {
-                if filter_str.is_empty() {
+                if is_orphan_filter && !cached.orphaned_notes.contains(&n.slug) {
+                    return false;
+                }
+                if filter_str.is_empty() || filter_str == "orphans" {
                     true
                 } else {
                     n.slug.to_lowercase().contains(&filter_str) || n.title.to_lowercase().contains(&filter_str)
@@ -460,82 +501,129 @@ impl super::Chamber {
             .cloned()
             .collect();
 
-        let note_chips_dock = h_flex()
-            .id("nucleus-notes-dock")
-            .w_full()
-            .min_w_0()
-            .overflow_hidden()
-            .flex_wrap()
-            .px_3()
-            .py_2()
+        let filter_pills = h_flex()
             .gap_1p5()
+            .items_center()
+            .px_3()
+            .py_1p5()
             .border_t_1()
             .border_color(theme::glass_highlight())
-            .bg(theme::bg_surface().opacity(0.40))
-            .children(filtered_notes.iter().take(24).map(|n| {
-                let slug = n.slug.clone();
-                let is_sel = selected_note.as_deref() == Some(&slug);
-                let is_orphan = cached.orphaned_notes.contains(&slug);
-
-                let chip_bg = if is_sel {
-                    theme::tab_bar_bg()
-                } else if is_orphan {
-                    theme::warning().opacity(0.15)
-                } else {
-                    theme::tab_bar_bg().opacity(0.60)
-                };
-
-                let chip_border = if is_sel {
-                    theme::accent()
-                } else if is_orphan {
-                    theme::warning().opacity(0.40)
-                } else {
-                    theme::glass_highlight().into()
-                };
-
-                h_flex()
-                    .id(SharedString::from(format!("nucleus-chip-{}", slug)))
-                    .items_center()
-                    .gap_1p5()
+            .bg(theme::bg_surface().opacity(0.60))
+            .child(
+                div()
+                    .id("nucleus-filter-all")
                     .px_2p5()
                     .py_1()
-                    .rounded_md()
+                    .rounded_full()
                     .cursor_pointer()
-                    .bg(chip_bg)
-                    .border_1()
-                    .border_color(chip_border)
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(if is_sel { theme::text() } else { theme::text_secondary() })
-                            .truncate()
-                            .max_w(px(140.0))
-                            .child(n.slug.clone()),
-                    )
-                    .when(is_orphan, |chip| {
-                        chip.child(
-                            div()
-                                .flex_shrink_0()
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded_sm()
-                                .bg(theme::warning().opacity(0.2))
-                                .text_xs()
-                                .text_color(theme::warning())
-                                .child("orphan"),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.visualizer_selected_note = Some(slug.clone());
+                    .bg(if filter_mode != "orphans" { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
+                    .text_xs()
+                    .font_weight(if filter_mode != "orphans" { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .text_color(if filter_mode != "orphans" { theme::accent() } else { theme::text_muted() })
+                    .child("All Notes")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.visualizer_nucleus_filter = None;
                         cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("nucleus-filter-orphans")
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(if filter_mode == "orphans" { theme::glass_highlight().into() } else { theme::tab_bar_bg() })
+                    .text_xs()
+                    .font_weight(if filter_mode == "orphans" { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .text_color(if filter_mode == "orphans" { theme::warning() } else { theme::text_muted() })
+                    .child(format!("Orphans ({})", cached.orphaned_notes.len()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.visualizer_nucleus_filter = Some("orphans".to_string());
+                        cx.notify();
+                    })),
+            );
+
+        let note_chips_dock = v_flex()
+            .w_full()
+            .max_h(px(140.0))
+            .overflow_y_scroll()
+            .child(
+                h_flex()
+                    .id("nucleus-notes-dock")
+                    .w_full()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .flex_wrap()
+                    .px_3()
+                    .py_2()
+                    .gap_1p5()
+                    .bg(theme::bg_surface().opacity(0.40))
+                    .children(filtered_notes.iter().map(|n| {
+                        let slug = n.slug.clone();
+                        let is_sel = selected_note.as_deref() == Some(&slug);
+                        let is_orphan = cached.orphaned_notes.contains(&slug);
+
+                        let chip_bg = if is_sel {
+                            theme::tab_bar_bg()
+                        } else if is_orphan {
+                            theme::warning().opacity(0.15)
+                        } else {
+                            theme::tab_bar_bg().opacity(0.60)
+                        };
+
+                        let chip_border = if is_sel {
+                            theme::accent()
+                        } else if is_orphan {
+                            theme::warning().opacity(0.40)
+                        } else {
+                            theme::glass_highlight().into()
+                        };
+
+                        h_flex()
+                            .id(SharedString::from(format!("nucleus-chip-{}", slug)))
+                            .items_center()
+                            .gap_1p5()
+                            .px_2p5()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .bg(chip_bg)
+                            .border_1()
+                            .border_color(chip_border)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .text_color(if is_sel { theme::text() } else { theme::text_secondary() })
+                                    .truncate()
+                                    .max_w(px(140.0))
+                                    .child(n.slug.clone()),
+                            )
+                            .when(is_orphan, |chip| {
+                                chip.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::warning().opacity(0.2))
+                                        .text_xs()
+                                        .text_color(theme::warning())
+                                        .child("orphan"),
+                                )
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.visualizer_selected_note = Some(slug.clone());
+                                cx.notify();
+                            }))
                     }))
-            }));
+            );
 
         // Selected Note Inspector Panel
         let selected_note_panel = selected_note.as_ref().and_then(|slug| cached.nodes.get(slug)).map(|n| {
             let n_slug = n.slug.clone();
-            let note_path = repo_root.join(&n.path);
+            let note_path = repo_root.join(".hadron/nucleus").join(&n.path);
             let content_preview = std::fs::read_to_string(&note_path).unwrap_or_else(|_| "Note file content unavailable".to_string());
             let is_orphan = cached.orphaned_notes.contains(&n_slug);
 
@@ -620,6 +708,7 @@ impl super::Chamber {
             .bg(theme::canvas_base())
             .child(header)
             .child(canvas_container)
+            .child(filter_pills)
             .child(note_chips_dock)
             .children(selected_note_panel)
     }

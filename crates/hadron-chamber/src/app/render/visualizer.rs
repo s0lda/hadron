@@ -1589,8 +1589,8 @@ impl super::Chamber {
         h_flex()
             .gap_1()
             .items_center()
-            .p_0p5()
-            .rounded_lg()
+            .p_1()
+            .rounded_full()
             .bg(theme::tab_bar_bg())
             .border_1()
             .border_color(theme::glass_highlight())
@@ -1600,14 +1600,14 @@ impl super::Chamber {
 
                 div()
                     .id(SharedString::from(format!("vis-mode-{}", mode.index())))
-                    .px_2p5()
+                    .px_3()
                     .py_1()
-                    .rounded_md()
+                    .rounded_full()
                     .cursor_pointer()
-                    .bg(if is_active { theme::accent().into() } else { gpui::transparent_black() })
+                    .bg(if is_active { theme::glass_highlight().into() } else { gpui::transparent_black() })
                     .text_xs()
                     .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
-                    .text_color(if is_active { theme::text() } else { theme::text_secondary() })
+                    .text_color(if is_active { theme::accent() } else { theme::text_muted() })
                     .hover(|s| if !is_active { s.text_color(theme::text()) } else { s })
                     .child(mode_label)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1618,18 +1618,66 @@ impl super::Chamber {
     }
 
     pub(super) fn crates_and_modules_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_root = crate::vcs::repo_root_of(&self.path);
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
 
-        let mut cache_ref = self.cached_crate_graph.borrow_mut();
-        if cache_ref.is_none() {
-            *cache_ref = Some(CachedCrateGraph::build(&repo_root));
+        if self.cached_crate_graph.borrow().is_none() {
+            if !self.cached_crate_graph_loading.get() {
+                self.cached_crate_graph_loading.set(true);
+                cx.spawn(async move |this, cx| {
+                    let graph = cx
+                        .background_executor()
+                        .spawn(async move {
+                            CachedCrateGraph::build(&repo_root)
+                        })
+                        .await;
+                    let _ = this.update(cx, |chamber, cx| {
+                        *chamber.cached_crate_graph.borrow_mut() = Some(graph);
+                        chamber.cached_crate_graph_loading.set(false);
+                        cx.notify();
+                    });
+                }).detach();
+            }
         }
-        let cached = cache_ref.as_ref().unwrap();
 
+        let cache_ref = self.cached_crate_graph.borrow();
+        let mode_switcher = self.visualizer_mode_switcher_header(cx);
+
+        if cache_ref.is_none() {
+            return v_flex()
+                .id("crates-modules-container")
+                .size_full()
+                .bg(theme::canvas_base())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .px_4()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(theme::glass_highlight())
+                        .child(mode_switcher),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme::text_muted())
+                                .child("Building workspace crate topology graph..."),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        let cached = cache_ref.as_ref().unwrap();
         let selected_crate = self.visualizer_selected_crate.clone();
 
-        // Header
-        let mode_switcher = self.visualizer_mode_switcher_header(cx);
+        // Header Stats
         let hud_stats = h_flex()
             .gap_2()
             .items_center()
@@ -1701,29 +1749,68 @@ impl super::Chamber {
             .child(mode_switcher)
             .child(hud_stats);
 
-        // Canvas element with Bezier dependency curves
+        // Canvas element with Bezier dependency curves and dynamically scaled layers
         let edges_list = cached.topology.edges.clone();
         let crate_pos_map = cached.crate_positions.clone();
         let sel_crate = selected_crate.clone();
         let direct_mod = cached.direct_modified_crates.clone();
         let downstream_imp = cached.downstream_impacted_crates.clone();
 
-        let hit_pos_map = crate_pos_map.clone();
+        let hit_bounds_cell = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, Bounds<Pixels>)>::new()));
+        let hit_bounds_for_paint = hit_bounds_cell.clone();
 
         let canvas_elem = canvas(
             move |bounds, _, _| bounds,
-            move |_bounds, _, window, _cx| {
+            move |bounds, _, window, _cx| {
+                let w = f32::from(bounds.size.width);
+                let h = f32::from(bounds.size.height);
+                let origin_x = f32::from(bounds.origin.x);
+                let origin_y = f32::from(bounds.origin.y);
+
+                let mut min_x = f32::MAX;
+                let mut max_x = f32::MIN;
+                let mut min_y = f32::MAX;
+                let mut max_y = f32::MIN;
+
+                for &(x, y) in crate_pos_map.values() {
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
+                }
+
+                let range_x = (max_x - min_x).max(100.0);
+                let range_y = (max_y - min_y).max(100.0);
+
+                let scale_x = (w * 0.75) / range_x;
+                let scale_y = (h * 0.70) / range_y;
+                let scale = scale_x.min(scale_y).clamp(0.4, 2.0);
+
+                let center_orig_x = (min_x + max_x) * 0.5;
+                let center_orig_y = (min_y + max_y) * 0.5;
+
+                let project = |x: f32, y: f32| -> (f32, f32) {
+                    let sx = origin_x + (w / 2.0) + (x - center_orig_x) * scale;
+                    let sy = origin_y + (h / 2.0) + (y - center_orig_y) * scale;
+                    (sx, sy)
+                };
+
+                let mut painted_hits = Vec::new();
+
                 // Draw Bezier edges
                 for edge in &edges_list {
                     if edge.relation == "depends_on" {
                         if let (Some(&(x1, y1)), Some(&(x2, y2))) = (crate_pos_map.get(&edge.source_id), crate_pos_map.get(&edge.target_id)) {
+                            let (sx1, sy1) = project(x1, y1);
+                            let (sx2, sy2) = project(x2, y2);
+
                             let mut builder = PathBuilder::stroke(px(1.5));
-                            builder.move_to(point(px(x1), px(y1)));
-                            let mid_y = (y1 + y2) * 0.5;
+                            builder.move_to(point(px(sx1), px(sy1)));
+                            let mid_y = (sy1 + sy2) * 0.5;
                             builder.cubic_bezier_to(
-                                point(px(x2), px(y2)),
-                                point(px(x1), px(mid_y)),
-                                point(px(x2), px(mid_y)),
+                                point(px(sx2), px(sy2)),
+                                point(px(sx1), px(mid_y)),
+                                point(px(sx2), px(mid_y)),
                             );
 
                             if let Ok(path) = builder.build() {
@@ -1742,16 +1829,19 @@ impl super::Chamber {
 
                 // Draw Crate Nodes
                 for (crate_name, &(cx_pt, cy_pt)) in &crate_pos_map {
+                    let (sx, sy) = project(cx_pt, cy_pt);
                     let is_sel = sel_crate.as_deref() == Some(crate_name.as_str());
                     let is_direct = direct_mod.contains(crate_name);
                     let is_impacted = downstream_imp.contains(crate_name);
 
                     let card_w = px(150.0);
                     let card_h = px(48.0);
-                    let bounds = Bounds {
-                        origin: point(px(cx_pt) - card_w / 2.0, px(cy_pt) - card_h / 2.0),
+                    let node_bounds = Bounds {
+                        origin: point(px(sx) - card_w / 2.0, px(sy) - card_h / 2.0),
                         size: size(card_w, card_h),
                     };
+
+                    painted_hits.push((crate_name.clone(), node_bounds));
 
                     let bg_color = if is_sel {
                         theme::tab_bar_bg()
@@ -1763,10 +1853,16 @@ impl super::Chamber {
                         theme::bg_surface()
                     };
 
-                    window.paint_quad(fill(bounds, bg_color).corner_radii(px(8.0)));
+                    window.paint_quad(fill(node_bounds, bg_color).corner_radii(px(8.0)));
+                }
+
+                if let Ok(mut cell) = hit_bounds_for_paint.try_borrow_mut() {
+                    *cell = painted_hits;
                 }
             },
         );
+
+        let hit_bounds_for_click = hit_bounds_cell.clone();
 
         let canvas_container = div()
             .relative()
@@ -1776,19 +1872,13 @@ impl super::Chamber {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &gpui::MouseDownEvent, _window, cx| {
-                    let click_x = f32::from(ev.position.x);
-                    let click_y = f32::from(ev.position.y);
-
+                    let click_pos = ev.position;
                     let mut clicked: Option<String> = None;
-                    let mut min_dist_sq = 80.0 * 80.0;
 
-                    for (c_name, &(cx_pt, cy_pt)) in &hit_pos_map {
-                        let dx = cx_pt - click_x;
-                        let dy = cy_pt - click_y;
-                        let d_sq = dx * dx + dy * dy;
-                        if d_sq < min_dist_sq {
-                            min_dist_sq = d_sq;
+                    for (c_name, node_bounds) in hit_bounds_for_click.borrow().iter() {
+                        if node_bounds.contains(&click_pos) {
                             clicked = Some(c_name.clone());
+                            break;
                         }
                     }
 
@@ -1877,7 +1967,7 @@ impl super::Chamber {
                     }))
             }));
 
-        // Selected Crate & Intra-Crate Module Drill-Down Inspector
+        // Selected Crate & Intra-Crate Module Drill-Down Inspector Drawer
         let crate_inspector = selected_crate.as_ref().map(|c_name| {
             let layer_ix = cached.crate_layers.get(c_name).copied().unwrap_or(0);
             let deps: Vec<String> = cached.topology.edges.iter()
@@ -1895,6 +1985,9 @@ impl super::Chamber {
 
             v_flex()
                 .w_full()
+                .h(px(160.0))
+                .max_h(px(160.0))
+                .overflow_y_scroll()
                 .p_3()
                 .gap_2()
                 .bg(theme::term_bg())
@@ -1928,10 +2021,31 @@ impl super::Chamber {
                                 ),
                         )
                         .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme::text_muted())
-                                .child(format!("crates/{}", c_name)),
+                            h_flex()
+                                .gap_3()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(format!("crates/{}", c_name)),
+                                )
+                                .child(
+                                    div()
+                                        .id("close-crate-inspector")
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded_md()
+                                        .cursor_pointer()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .hover(|s| s.text_color(theme::text()))
+                                        .child("✕")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.visualizer_selected_crate = None;
+                                            cx.notify();
+                                        })),
+                                ),
                         ),
                 )
                 .child(
