@@ -345,7 +345,7 @@ pub(crate) fn compute_nucleus_projection(
 }
 
 pub const NUCLEUS_ZOOM_MIN: f32 = 0.5;
-pub const NUCLEUS_ZOOM_MAX: f32 = 8.0;
+pub const NUCLEUS_ZOOM_MAX: f32 = 24.0;
 
 /// Projects 2D simulation coordinates into screen bounds with interactive `zoom` and `(pan_x, pan_y)` offset.
 pub(crate) fn compute_nucleus_projection_with_view(
@@ -574,6 +574,7 @@ impl super::Chamber {
         let stats_hud = h_flex()
             .gap_2()
             .flex_wrap()
+            .justify_end()
             .items_center()
             .child(zoom_controls)
             .when(is_revalidating, |this| {
@@ -668,7 +669,13 @@ impl super::Chamber {
             .border_b_1()
             .border_color(theme::glass_highlight())
             .child(mode_switcher)
-            .child(stats_hud);
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .items_center()
+                    .child(stats_hud),
+            );
 
         // Searchable Note Inspector Dock with Filter Pills
         let filtered_notes = filter_nucleus_nodes(cached, self.visualizer_nucleus_filter.as_deref());
@@ -1610,8 +1617,8 @@ mod tests {
         assert!((after_screen_x - target_screen_x).abs() < 1e-3);
         assert!((after_screen_y - target_screen_y).abs() < 1e-3);
 
-        // Clamping bounds (0.5x to 8.0x)
-        let (max_z, _) = apply_nucleus_zoom_at_cursor(7.5, (pan_x, pan_y), 0.5, cursor, canvas_center);
+        // Clamping bounds (0.5x to 24.0x)
+        let (max_z, _) = apply_nucleus_zoom_at_cursor(20.0, (pan_x, pan_y), 0.5, cursor, canvas_center);
         assert_eq!(max_z, NUCLEUS_ZOOM_MAX);
         let (min_z, _) = apply_nucleus_zoom_at_cursor(0.55, (pan_x, pan_y), -0.5, cursor, canvas_center);
         assert_eq!(min_z, NUCLEUS_ZOOM_MIN);
