@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.33] - 2026-11-01
+
+### Added
+- **Nucleus Graph Zoom/Pan Navigation, Active Filter Canvas Sync & Unified Orphan Note Banner (`hadron-chamber`)**:
+  - Added cursor-anchored mouse wheel zoom (`0.5x`–`8.0x`) via `compute_nucleus_projection_with_view` and `apply_nucleus_zoom_at_cursor`, header zoom controls (`-`, `%`, `+`, `Reset`), left-drag canvas panning, a top-right node hover/selection HUD pill, and a `55px` ideal spring rest length in `ForceDirectedGraph::step_simulation` (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+  - Filtered 2D canvas nodes and edges by the active filter pill (`All` / `Orphans` / `Dead Links`) via `filter_nucleus_nodes` so selecting `Orphans` or `Dead Links` isolates matching nodes on the canvas, and moved the `Orphan Note` badge and `+ Add to Index` / `Delete Orphan` remediation actions into a dedicated banner below note metadata and above file content preview matching `Dead Links` styling (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+
 ## [0.33.32] - 2026-11-01
 
 ### Fixed

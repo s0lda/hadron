@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.33",
+        date: Some("2026-11-01"),
+        added: &[
+            "Nucleus Graph Zoom/Pan Navigation, Active Filter Canvas Sync & Unified Orphan Note Banner: Added cursor-anchored mouse wheel zoom (0.5x–8.0x), header zoom controls (-, %, +, Reset), left-drag canvas panning, a top-right node hover/selection HUD pill, and 55px spring rest length; filtered 2D canvas nodes and edges by active filter pill (All / Orphans / Dead Links); and moved Orphan Note remediation actions (+ Add to Index, Delete Orphan) into a unified banner above the file preview",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.32",
         date: Some("2026-11-01"),
         added: &[],
