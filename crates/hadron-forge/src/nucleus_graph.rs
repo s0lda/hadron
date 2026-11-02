@@ -147,24 +147,42 @@ pub fn build_nucleus_graph(nucleus_dir: &Path) -> (BTreeMap<String, NucleusNode>
         }
     }
 
-    // Parse invariants/always.md to record "invariants" incoming link
-    let invariants_file = nucleus_dir.join("invariants").join("always.md");
-    if let Ok(inv_content) = fs::read_to_string(&invariants_file) {
-        let inv_links = extract_note_links(&inv_content);
-        for target in inv_links {
-            if let Some(node) = nodes.get_mut(&target) {
-                if !node.incoming_links.contains(&"invariants".to_string()) {
-                    node.incoming_links.push("invariants".to_string());
+    // Parse invariants/*.md (and invariants.md if present) to record "invariants" incoming link
+    let mut invariant_files = Vec::new();
+    let invariants_dir = nucleus_dir.join("invariants");
+    if invariants_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&invariants_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "md") {
+                    invariant_files.push(path);
                 }
             }
         }
-        for word in inv_content.split_whitespace() {
-            let clean = word.trim_matches(|c: char| c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == ',' || c == '.');
-            if let Some(rest) = clean.strip_prefix("notes/") {
-                let slug = rest.strip_suffix(".md").unwrap_or(rest);
-                if let Some(node) = nodes.get_mut(slug) {
+    }
+    let top_invariants = nucleus_dir.join("invariants.md");
+    if top_invariants.is_file() {
+        invariant_files.push(top_invariants);
+    }
+
+    for inv_file in invariant_files {
+        if let Ok(inv_content) = fs::read_to_string(&inv_file) {
+            let inv_links = extract_note_links(&inv_content);
+            for target in inv_links {
+                if let Some(node) = nodes.get_mut(&target) {
                     if !node.incoming_links.contains(&"invariants".to_string()) {
                         node.incoming_links.push("invariants".to_string());
+                    }
+                }
+            }
+            for word in inv_content.split_whitespace() {
+                let clean = word.trim_matches(|c: char| c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == ',' || c == '.');
+                if let Some(rest) = clean.strip_prefix("notes/") {
+                    let slug = rest.strip_suffix(".md").unwrap_or(rest);
+                    if let Some(node) = nodes.get_mut(slug) {
+                        if !node.incoming_links.contains(&"invariants".to_string()) {
+                            node.incoming_links.push("invariants".to_string());
+                        }
                     }
                 }
             }
@@ -253,6 +271,11 @@ pub fn build_nucleus_graph(nucleus_dir: &Path) -> (BTreeMap<String, NucleusNode>
     (nodes, dead_links)
 }
 
+/// Returns true if a node has no incoming links from index or invariants.
+pub fn is_orphan_node(node: &NucleusNode) -> bool {
+    !node.incoming_links.iter().any(|l| l == "index" || l == "invariants")
+}
+
 pub fn generate_mermaid_graph(nodes: &BTreeMap<String, NucleusNode>) -> String {
     let mut out = String::from("```mermaid\ngraph TD\n");
     for (slug, node) in nodes {
@@ -277,7 +300,7 @@ pub fn run_nucleus_graph(
 
     for (slug, node) in &nodes {
         total_links += node.outgoing_links.len();
-        if node.incoming_links.is_empty() && node.outgoing_links.is_empty() {
+        if is_orphan_node(node) {
             orphaned.push(slug.clone());
         }
     }
@@ -364,4 +387,22 @@ mod tests {
         assert!(nodes.contains_key("inv-note"));
         assert!(nodes.get("inv-note").unwrap().incoming_links.contains(&"invariants".to_string()));
     }
+
+    #[test]
+    fn test_is_orphan_node_unindexed_with_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus_dir = dir.path();
+        let notes_dir = nucleus_dir.join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+        fs::write(notes_dir.join("unindexed-a.md"), "Points to [[unindexed-b]]").unwrap();
+        fs::write(notes_dir.join("unindexed-b.md"), "Target note").unwrap();
+
+        let (nodes, _) = build_nucleus_graph(nucleus_dir);
+        let node_a = nodes.get("unindexed-a").unwrap();
+        let node_b = nodes.get("unindexed-b").unwrap();
+
+        assert!(is_orphan_node(node_a));
+        assert!(is_orphan_node(node_b));
+    }
 }
+

@@ -77,6 +77,87 @@ pub fn auto_shard_index(nucleus_dir: &Path, byte_threshold: usize) -> std::io::R
     Ok(true)
 }
 
+fn strip_code_blocks_and_spans(content: &str) -> String {
+    let mut clean = String::with_capacity(content.len());
+    let mut in_block = false;
+
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            in_block = !in_block;
+            clean.push('\n');
+            continue;
+        }
+        if in_block {
+            clean.push('\n');
+            continue;
+        }
+        let mut idx = 0;
+        let bytes = line.as_bytes();
+        while idx < bytes.len() {
+            if bytes[idx] == b'`' {
+                let mut tick_count = 1;
+                while idx + tick_count < bytes.len() && bytes[idx + tick_count] == b'`' {
+                    tick_count += 1;
+                }
+                let needle = &line[idx..idx + tick_count];
+                let after = idx + tick_count;
+                if let Some(rel_end) = line[after..].find(needle) {
+                    idx = after + rel_end + tick_count;
+                    continue;
+                }
+                clean.push_str(needle);
+                idx = after;
+            } else if let Some(ch) = line[idx..].chars().next() {
+                clean.push(ch);
+                idx += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        clean.push('\n');
+    }
+    clean
+}
+
+fn extract_note_slugs_from_markdown(content: &str) -> Vec<String> {
+    let content = strip_code_blocks_and_spans(content);
+    let mut links = HashSet::new();
+
+    // Wiki-links [[slug]]
+    let mut cursor = 0;
+    while let Some(start) = content[cursor..].find("[[") {
+        let abs_start = cursor + start + 2;
+        if let Some(end) = content[abs_start..].find("]]") {
+            let raw_slug = content[abs_start..abs_start + end].trim();
+            let slug = raw_slug.strip_suffix(".md").unwrap_or(raw_slug).trim().to_string();
+            if !slug.is_empty() && !slug.contains('<') && !slug.contains('>') {
+                links.insert(slug);
+            }
+            cursor = abs_start + end + 2;
+        } else {
+            break;
+        }
+    }
+
+    // Markdown links: (notes/slug.md) or (notes/slug)
+    let mut cursor_md = 0;
+    while let Some(start) = content[cursor_md..].find("](notes/") {
+        let abs_start = cursor_md + start + 8;
+        if let Some(end) = content[abs_start..].find(')') {
+            let raw_target = &content[abs_start..abs_start + end];
+            let slug = raw_target.strip_suffix(".md").unwrap_or(raw_target).trim().to_string();
+            if !slug.is_empty() && !slug.contains('<') && !slug.contains('>') {
+                links.insert(slug);
+            }
+            cursor_md = abs_start + end + 1;
+        } else {
+            break;
+        }
+    }
+
+    links.into_iter().collect()
+}
+
 impl NucleusIntegrityLinter {
     /// Standard Model Rule 9: 32 KB prompt budget for `.hadron/nucleus/index.md`.
     pub const DEFAULT_INDEX_BUDGET: usize = 32 * 1024;
@@ -109,17 +190,18 @@ impl NucleusIntegrityLinter {
                 index_bytes = metadata.len() as usize;
             }
             if let Ok(content) = std::fs::read_to_string(&index_path) {
-                let re = Regex::new(r"\[([^\]]+)\]\((notes/[^\)]+\.md)\)").unwrap();
+                let re_md = Regex::new(r"\[([^\]]+)\]\((notes/[^\)]+\.md)\)").unwrap();
+                let re_wiki = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
                 for line in content.lines() {
                     let trimmed = line.trim();
                     // Real lesson pointers start with a list item: `- [...]` or `* [...]`
-                    if (!trimmed.starts_with("- [") && !trimmed.starts_with("* ["))
+                    if (!trimmed.starts_with("- [") && !trimmed.starts_with("* [") && !trimmed.starts_with("- [[") && !trimmed.starts_with("* [["))
                         || trimmed.starts_with("- [`")
                         || trimmed.contains("<slug>")
                     {
                         continue;
                     }
-                    for cap in re.captures_iter(trimmed) {
+                    for cap in re_md.captures_iter(trimmed) {
                         let rel_path = &cap[2];
                         if rel_path.contains('<') || rel_path.contains('>') {
                             continue;
@@ -133,6 +215,23 @@ impl NucleusIntegrityLinter {
 
                         if !target_file.exists() {
                             broken_links.push(rel_path.to_string());
+                        }
+                    }
+                    for cap in re_wiki.captures_iter(trimmed) {
+                        let raw_slug = &cap[1];
+                        if raw_slug.contains('<') || raw_slug.contains('>') {
+                            continue;
+                        }
+                        let slug = raw_slug.strip_suffix(".md").unwrap_or(raw_slug).trim();
+                        let note_filename = format!("{slug}.md");
+                        let rel_path = format!("notes/{note_filename}");
+                        referenced_notes.insert(note_filename);
+
+                        let target_file = nucleus_dir.join(&rel_path);
+                        if !target_file.exists() {
+                            if !broken_links.contains(&rel_path) {
+                                broken_links.push(rel_path);
+                            }
                         }
                     }
                 }
@@ -175,6 +274,17 @@ impl NucleusIntegrityLinter {
                         }
                     }
                 }
+                for slug in extract_note_slugs_from_markdown(&inv_content) {
+                    let note_filename = format!("{slug}.md");
+                    referenced_notes.insert(note_filename.clone());
+                    let target_file = notes_dir.join(&note_filename);
+                    if !target_file.exists() {
+                        let broken = format!("notes/{note_filename}");
+                        if !broken_links.contains(&broken) {
+                            broken_links.push(broken);
+                        }
+                    }
+                }
             }
         }
 
@@ -185,6 +295,23 @@ impl NucleusIntegrityLinter {
                     let path = entry.path();
                     if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
                         existing_notes.push(path);
+                    }
+                }
+            }
+        }
+
+        // Scan existing note bodies for broken wiki-links and markdown links
+        for note_path in &existing_notes {
+            if let Ok(note_content) = std::fs::read_to_string(note_path) {
+                let note_links = extract_note_slugs_from_markdown(&note_content);
+                for target_slug in note_links {
+                    let target_filename = format!("{target_slug}.md");
+                    let target_file = notes_dir.join(&target_filename);
+                    if !target_file.exists() {
+                        let broken = format!("notes/{target_filename}");
+                        if !broken_links.contains(&broken) {
+                            broken_links.push(broken);
+                        }
                     }
                 }
             }
@@ -347,4 +474,25 @@ mod tests {
         assert!(master_content.contains("shards/section-one.md"));
         assert!(master_content.len() < large_text.len());
     }
+
+    #[test]
+    fn test_nucleus_linter_wiki_links_and_note_body_broken_links() {
+        let dir = tempdir().unwrap();
+        let nucleus = dir.path();
+        let notes = nucleus.join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+
+        // Note indexed via [[wiki-link]] in index.md
+        std::fs::write(notes.join("wiki-note.md"), "Referencing [[missing-target]] in body").unwrap();
+
+        let index_content = "- [[wiki-note]] — note pointer via wiki link\n";
+        std::fs::write(nucleus.join("index.md"), index_content).unwrap();
+
+        let linter = NucleusIntegrityLinter::default_budget();
+        let report = linter.lint(nucleus);
+
+        assert_eq!(report.orphaned_notes.len(), 0);
+        assert_eq!(report.broken_links, vec!["notes/missing-target.md".to_string()]);
+    }
 }
+
