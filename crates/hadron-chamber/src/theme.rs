@@ -1062,10 +1062,17 @@ mod tests {
 
     static THEME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    fn lock_obsidian_theme() -> std::sync::MutexGuard<'static, ()> {
+        let guard = THEME_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        set_active_preset(crate::config::ThemePreset::Obsidian);
+        set_active_accent(crate::config::AccentChoice::Amethyst);
+        set_active_custom_theme(None);
+        guard
+    }
+
     #[test]
     fn test_canvas_base_token() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
-        set_active_preset(crate::config::ThemePreset::Obsidian);
+        let _guard = lock_obsidian_theme();
         let base = canvas_base();
         let expected: Hsla = rgb(0x0f0f0f).into();
         assert_eq!(base, expected);
@@ -1074,8 +1081,7 @@ mod tests {
 
     #[test]
     fn test_glass_surface_token() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
-        set_active_preset(crate::config::ThemePreset::Obsidian);
+        let _guard = lock_obsidian_theme();
         let surface = glass_surface();
         let expected: Hsla = rgba(0x171717f2).into();
         assert_eq!(surface, expected);
@@ -1083,8 +1089,7 @@ mod tests {
 
     #[test]
     fn test_tab_bar_bg_token() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
-        set_active_preset(crate::config::ThemePreset::Obsidian);
+        let _guard = lock_obsidian_theme();
         let bg = tab_bar_bg();
         let expected = rgb(0x0f0f0f);
         assert_eq!(bg, expected);
@@ -1092,8 +1097,7 @@ mod tests {
 
     #[test]
     fn test_glass_card_token() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
-        set_active_preset(crate::config::ThemePreset::Obsidian);
+        let _guard = lock_obsidian_theme();
         let card = glass_card();
         let expected: Hsla = rgba(0x171717f8).into();
         assert_eq!(card, expected);
@@ -1101,6 +1105,7 @@ mod tests {
 
     #[test]
     fn test_neutral_palette_tokens() {
+        let _guard = lock_obsidian_theme();
         assert_eq!(modal_surface(), rgb(0x171717));
         assert_eq!(bg_surface(), rgb(0x171717));
         assert_eq!(popover(), rgb(0x171717));
@@ -1115,6 +1120,7 @@ mod tests {
 
     #[test]
     fn test_neutral_surface_tokens_have_no_color_tint() {
+        let _guard = lock_obsidian_theme();
         for surface in [
             modal_surface(),
             bg_surface(),
@@ -1135,6 +1141,7 @@ mod tests {
 
     #[test]
     fn test_glass_highlight_token() {
+        let _guard = lock_obsidian_theme();
         let highlight = glass_highlight();
         let expected: Hsla = rgba(0x60606038).into();
         assert_eq!(highlight, expected);
@@ -1142,6 +1149,7 @@ mod tests {
 
     #[test]
     fn test_halo_color_tokens() {
+        let _guard = lock_obsidian_theme();
         assert_eq!(halo_active(), Hsla::from(rgb(0xc778dd)));
         assert_eq!(halo_reasoning(), Hsla::from(rgb(0xa87ffb)));
         assert_eq!(halo_idle(), Hsla::from(rgb(0x62c073)));
@@ -1150,6 +1158,7 @@ mod tests {
 
     #[test]
     fn test_halo_dot_mapping() {
+        let _guard = lock_obsidian_theme();
         assert_eq!(halo_dot(QuarkState::Excited), halo_active());
         assert_eq!(halo_dot(QuarkState::Thinking), halo_reasoning());
         assert_eq!(halo_dot(QuarkState::Ground), halo_idle());
@@ -1160,6 +1169,7 @@ mod tests {
 
     #[test]
     fn test_glass_elevation_hierarchy() {
+        let _guard = lock_obsidian_theme();
         let base = canvas_base();
         let surface = glass_surface();
         let card = glass_card();
@@ -1171,6 +1181,7 @@ mod tests {
 
     #[test]
     fn test_halo_colors_mutually_distinct() {
+        let _guard = lock_obsidian_theme();
         let active = halo_active();
         let reasoning = halo_reasoning();
         let idle = halo_idle();
@@ -1186,6 +1197,7 @@ mod tests {
 
     #[test]
     fn test_translucency_invariants() {
+        let _guard = lock_obsidian_theme();
         assert_eq!(canvas_base().a, 1.0, "Canvas base must be opaque");
         assert!(
             glass_surface().a > 0.8 && glass_surface().a <= 1.0,
@@ -1233,10 +1245,9 @@ mod tests {
 
     #[test]
     fn test_semantic_status_and_chrome_tokens() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        let _guard = lock_obsidian_theme();
 
         // Obsidian preset
-        set_active_preset(crate::config::ThemePreset::Obsidian);
         assert_eq!(success(), rgb(0x62c073));
         assert_eq!(warning(), rgb(0xe5c07b));
         assert_eq!(error(), rgb(0xe06c75));
@@ -1283,9 +1294,7 @@ mod tests {
 
     #[test]
     fn test_dynamic_preset_and_accent_switching() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
-        set_active_preset(crate::config::ThemePreset::Obsidian);
-        set_active_accent(crate::config::AccentChoice::Amethyst);
+        let _guard = lock_obsidian_theme();
         assert_eq!(active_preset(), crate::config::ThemePreset::Obsidian);
         assert_eq!(accent(), rgb(0xa87ffb));
 
@@ -1309,7 +1318,7 @@ mod tests {
 
     #[test]
     fn test_github_semantic_syntax_tokens() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        let _guard = lock_obsidian_theme();
         assert_eq!(syntax_function(), rgb(0xb392f0));
         assert_eq!(syntax_keyword(), rgb(0xf97583));
         assert_eq!(syntax_type(), rgb(0x79b8ff));
@@ -1322,6 +1331,7 @@ mod tests {
 
     #[test]
     fn test_file_icon_color_for_path() {
+        let _guard = lock_obsidian_theme();
         assert_eq!(file_icon_color_for_path("src/main.rs"), rgb(0xb392f0));
         assert_eq!(file_icon_color_for_path("frontend/app.ts"), rgb(0x79b8ff));
         assert_eq!(file_icon_color_for_path("README.md"), rgb(0x85e89d));
@@ -1334,7 +1344,7 @@ mod tests {
 
     #[test]
     fn test_custom_theme_switching_and_token_override() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
+        let _guard = lock_obsidian_theme();
         let mut custom = crate::config::ThemeDefinition::preset_obsidian();
         custom.id = "custom-neon".to_string();
         custom.name = "Neon Cyber".to_string();
@@ -1416,8 +1426,7 @@ mod tests {
 
     #[test]
     fn test_terminal_cell_color_resolution_and_transparent_default_bg() {
-        let _guard = THEME_TEST_MUTEX.lock().unwrap();
-        set_active_preset(crate::config::ThemePreset::Obsidian);
+        let _guard = lock_obsidian_theme();
 
         // Default bg cell resolves to None (transparent) so the container surface shows through
         assert_eq!(resolve_term_cell_bg(crate::pty::DEFAULT_BG), None);

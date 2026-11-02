@@ -69,8 +69,20 @@ pub fn call_rpc(
     Ok(resp)
 }
 
+const WAKE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_millis(50)
+};
+
+const POLL_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_millis(100)
+};
+
 /// Immediately wake the `hadron-gluon` daemon loop over JSON-RPC (`"daemon/wake"`) if `gluon.rpc` is present.
-/// Uses a tight 35ms timeout and returns `false` on any error so callers fall back to file watching seamlessly.
+/// Uses a tight timeout and returns `false` on any error so callers fall back to file watching seamlessly.
 pub fn notify_daemon_wake(field_dir: &Path) -> bool {
     let Some(meta) = active_endpoint(field_dir) else {
         return false;
@@ -79,7 +91,7 @@ pub fn notify_daemon_wake(field_dir: &Path) -> bool {
         &meta.addr,
         "daemon/wake",
         serde_json::json!({}),
-        Duration::from_millis(35),
+        WAKE_TIMEOUT,
     )
     .is_ok_and(|resp| resp.error.is_none())
 }
@@ -98,7 +110,7 @@ pub fn poll_field_via_rpc(
             "offset": offset,
             "count": count,
         }),
-        Duration::from_millis(75),
+        POLL_TIMEOUT,
     )
     .ok()?;
     if resp.error.is_some() {
@@ -153,7 +165,10 @@ mod tests {
         };
         write_rpc_metadata(tmp.path(), &meta).expect("write gluon.rpc");
 
+        let ready = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let server_ready = std::sync::Arc::clone(&ready);
         let server = std::thread::spawn(move || {
+            server_ready.wait();
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().expect("accept");
                 let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
@@ -194,6 +209,7 @@ mod tests {
             }
         });
 
+        ready.wait();
         assert!(notify_daemon_wake(tmp.path()));
         let (events, next_offset) =
             poll_field_via_rpc(tmp.path(), 0, 0).expect("poll_field_via_rpc");
