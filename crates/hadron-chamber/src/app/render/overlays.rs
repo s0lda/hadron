@@ -20,6 +20,19 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.36",
+        date: Some("2026-11-02"),
+        added: &[
+            "Nucleus Graph Inline Header Health Badges & Auto-Retry Worktree Turns: Surfaced inline Orphans, Dead Links, and Healthy status badges in the Nucleus Graph header row alongside mode tabs, and added automatic turn checkpointing and retry (up to MAX_TURN_AUTO_RETRIES=2) on transient stream/silence failures",
+        ],
+        changed: &[
+            "Pre-Provisioning Excitation, Batched Event Writes & Non-Blocking Slash Commands: Populated live activity immediately before worktree provisioning, batched Assign/Excited/Blocked and /clear seed event appends via io::append_events, cached custom skill IDs off the UI thread, and offloaded heavy slash commands and /clear worktree resets to the GPUI background executor",
+        ],
+        fixed: &[
+            "CLI Stream Error Deadlocks & 90s Silence Aborts: Killed child process groups immediately on 3 consecutive CLI error steps so ProcessRunner::run_streaming never hangs on stderr EOF, refreshed live activity timestamps on error retries, emitted 30s background heartbeats during active streaming turns, and refreshed git_diff across CliQuark::excite retries",
+        ],
+    },
+    Release {
         version: "0.33.35",
         date: Some("2026-11-01"),
         added: &[],

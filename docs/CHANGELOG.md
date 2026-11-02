@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.36] - 2026-11-02
+
+### Added
+- **Nucleus Graph Inline Header Health Badges & Auto-Retry Worktree Turns (`hadron-chamber`, `hadron-forge`, `hadron-gluon`)**:
+  - Moved `Orphans` (`#nucleus-hud-orphans`), `Dead Links` (`#nucleus-hud-dead-links`), and a new `Healthy` (`#nucleus-hud-healthy`) status indicator into `nucleus_health_summary` inline with `mode_switcher` in the top `Nucleus Graph` header row via `nucleus_health_badge_state`, and preserved markdown link targets containing parentheses inside `extract_markdown_targets` (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-forge/src/nucleus_graph.rs`).
+  - Added automatic turn checkpointing and retry (`MAX_TURN_AUTO_RETRIES = 2`) in `Engine::run_until_quiesce` when a worktree turn fails from transient CLI stream retries or silence timeouts (`crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/engine.rs`).
+
+### Changed
+- **Pre-Provisioning Excitation, Batched Event Appends & Non-Blocking Slash Commands (`hadron-gluon`, `hadron-chamber`, `hadron-lattice`)**:
+  - Wrote `live::write` (`"provisioning worktree…"` / `"building context…"`) immediately upon candidate selection before git worktree setup, skipped redundant `QuarkState::Blocked` emissions for already-blocked seats, and batched `Assign` + `Excited`, `Blocked`, and `/clear` seed events via `hadron_lattice::io::append_events` (`crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/engine/turn.rs`, `crates/hadron-lattice/src/io.rs`).
+  - Cached `.hadron/skills/` custom skill IDs in background polling (`cached_skill_ids`), updated `/clear` to resync UI state immediately while offloading worktree resets and single-pass archive loading (`list_archives_and_sessions`), and moved heavy/subprocess slash commands onto `cx.background_executor().spawn(...)` (`crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/input.rs`, `crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/model/mod.rs`, `crates/hadron-chamber/src/text.rs`).
+
+### Fixed
+- **CLI Stream Error Deadlocks, 90s Silence Aborts & Stale Retry Diffs (`hadron-gluon`, `hadron-lattice`)**:
+  - Killed the child process group immediately when `ProcessRunner::run_streaming` aborts early after 3 consecutive error steps so `tokio::join!` never deadlocks waiting for `stderr` EOF (`crates/hadron-gluon/src/adapter/runner.rs`).
+  - Refreshed live activity timestamps (`live::touch`) on consecutive CLI error steps, spawned a 30s background heartbeat task during non-error streaming turns so long tool calls never trip `until_silent`, refreshed `prepared_turn.git_diff` from worktree `HEAD` across `CliQuark::excite` retries, and reset CLI session state (`reset_session()`) when a turn fails (`crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/src/adapter/cli_stream.rs`, `crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-lattice/src/live.rs`).
+
 ## [0.33.35] - 2026-11-01
 
 ### Changed
