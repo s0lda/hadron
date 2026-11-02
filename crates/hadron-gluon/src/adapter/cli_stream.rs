@@ -222,8 +222,8 @@ impl StreamAccumulator {
                 {
                     return false;
                 }
-                if label == self.status {
-                    return false; // the same step going ACTIVE → DONE says nothing new
+                if label == self.status && !self.in_error_state {
+                    return false; // the same non-error step going ACTIVE → DONE says nothing new
                 }
                 self.status = label;
                 self.last_change_was_status = true;

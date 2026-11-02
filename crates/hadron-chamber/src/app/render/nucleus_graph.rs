@@ -9,6 +9,30 @@ use serde::{Deserialize, Serialize};
 use super::*;
 use gpui::{canvas, fill, point, px, size, Bounds, MouseButton, PathBuilder};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NucleusHealthBadgeState {
+    BothBad { orphans: usize, dead_links: usize },
+    OrphansOnly { orphans: usize },
+    DeadLinksOnly { dead_links: usize },
+    Healthy,
+}
+
+pub fn nucleus_health_badge_state(orphans_count: usize, dead_links_count: usize) -> NucleusHealthBadgeState {
+    match (orphans_count > 0, dead_links_count > 0) {
+        (true, true) => NucleusHealthBadgeState::BothBad {
+            orphans: orphans_count,
+            dead_links: dead_links_count,
+        },
+        (true, false) => NucleusHealthBadgeState::OrphansOnly {
+            orphans: orphans_count,
+        },
+        (false, true) => NucleusHealthBadgeState::DeadLinksOnly {
+            dead_links: dead_links_count,
+        },
+        (false, false) => NucleusHealthBadgeState::Healthy,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForceNode {
     pub slug: String,
@@ -614,9 +638,13 @@ impl super::Chamber {
                     .text_xs()
                     .text_color(theme::text_secondary())
                     .child(format!("{} Links", cached.force_graph.edges.len())),
-            )
-            .when(!cached.orphaned_notes.is_empty(), |this| {
-                this.child(
+            );
+
+        let health_state = nucleus_health_badge_state(cached.orphaned_notes.len(), cached.dead_links.len());
+        let nucleus_health_summary = h_flex().gap_2().items_center();
+        let nucleus_health_summary = match health_state {
+            NucleusHealthBadgeState::BothBad { orphans, dead_links } => nucleus_health_summary
+                .child(
                     div()
                         .id("nucleus-hud-orphans")
                         .px_2p5()
@@ -628,15 +656,13 @@ impl super::Chamber {
                         .border_color(theme::warning().opacity(0.4))
                         .text_xs()
                         .text_color(theme::warning())
-                        .child(format!("{} Orphans", cached.orphaned_notes.len()))
+                        .child(format!("{orphans} Orphans"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.visualizer_nucleus_filter = Some("orphans".to_string());
                             cx.notify();
                         })),
                 )
-            })
-            .when(!cached.dead_links.is_empty(), |this| {
-                this.child(
+                .child(
                     div()
                         .id("nucleus-hud-dead-links")
                         .px_2p5()
@@ -648,32 +674,83 @@ impl super::Chamber {
                         .border_color(theme::error().opacity(0.4))
                         .text_xs()
                         .text_color(theme::error())
-                        .child(format!("{} Dead Links", cached.dead_links.len()))
+                        .child(format!("{dead_links} Dead Links"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.visualizer_nucleus_filter = Some("dead_links".to_string());
                             cx.notify();
                         })),
-                )
-            });
+                ),
+            NucleusHealthBadgeState::OrphansOnly { orphans } => nucleus_health_summary.child(
+                div()
+                    .id("nucleus-hud-orphans")
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(theme::warning().opacity(0.18))
+                    .border_1()
+                    .border_color(theme::warning().opacity(0.4))
+                    .text_xs()
+                    .text_color(theme::warning())
+                    .child(format!("{orphans} Orphans"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.visualizer_nucleus_filter = Some("orphans".to_string());
+                        cx.notify();
+                    })),
+            ),
+            NucleusHealthBadgeState::DeadLinksOnly { dead_links } => nucleus_health_summary.child(
+                div()
+                    .id("nucleus-hud-dead-links")
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(theme::error().opacity(0.18))
+                    .border_1()
+                    .border_color(theme::error().opacity(0.4))
+                    .text_xs()
+                    .text_color(theme::error())
+                    .child(format!("{dead_links} Dead Links"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.visualizer_nucleus_filter = Some("dead_links".to_string());
+                        cx.notify();
+                    })),
+            ),
+            NucleusHealthBadgeState::Healthy => nucleus_health_summary.child(
+                div()
+                    .id("nucleus-hud-healthy")
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .bg(theme::success().opacity(0.18))
+                    .border_1()
+                    .border_color(theme::success().opacity(0.4))
+                    .text_xs()
+                    .text_color(theme::success())
+                    .child("Healthy"),
+            ),
+        };
 
-        let header = h_flex()
+        let top_row = h_flex()
             .w_full()
-            .min_w_0()
-            .overflow_hidden()
-            .flex_wrap()
-            .gap_2()
             .justify_between()
             .items_center()
+            .child(mode_switcher)
+            .child(nucleus_health_summary);
+
+        let header = div()
+            .w_full()
             .px_4()
             .py_2()
             .border_b_1()
             .border_color(theme::glass_highlight())
-            .child(mode_switcher)
+            .child(top_row)
             .child(
                 h_flex()
                     .w_full()
                     .justify_end()
                     .items_center()
+                    .pt_1p5()
                     .child(stats_hud),
             );
 
@@ -1663,5 +1740,25 @@ mod tests {
         let dead = filter_nucleus_nodes(&cached, Some("dead_links"));
         let dead_slugs: Vec<String> = dead.into_iter().map(|n| n.slug).collect();
         assert_eq!(dead_slugs, vec!["dead-link-note".to_string()]);
+    }
+
+    #[test]
+    fn test_nucleus_health_badge_state_four_states() {
+        assert_eq!(
+            nucleus_health_badge_state(3, 2),
+            NucleusHealthBadgeState::BothBad { orphans: 3, dead_links: 2 }
+        );
+        assert_eq!(
+            nucleus_health_badge_state(5, 0),
+            NucleusHealthBadgeState::OrphansOnly { orphans: 5 }
+        );
+        assert_eq!(
+            nucleus_health_badge_state(0, 4),
+            NucleusHealthBadgeState::DeadLinksOnly { dead_links: 4 }
+        );
+        assert_eq!(
+            nucleus_health_badge_state(0, 0),
+            NucleusHealthBadgeState::Healthy
+        );
     }
 }

@@ -699,6 +699,7 @@ struct Chamber {
     pub(super) selector_search: Entity<InputState>,
     pub(super) project_switcher_open: bool,
     pub(super) events: Vec<Event>,
+    pub(super) cached_skill_ids: Vec<String>,
     pub(super) cached_plan_paths: Vec<(std::time::SystemTime, String)>,
     pub(super) cached_active_plan_content: Option<(String, String)>,
     pub(super) cached_nucleus_docs: (Option<String>, Option<String>, Option<String>),
@@ -1574,10 +1575,7 @@ impl Chamber {
         let (archived_messages, sessions) = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             (Vec::new(), Vec::new())
         } else {
-            (
-                crate::model::load_archived_messages(&sessions_dir),
-                crate::model::list_sessions(&sessions_dir),
-            )
+            crate::model::load_archives_and_sessions(&sessions_dir)
         };
         let prompt_history: Vec<String> = view
             .messages
@@ -1595,6 +1593,11 @@ impl Chamber {
             Vec::new()
         } else {
             io::read_events(&path).unwrap_or_default()
+        };
+        let cached_skill_ids = if workspace_mode == WorkspaceMode::Selector || is_wsl {
+            Vec::new()
+        } else {
+            crate::text::custom_skill_names(Some(&repo_root))
         };
         let (cached_plan_paths, cached_nucleus_docs) =
             if workspace_mode == WorkspaceMode::Selector || is_wsl {
@@ -1907,6 +1910,7 @@ impl Chamber {
             selector_search,
             project_switcher_open: false,
             events,
+            cached_skill_ids,
             cached_plan_paths,
             cached_active_plan_content: None,
             cached_nucleus_docs,
@@ -1920,24 +1924,7 @@ impl Chamber {
             chamber.warm_visualizer_graphs(cx);
         }
         if workspace_mode != WorkspaceMode::Selector && is_wsl {
-            let sessions_dir_bg = sessions_dir.clone();
-            cx.spawn(async move |this, cx| {
-                let (arch, sess) = cx
-                    .background_executor()
-                    .spawn(async move {
-                        (
-                            crate::model::load_archived_messages(&sessions_dir_bg),
-                            crate::model::list_sessions(&sessions_dir_bg),
-                        )
-                    })
-                    .await;
-                let _ = this.update(cx, |chamber, cx| {
-                    chamber.archived_messages = arch;
-                    chamber.sessions = sess;
-                    cx.notify();
-                });
-            })
-            .detach();
+            chamber.reload_archives_in_background(cx);
         }
         chamber.check_for_updates(cx);
         chamber

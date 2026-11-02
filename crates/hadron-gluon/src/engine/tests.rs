@@ -7308,3 +7308,141 @@ async fn pre_clear_or_errored_superseded_worktree_branch_is_archived_and_detache
     );
 }
 
+#[tokio::test]
+async fn park_blocked_deduplicates_already_blocked_seat() {
+    let dir = tempfile::tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    let target = QuarkId::new("disabled-quark");
+
+    let engine = Engine::new(field.clone(), Vec::new(), 10);
+
+    // Initial park_blocked appends a Blocked status
+    engine.park_blocked(&target).await.unwrap();
+    let events1 = read_events(&field).unwrap();
+    let blocked_count_1 = events1
+        .iter()
+        .filter(|e| e.from == Actor::Quark(target.clone()) && matches!(e.kind, Kind::Status { state: QuarkState::Blocked }))
+        .count();
+    assert_eq!(blocked_count_1, 1);
+
+    // Second park_blocked for the already-blocked seat does NOT re-append
+    engine.park_blocked(&target).await.unwrap();
+    let events2 = read_events(&field).unwrap();
+    let blocked_count_2 = events2
+        .iter()
+        .filter(|e| e.from == Actor::Quark(target.clone()) && matches!(e.kind, Kind::Status { state: QuarkState::Blocked }))
+        .count();
+    assert_eq!(blocked_count_2, 1, "park_blocked must skip appending duplicate Blocked event");
+}
+
+#[tokio::test]
+async fn provision_one_publishes_and_maintains_live_activity() {
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    let field = root.join(".hadron").join("field.jsonl");
+    let target = QuarkId::new("test-quark");
+    let live_dir = hadron_lattice::live::live_dir(&field);
+    std::fs::create_dir_all(&live_dir).unwrap();
+
+    let assignment = ulid::Ulid::new();
+    let base = crate::worktree::default_branch(&root);
+    let wt = crate::worktree::ensure_with_base(&root, &target, &assignment.to_string(), &base).unwrap();
+    let _snap = crate::snapshot::create(&wt.path, "before test").unwrap();
+
+    // Verify publishing live activity 'building context…' instead of clearing
+    let _ = hadron_lattice::live::publish(
+        &live_dir,
+        &hadron_lattice::Activity::new(
+            target.clone(),
+            hadron_lattice::live::Doing::Thinking,
+            "building context…",
+        ),
+    );
+
+    let act = hadron_lattice::live::read(&live_dir, &target, chrono::Utc::now()).expect("live activity exists");
+    assert_eq!(act.doing, hadron_lattice::live::Doing::Thinking);
+    assert_eq!(act.detail, "building context…");
+}
+
+#[tokio::test]
+async fn worktree_turn_hitting_silence_deadline_checkpoints_resets_session_and_auto_retries_to_land() {
+    struct StallOnceWriter {
+        id: QuarkId,
+        calls: usize,
+        session_resets: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Quark for StallOnceWriter {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        fn reset_session(&mut self) {
+            self.session_resets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            self.calls += 1;
+            if self.calls == 1 {
+                // Attempt 1 writes partial work to the worktree and then stalls past turn_deadline
+                std::fs::write(turn.cwd.join("part1.txt"), "saved before stall").unwrap();
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+            // Attempt 2 runs in a fresh session on the same branch where part1.txt was checkpointed
+            assert!(
+                turn.cwd.join("part1.txt").exists(),
+                "auto-retry must resume on the same assignment branch with part1.txt intact"
+            );
+            std::fs::write(turn.cwd.join("part2.txt"), "completed on retry").unwrap();
+            Ok(TurnOutcome {
+                message: Some("Completed both parts after auto-retry".into()),
+                ..Default::default()
+            })
+        }
+    }
+
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    let qid = QuarkId::new("cli-agy");
+    seed_mode(&field, Some("cli-agy"), Mode::Bypass);
+    seed_human_message(&field, "cli-agy", "complete overnight work");
+
+    let resets = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(StallOnceWriter {
+            id: qid.clone(),
+            calls: 0,
+            session_resets: Arc::clone(&resets),
+        })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(GreenLandingRunner))
+    .with_turn_deadline(Duration::from_millis(80));
+
+    tokio::time::timeout(Duration::from_secs(10), engine.run_until_quiesce())
+        .await
+        .expect("engine must not hang")
+        .expect("recoverable silence deadline on worktree turn must auto-retry and succeed");
+
+    assert!(
+        resets.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "session must be reset after watchdog abort"
+    );
+    assert!(
+        root.join("part1.txt").exists() && root.join("part2.txt").exists(),
+        "both checkpointed pre-stall work and post-retry work must land on main"
+    );
+}
+
+
+

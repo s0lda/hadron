@@ -445,15 +445,16 @@ impl CliRunner for ProcessRunner {
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
 
-        let stderr_fut = async move {
+        let stderr_handle = tokio::spawn(async move {
             let mut buf = Vec::new();
             if let Some(mut pipe) = stderr_pipe {
                 let _ = pipe.read_to_end(&mut buf).await;
             }
             String::from_utf8_lossy(&buf).into_owned()
-        };
+        });
         let stdout_fut = async move {
             let mut stdout_accumulated = String::new();
+            let mut aborted_early = false;
             if let Some(pipe) = stdout_pipe {
                 let mut reader = tokio::io::BufReader::new(pipe).lines();
                 while let Ok(Some(line)) = reader.next_line().await {
@@ -461,21 +462,33 @@ impl CliRunner for ProcessRunner {
                     stdout_accumulated.push_str(&line);
                     stdout_accumulated.push('\n');
                     if !keep_going {
+                        aborted_early = true;
                         break;
                     }
                 }
             }
-            stdout_accumulated
+            (stdout_accumulated, aborted_early)
         };
-        let (stdout_accumulated, stderr) = tokio::select! {
-            res = async { tokio::join!(stdout_fut, stderr_fut) } => res,
+        let (stdout_accumulated, aborted_early) = tokio::select! {
+            res = stdout_fut => res,
             _ = async {
                 let _ = child.wait().await;
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             } => {
-                (String::new(), String::new())
+                (String::new(), false)
             }
         };
+        if aborted_early {
+            if let Some(pid) = child.id() {
+                hadron_lattice::sys::process::kill_process_group(pid);
+            }
+            let _ = child.kill().await;
+        }
+        let stderr = tokio::time::timeout(std::time::Duration::from_millis(500), stderr_handle)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
         let status = child.wait().await?;
         child_guard.disarm();
         if !status.success() {

@@ -665,6 +665,40 @@ pub fn project(events: &[Event]) -> ChamberView {
     project_with_team(events, &Team::default(), &Team::default())
 }
 
+/// Read every archived session under `sessions_dir` in a single pass, returning both
+/// the concatenated projected [`MessageRow`] history for wider [`StatsWindow`]s and
+/// the [`SessionInfo`] list (oldest first).
+pub fn load_archives_and_sessions(
+    sessions_dir: &std::path::Path,
+) -> (Vec<MessageRow>, Vec<SessionInfo>) {
+    let mut dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(sessions_dir) {
+        Ok(rd) => rd
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect(),
+        Err(_) => return (Vec::new(), Vec::new()),
+    };
+    dirs.sort();
+
+    let mut archived_messages = Vec::new();
+    let mut sessions = Vec::with_capacity(dirs.len());
+    for dir in dirs {
+        let id = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let events = hadron_lattice::io::read_events(&dir.join("field.jsonl")).unwrap_or_default();
+        let name = events.iter().rev().find_map(|e| match &e.kind {
+            Kind::SessionName { name } => Some(name.clone()),
+            _ => None,
+        });
+        sessions.push(SessionInfo { id, name });
+        archived_messages.extend(project(&events).messages);
+    }
+    (archived_messages, sessions)
+}
+
 /// Project every archived session under `sessions_dir` into one flat, chronological
 /// `Vec<MessageRow>` for the wider [`StatsWindow`]s (`/clear` writes each cleared field
 /// to `sessions/<timestamp>/field.jsonl`).
@@ -675,23 +709,7 @@ pub fn project(events: &[Event]) -> ChamberView {
 /// sorting their paths yields chronological order. A missing `sessions_dir` (nothing
 /// cleared yet) or an unreadable session is not an error — it contributes no rows.
 pub fn load_archived_messages(sessions_dir: &std::path::Path) -> Vec<MessageRow> {
-    let mut dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(sessions_dir) {
-        Ok(rd) => rd
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .collect(),
-        Err(_) => return Vec::new(),
-    };
-    dirs.sort();
-
-    let mut out = Vec::new();
-    for dir in dirs {
-        let field = dir.join("field.jsonl");
-        let events = hadron_lattice::io::read_events(&field).unwrap_or_default();
-        out.extend(project(&events).messages);
-    }
-    out
+    load_archives_and_sessions(sessions_dir).0
 }
 
 /// Project the field into a renderable view. Roster order is first-seen; a

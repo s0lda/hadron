@@ -1083,6 +1083,11 @@ impl Engine {
         Ok(append_event(&self.field_path, &event)?)
     }
 
+    pub async fn append_batch(&self, events: &[Event]) -> anyhow::Result<()> {
+        let _guard = self.field_lock.lock().await;
+        Ok(hadron_lattice::io::append_events(&self.field_path, events)?)
+    }
+
     /// The field file this engine reads and appends to.
     pub(crate) fn field_path(&self) -> &std::path::Path {
         &self.field_path

@@ -62,14 +62,12 @@ async fn until_silent_with_error_grace(
         if let Some(activity) = hadron_lattice::live::read(live_dir, quark, chrono::Utc::now()) {
             let is_error_detail = activity.detail == "error message" || activity.detail == "error";
             if is_error_detail {
-                if !in_error_detail {
-                    in_error_detail = true;
-                    // Start the error grace window from when the error arrived rather than
-                    // retroactively counting healthy work that preceded the stream interruption.
-                    if newest_seen.is_some() && newest_seen.is_none_or(|seen| activity.at > seen) {
-                        newest_seen = Some(activity.at);
-                        last_sign = std::time::Instant::now();
-                    }
+                in_error_detail = true;
+                // Start/refresh the error grace window from when each error step arrived
+                // rather than retroactively counting healthy work or earlier attempts.
+                if newest_seen.is_none_or(|seen| activity.at > seen) {
+                    newest_seen = Some(activity.at);
+                    last_sign = std::time::Instant::now();
                 }
                 effective_deadline = deadline.min(error_grace);
             } else {
@@ -86,6 +84,11 @@ async fn until_silent_with_error_grace(
                     .checked_sub(age)
                     .unwrap_or_else(std::time::Instant::now);
             }
+        } else if in_error_detail {
+            // The live file was removed (`clear_live` between retry attempts): restore the
+            // normal turn deadline so the fresh retry attempt is not clamped to error_grace.
+            in_error_detail = false;
+            effective_deadline = deadline;
         }
         let silent_for = last_sign.elapsed();
         if silent_for >= effective_deadline {
@@ -319,6 +322,11 @@ impl super::Engine {
         // live draft stream so `finish_turn_with_gate` does not re-dispatch them when
         // the orchestrator's turn eventually completes.
         let mut mid_turn_dispatched: HashMap<QuarkId, HashSet<QuarkId>> = HashMap::new();
+        // Tracks engine-level auto-retries per (quark, assignment) when a worktree-backed
+        // turn hits a transient stall/silence deadline or stream error, preserving its
+        // branch commits and continuing overnight work without stranding the run.
+        const MAX_TURN_AUTO_RETRIES: usize = 2;
+        let mut turn_auto_retries: HashMap<(QuarkId, Option<ulid::Ulid>), usize> = HashMap::new();
         // The first turn error wins; siblings still run to completion (and still get
         // their terminal status) so a single failure can't strand the rest as
         // forever-Excited in the field.
@@ -816,17 +824,15 @@ impl super::Engine {
                     if !ready_candidates.is_empty() {
                         let live_dir = hadron_lattice::live::live_dir(&self.field_path);
                         let provision_one = |root: PathBuf,
-                                             live_dir: PathBuf,
+                                             field_path: PathBuf,
                                              target: QuarkId,
                                              assignment: ulid::Ulid|
                          -> anyhow::Result<ProvisionedTree> {
-                            let _ = hadron_lattice::live::publish(
-                                &live_dir,
-                                &hadron_lattice::Activity::new(
-                                    target.clone(),
-                                    hadron_lattice::live::Doing::Working,
-                                    "provisioning worktree…",
-                                ),
+                            let _ = hadron_lattice::live::write(
+                                &field_path,
+                                &target,
+                                hadron_lattice::live::Doing::Thinking,
+                                "provisioning worktree…",
                             );
                             let base = crate::worktree::default_branch(&root);
                             let wt = crate::worktree::ensure_with_base(
@@ -847,7 +853,12 @@ impl super::Engine {
                             } else {
                                 String::new()
                             };
-                            let _ = hadron_lattice::live::clear(&live_dir, &target);
+                            let _ = hadron_lattice::live::write(
+                                &field_path,
+                                &target,
+                                hadron_lattice::live::Doing::Thinking,
+                                "building context…",
+                            );
                             Ok((
                                 TurnTree {
                                     head_before,
@@ -876,10 +887,10 @@ impl super::Engine {
                                 ),
                             );
                             let root_c = root.clone();
-                            let live_c = live_dir.clone();
+                            let field_c = self.field_path.clone();
                             let target_c = cand.target.clone();
                             let res = tokio::task::spawn_blocking(move || {
-                                provision_one(root_c, live_c, target_c, assignment)
+                                provision_one(root_c, field_c, target_c, assignment)
                             })
                             .await
                             .unwrap_or_else(|e| {
@@ -902,7 +913,7 @@ impl super::Engine {
                             let mut handles = Vec::with_capacity(ready_candidates.len());
                             for cand in &ready_candidates {
                                 let root_c = root.clone();
-                                let live_c = live_dir.clone();
+                                let field_c = self.field_path.clone();
                                 let target_c = cand.target.clone();
                                 let assignment = cand
                                     .driver
@@ -910,7 +921,7 @@ impl super::Engine {
                                     .expect("checked driver above")
                                     .assignment;
                                 handles.push(tokio::task::spawn_blocking(move || {
-                                    provision_one(root_c, live_c, target_c, assignment)
+                                    provision_one(root_c, field_c, target_c, assignment)
                                 }));
                             }
                             for (cand, handle) in ready_candidates.into_iter().zip(handles) {
@@ -1030,6 +1041,7 @@ impl super::Engine {
                     // `is_turn_request`, so a duplicate would be a dispatch record that
                     // re-dispatches. Appended after the projection is built, so the quark
                     // never reads its own record back as a second instruction.
+                    let mut dispatch_batch = Vec::with_capacity(2);
                     if let Some(driver) = driver.as_ref() {
                         let already_recorded = events.iter().any(|e| {
                             e.to.as_ref() == Some(&target)
@@ -1037,7 +1049,7 @@ impl super::Engine {
                                 && e.answers == Some(driver.assignment)
                         });
                         if !already_recorded {
-                            self.append(
+                            dispatch_batch.push(
                                 Event::new(
                                     Actor::Gluon,
                                     Some(target.clone()),
@@ -1047,8 +1059,7 @@ impl super::Engine {
                                     },
                                 )
                                 .with_answers(driver.assignment),
-                            )
-                            .await?;
+                            );
                         }
                     }
 
@@ -1060,12 +1071,12 @@ impl super::Engine {
                     // It doubles as the in-flight marker in the field itself: `next_pending`
                     // and `human_message_targets` both count it as the quark having
                     // "authored since", so a running quark is never re-selected.
-                    self.append(Event::new(
+                    dispatch_batch.push(Event::new(
                         Actor::Quark(target.clone()),
                         None,
                         Kind::Status { state: QuarkState::Excited },
-                    ))
-                    .await?;
+                    ));
+                    self.append_batch(&dispatch_batch).await?;
 
                     let turn_id = target.clone();
                     let turn_tree = tree.clone();
@@ -1222,6 +1233,7 @@ impl super::Engine {
                         abort_handles.remove(&(target.clone(), lane));
                         cancel_requested.remove(&(target.clone(), lane));
                         dispatched_at_len.remove(&(target.clone(), lane));
+                        turn_auto_retries.remove(&(target.clone(), assignment));
                         let dispatched = dispatched_assignment.remove(&(target.clone(), lane)).flatten();
                         // The graceful cancel's ordinary resolution: the transport honoured
                         // `session/cancel` and the turn returned normally with
@@ -1342,6 +1354,54 @@ impl super::Engine {
                         dispatched_at_len.remove(&(target.clone(), lane));
                         dispatched_assignment.remove(&(target.clone(), lane));
                         mid_turn_dispatched.remove(&target);
+                        // Always reset the quark's session after a turn error or watchdog abort
+                        // so the next turn never tries to `--resume` a dead/corrupted session.
+                        if let Some(quark) =
+                            self.quarks.get(&target).and_then(|lanes| lanes.get(lane)).cloned()
+                        {
+                            quark.lock().await.reset_session();
+                        }
+                        let err_str = format!("{err:#}");
+                        if tree.is_some()
+                            && (crate::adapter::cli::is_retryable_cli_error(&err_str)
+                                || err_str
+                                    .to_lowercase()
+                                    .contains("quark stream failed with error steps"))
+                        {
+                            let retries = turn_auto_retries
+                                .entry((target.clone(), assignment))
+                                .or_insert(0);
+                            if *retries < MAX_TURN_AUTO_RETRIES {
+                                *retries += 1;
+                                let attempt_num = *retries;
+                                exchanges = exchanges.saturating_sub(1);
+                                if let Some(t) = tree.as_ref() {
+                                    let _ = crate::worktree::checkpoint_atomic_step(
+                                        &t.wt.path,
+                                        &target,
+                                        &format!(
+                                            "WIP checkpoint before auto-retry {attempt_num}/{MAX_TURN_AUTO_RETRIES}"
+                                        ),
+                                    );
+                                }
+                                let retry_notice = format!(
+                                    "Quark `{}` hit a transient turn stall/error ({}); worktree checkpointed, session reset, and auto-retrying assignment (attempt {attempt_num}/{MAX_TURN_AUTO_RETRIES})…",
+                                    target.as_str(),
+                                    super::quote_paths(&err_str),
+                                );
+                                let _ = self
+                                    .append(
+                                        Event::new(
+                                            Actor::Gluon,
+                                            None,
+                                            Kind::Message { body: retry_notice },
+                                        )
+                                        .with_severity(hadron_lattice::Severity::Warning),
+                                    )
+                                    .await;
+                                continue;
+                            }
+                        }
                         if let Some(t) = tree.as_ref() {
                             let _ = crate::worktree::checkpoint_atomic_step(
                                 &t.wt.path,

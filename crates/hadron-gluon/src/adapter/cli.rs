@@ -287,6 +287,7 @@ pub fn is_retryable_cli_error(msg: &str) -> bool {
         || lower.contains("there was a network issue connecting to the server")
         || (lower.contains("request failed: post") && lower.contains("eof"))
         || (lower.contains("streamgeneratecontent") && lower.contains("eof"))
+        || lower.contains("silence deadline")
         || lower.contains("429 too many requests")
         || lower.contains("resource_exhausted")
         || lower.contains("503 service unavailable")
@@ -532,13 +533,32 @@ impl<R: CliRunner> CliQuark<R> {
         let mut acc = StreamAccumulator::new(stream.format).with_work_dir(inv.cwd.clone());
         let mut last_publish: Option<Instant> = None;
         let mut last_heartbeat: Option<Instant> = None;
+        let in_error_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let in_error_for_line = std::sync::Arc::clone(&in_error_flag);
+        let heartbeat_task = dir.as_ref().map(|d| {
+            let dir_bg = d.clone();
+            let qid_bg = quark_id.clone();
+            let err_bg = std::sync::Arc::clone(&in_error_flag);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    if !err_bg.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = live::touch_heartbeat(&dir_bg, &qid_bg);
+                    }
+                }
+            })
+        });
         let mut on_line = |line: &str| -> bool {
             let changed = acc.on_line(line);
+            let status_is_error = acc.status() == "error message" || acc.status() == "error";
+            in_error_for_line.store(
+                acc.in_error_state() || status_is_error,
+                std::sync::atomic::Ordering::Relaxed,
+            );
             if acc.error_step_count() >= 3 {
                 return false;
             }
             let Some(dir) = &dir else { return true };
-            let status_is_error = acc.status() == "error message" || acc.status() == "error";
             if !changed {
                 if !line.trim().is_empty()
                     && !acc.in_error_state()
@@ -586,6 +606,9 @@ impl<R: CliRunner> CliQuark<R> {
             true
         };
         let run_result = self.runner.run_streaming(inv, &mut on_line).await;
+        if let Some(h) = heartbeat_task {
+            h.abort();
+        }
         if let Some(dir) = &self.live_dir {
             crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
         }
@@ -703,6 +726,14 @@ impl<R: CliRunner> Quark for CliQuark<R> {
             if attempt > 0 {
                 // On a retry, reset resident state so we don't try --continue on a dead/corrupted session
                 self.resident = false;
+                if let Some(dir) = &self.live_dir {
+                    let mut retry_act = Activity::new(
+                        self.id.clone(),
+                        Doing::Thinking,
+                        &format!("retrying turn in fresh session (attempt {}/{max_attempts})…", attempt + 1),
+                    );
+                    crate::adapter::telemetry::TurnTelemetrySink::publish_activity(dir, &mut retry_act);
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64))).await;
             }
 
@@ -713,11 +744,18 @@ impl<R: CliRunner> Quark for CliQuark<R> {
             // `None`) — a generic CLI with no resume flag never gets to drop context it
             // has no way to recall.
             let resuming = self.resident && !matches!(self.spec.resume, ResumeMode::None);
-            let prepared_turn = if resuming {
+            let mut prepared_turn = if resuming {
                 crate::adapter::prompt::without_static_prefix(without_field_window(turn.clone()))
             } else {
                 turn.clone()
             };
+            if attempt > 0 && !turn.cwd.as_os_str().is_empty() && turn.cwd.join(".git").exists() {
+                if let Ok(Some(live_diff)) = crate::snapshot::git_ok(&turn.cwd, &["diff", "HEAD"]) {
+                    if !live_diff.trim().is_empty() {
+                        prepared_turn.git_diff = live_diff;
+                    }
+                }
+            }
 
             if attempt == 0 {
                 if let Some(dir) = &self.prompt_cost_dir {

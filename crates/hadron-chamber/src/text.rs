@@ -332,6 +332,29 @@ pub fn command(name: &str) -> Option<&'static Command> {
     command_in(name, None)
 }
 
+/// Look a command up by the name typed after the slash using pre-cached custom skill names
+/// (zero disk I/O on the UI thread).
+pub fn command_with_skills(name: &str, custom_skills: &[String]) -> Option<&'static Command> {
+    if let Some(cmd) = COMMANDS.iter().find(|c| c.name == name) {
+        return Some(cmd);
+    }
+    if !name.is_empty()
+        && !contains_path_escape(name)
+        && custom_skills.iter().any(|s| s == name)
+    {
+        let leaked_name: &'static str = Box::leak(name.to_string().into_boxed_str());
+        let cmd = Box::leak(Box::new(Command {
+            name: leaked_name,
+            detail: "Custom skill procedure",
+            arity: Arity::Body,
+            arg: ArgSource::Quark,
+            listed: true,
+        }));
+        return Some(cmd);
+    }
+    None
+}
+
 /// Look a command up by the name typed after the slash, including custom skills
 /// resolved from `<repo_root>/.hadron/skills/*.md` and `~/.hadron/skills/*.md`.
 pub fn command_in(name: &str, repo_root: Option<&std::path::Path>) -> Option<&'static Command> {
@@ -1351,6 +1374,15 @@ pub fn extract_completion_query_with_root(
     offset: usize,
     repo_root: Option<&std::path::Path>,
 ) -> Option<(CompletionTrigger, String, usize)> {
+    let custom_skills = custom_skill_names(repo_root);
+    extract_completion_query_with_skills(text, offset, &custom_skills)
+}
+
+pub fn extract_completion_query_with_skills(
+    text: &str,
+    offset: usize,
+    custom_skills: &[String],
+) -> Option<(CompletionTrigger, String, usize)> {
     let mut safe_offset = offset.min(text.len());
     while safe_offset > 0 && !text.is_char_boundary(safe_offset) {
         safe_offset -= 1;
@@ -1376,7 +1408,7 @@ pub fn extract_completion_query_with_root(
             let after_slash = &current_line[idx + 1..];
             if let Some(space_pos) = after_slash.find(char::is_whitespace) {
                 let cmd_name = &after_slash[..space_pos];
-                if let Some(cmd) = command_in(cmd_name, repo_root) {
+                if let Some(cmd) = command_with_skills(cmd_name, custom_skills) {
                     if cmd.arg != ArgSource::None {
                         let arg_part = &after_slash[space_pos..];
                         let arg_trimmed = arg_part.trim_start();
@@ -1544,7 +1576,19 @@ pub fn completion_candidates_with_root(
     sessions: &[crate::model::SessionInfo],
     repo_root: Option<&std::path::Path>,
 ) -> Option<Completions> {
-    let (trigger, query, start) = extract_completion_query_with_root(text, cursor, repo_root)?;
+    let custom_skills = custom_skill_names(repo_root);
+    completion_candidates_with_skills(text, cursor, quarks, files, sessions, &custom_skills)
+}
+
+pub fn completion_candidates_with_skills(
+    text: &str,
+    cursor: usize,
+    quarks: &[(String, Option<String>)],
+    files: &[(String, bool)],
+    sessions: &[crate::model::SessionInfo],
+    custom_skills: &[String],
+) -> Option<Completions> {
+    let (trigger, query, start) = extract_completion_query_with_skills(text, cursor, custom_skills)?;
     let query_lower = query.to_lowercase();
     let mut out: Vec<Candidate> = Vec::new();
 
@@ -1693,8 +1737,8 @@ pub fn completion_candidates_with_root(
                     });
                 }
             }
-            for stem in custom_skill_names(repo_root) {
-                if !seen.contains(&stem) && (query_lower.is_empty() || stem.to_lowercase().contains(&query_lower)) {
+            for stem in custom_skills {
+                if !seen.contains(stem.as_str()) && (query_lower.is_empty() || stem.to_lowercase().contains(&query_lower)) {
                     seen.insert(stem.clone());
                     out.push(Candidate {
                         label: format!("/{stem}"),
@@ -1813,6 +1857,18 @@ pub fn extract_ghost_completion(
     files: &[(String, bool)],
     repo_root: Option<&std::path::Path>,
 ) -> Option<String> {
+    let custom_skills = custom_skill_names(repo_root);
+    extract_ghost_completion_with_skills(text, cursor, history, quarks, files, &custom_skills)
+}
+
+pub fn extract_ghost_completion_with_skills(
+    text: &str,
+    cursor: usize,
+    history: &[String],
+    quarks: &[(String, Option<String>)],
+    files: &[(String, bool)],
+    custom_skills: &[String],
+) -> Option<String> {
     let mut safe_cursor = cursor.min(text.len());
     while safe_cursor > 0 && !text.is_char_boundary(safe_cursor) {
         safe_cursor -= 1;
@@ -1851,7 +1907,7 @@ pub fn extract_ghost_completion(
                     return Some(format!("{suffix} "));
                 }
             }
-            for skill in custom_skill_names(repo_root) {
+            for skill in custom_skills {
                 if skill.chars().count() > prefix_chars
                     && skill.to_lowercase().starts_with(&prefix_lower)
                 {

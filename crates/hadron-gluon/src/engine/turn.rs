@@ -51,6 +51,18 @@ impl super::Engine {
     /// [`reroute_blocked_with_severity`] appends the message and then calls this,
     /// so the two can never disagree about what "blocked" writes to the field.
     pub(super) async fn park_blocked(&self, target: &QuarkId) -> anyhow::Result<()> {
+        let events = read_events(&self.field_path).unwrap_or_default();
+        let last_status = events.iter().rev().find_map(|e| {
+            if e.from == Actor::Quark(target.clone()) {
+                if let Kind::Status { state } = &e.kind {
+                    return Some(*state);
+                }
+            }
+            None
+        });
+        if last_status == Some(QuarkState::Blocked) {
+            return Ok(());
+        }
         self.append(Event::new(
             Actor::Quark(target.clone()),
             None,

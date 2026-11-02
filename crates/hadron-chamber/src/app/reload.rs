@@ -86,6 +86,7 @@ pub(super) struct FieldPoll {
     pub(super) repo_team: Option<Team>,
     pub(super) global_team: Option<Team>,
     pub(super) is_over_budget: bool,
+    pub(super) custom_skill_ids: Vec<String>,
     pub(super) scan: Option<WorkspaceScan>,
     pub(super) live_activities: Vec<(String, Option<hadron_lattice::live::Activity>)>,
     pub(super) gate_activities: Vec<hadron_lattice::live::Activity>,
@@ -134,6 +135,7 @@ impl FieldPoll {
             root,
             hadron_gluon::nucleus_status::resolve_budget_bytes(budget_team),
         );
+        let custom_skill_ids = crate::text::custom_skill_names(Some(root));
 
         let scan = if do_workspace_scan {
             WorkspaceScan::gather(
@@ -172,6 +174,7 @@ impl FieldPoll {
             repo_team,
             global_team,
             is_over_budget,
+            custom_skill_ids,
             scan,
             live_activities,
             gate_activities,
@@ -391,6 +394,10 @@ impl super::Chamber {
 
             if poll.is_over_budget != self.nucleus_over_budget {
                 self.nucleus_over_budget = poll.is_over_budget;
+                changed = true;
+            }
+            if poll.custom_skill_ids != self.cached_skill_ids {
+                self.cached_skill_ids = poll.custom_skill_ids;
                 changed = true;
             }
 

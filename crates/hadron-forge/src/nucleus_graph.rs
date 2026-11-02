@@ -36,8 +36,51 @@ pub struct NucleusGraphReport {
     pub summary: String,
 }
 
+fn strip_code_blocks_and_spans(content: &str) -> String {
+    let mut clean = String::with_capacity(content.len());
+    let mut in_block = false;
+
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            in_block = !in_block;
+            clean.push('\n');
+            continue;
+        }
+        if in_block {
+            clean.push('\n');
+            continue;
+        }
+        let mut idx = 0;
+        let bytes = line.as_bytes();
+        while idx < bytes.len() {
+            if bytes[idx] == b'`' {
+                let mut tick_count = 1;
+                while idx + tick_count < bytes.len() && bytes[idx + tick_count] == b'`' {
+                    tick_count += 1;
+                }
+                let needle = &line[idx..idx + tick_count];
+                let after = idx + tick_count;
+                if let Some(rel_end) = line[after..].find(needle) {
+                    idx = after + rel_end + tick_count;
+                    continue;
+                }
+                clean.push_str(needle);
+                idx = after;
+            } else if let Some(ch) = line[idx..].chars().next() {
+                clean.push(ch);
+                idx += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        clean.push('\n');
+    }
+    clean
+}
+
 /// Extract links (`[[slug]]` and `[title](notes/slug.md)`) from markdown text.
 pub fn extract_note_links(content: &str) -> Vec<String> {
+    let content = strip_code_blocks_and_spans(content);
     let mut links = BTreeSet::new();
 
     // Wiki-links [[slug]]
@@ -104,13 +147,39 @@ pub fn build_nucleus_graph(nucleus_dir: &Path) -> (BTreeMap<String, NucleusNode>
         }
     }
 
+    // Parse invariants/always.md to record "invariants" incoming link
+    let invariants_file = nucleus_dir.join("invariants").join("always.md");
+    if let Ok(inv_content) = fs::read_to_string(&invariants_file) {
+        let inv_links = extract_note_links(&inv_content);
+        for target in inv_links {
+            if let Some(node) = nodes.get_mut(&target) {
+                if !node.incoming_links.contains(&"invariants".to_string()) {
+                    node.incoming_links.push("invariants".to_string());
+                }
+            }
+        }
+        for word in inv_content.split_whitespace() {
+            let clean = word.trim_matches(|c: char| c == '`' || c == '(' || c == ')' || c == '[' || c == ']' || c == ',' || c == '.');
+            if let Some(rest) = clean.strip_prefix("notes/") {
+                let slug = rest.strip_suffix(".md").unwrap_or(rest);
+                if let Some(node) = nodes.get_mut(slug) {
+                    if !node.incoming_links.contains(&"invariants".to_string()) {
+                        node.incoming_links.push("invariants".to_string());
+                    }
+                }
+            }
+        }
+    }
+
     // Parse index.md to capture pointers and hook descriptions from the index
     let index_file = nucleus_dir.join("index.md");
-    if let Ok(index_content) = fs::read_to_string(index_file) {
+    if let Ok(index_content) = fs::read_to_string(&index_file) {
         let index_links = extract_note_links(&index_content);
         for target in index_links {
             if let Some(node) = nodes.get_mut(&target) {
-                node.incoming_links.push("index".to_string());
+                if !node.incoming_links.contains(&"index".to_string()) {
+                    node.incoming_links.push("index".to_string());
+                }
             }
         }
 
@@ -267,5 +336,32 @@ mod tests {
             nodes.get("some-slug").unwrap().title,
             "some-slug — Software fallback constraint"
         );
+    }
+
+    #[test]
+    fn test_extract_links_strips_code_blocks_and_spans() {
+        let text = "Valid [[real-note]] and `[[inline-bin]]` in code.\n```toml\n[[bin]]\nname = \"cli\"\n```\nAnd example in code.";
+        let links = extract_note_links(text);
+        assert_eq!(links, vec!["real-note".to_string()]);
+    }
+
+    #[test]
+    fn test_invariants_incoming_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus_dir = dir.path();
+        let notes_dir = nucleus_dir.join("notes");
+        let inv_dir = nucleus_dir.join("invariants");
+        fs::create_dir_all(&notes_dir).unwrap();
+        fs::create_dir_all(&inv_dir).unwrap();
+        fs::write(notes_dir.join("inv-note.md"), "Invariant note content").unwrap();
+        fs::write(
+            inv_dir.join("always.md"),
+            "- Enforces constraint → `notes/inv-note.md`\n",
+        )
+        .unwrap();
+
+        let (nodes, _) = build_nucleus_graph(nucleus_dir);
+        assert!(nodes.contains_key("inv-note"));
+        assert!(nodes.get("inv-note").unwrap().incoming_links.contains(&"invariants".to_string()));
     }
 }

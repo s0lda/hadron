@@ -46,6 +46,31 @@ pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Append multiple events as JSON lines atomically.
+pub fn append_events(path: &Path, events: &[Event]) -> std::io::Result<()> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let mut payload = String::new();
+    for event in events {
+        let mut ev = event.clone();
+        if let crate::Kind::Message { ref mut body } = ev.kind {
+            *body = crate::context_governor::ContextGovernor::compact_tool_output(
+                body,
+                &crate::context_governor::GovernorConfig::default(),
+            );
+            *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
+        }
+        let line = serde_json::to_string(&ev)?;
+        payload.push_str(&line);
+        payload.push('\n');
+    }
+    let _guard = append_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
+    f.write_all(payload.as_bytes())?;
+    Ok(())
+}
+
 /// Read every event in order. A missing file yields an empty vec. Blank lines
 /// are skipped. A line that fails to parse is skipped rather than crashing the
 /// reader (append-only integrity means a torn final line can be ignored).

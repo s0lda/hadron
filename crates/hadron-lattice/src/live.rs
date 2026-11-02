@@ -202,6 +202,16 @@ pub fn publish(dir: &Path, activity: &Activity) -> std::io::Result<()> {
     std::fs::rename(&tmp, &final_path)
 }
 
+/// Convenience helper to publish an activity to `<field_dir>/live/<quark>.json` or `<live_dir>/<quark>.json`.
+pub fn write(dir: &Path, quark: &QuarkId, doing: Doing, detail: &str) -> std::io::Result<()> {
+    let live_dir = if dir.file_name().and_then(|s| s.to_str()) == Some("live") {
+        dir.to_path_buf()
+    } else {
+        live_dir(dir)
+    };
+    publish(&live_dir, &Activity::new(quark.clone(), doing, detail))
+}
+
 /// The quark has stopped working. Absence is idle, so this removes the file.
 /// Missing is success — the caller wants the quark to be idle, and it is.
 pub fn clear(dir: &Path, quark: &QuarkId) -> std::io::Result<()> {

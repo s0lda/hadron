@@ -85,9 +85,9 @@ impl super::Chamber {
         // "/toggle-roster /clear ping the team". `split_leading_commands_in` peels the
         // leading `/command` tokens; the returned body is the untouched remainder, so a
         // multi-line message (Shift+Enter, a markdown list) keeps its newlines.
-        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let (mut cmds, mut body) = split_leading_commands_in(&full, Some(&repo_root));
-        fold_preamble_into_prompt_commands(&mut cmds, &mut body, Some(&repo_root));
+        let (mut cmds, mut body) =
+            split_leading_commands_with_skills(&full, &self.cached_skill_ids);
+        fold_preamble_into_prompt_commands_with_skills(&mut cmds, &mut body, &self.cached_skill_ids);
         for (cmd, args) in &cmds {
             if cmd != "clear" {
                 let cmd_ev = slash_command_event(cmd, args);
@@ -215,23 +215,22 @@ impl super::Chamber {
             .iter()
             .map(|q| (q.id.0.clone(), q.display_name.clone()))
             .collect();
-        let repo_root = crate::vcs::repo_root_of(&self.path);
         let files = self.completion_files.borrow();
-        let result = crate::text::completion_candidates_with_root(
+        let result = crate::text::completion_candidates_with_skills(
             &text,
             cursor,
             &quarks,
             files.as_slice(),
             &self.sessions,
-            Some(repo_root),
+            &self.cached_skill_ids,
         );
-        self.ghost_completion = crate::text::extract_ghost_completion(
+        self.ghost_completion = crate::text::extract_ghost_completion_with_skills(
             &text,
             cursor,
             &self.prompt_history,
             &quarks,
             files.as_slice(),
-            Some(repo_root),
+            &self.cached_skill_ids,
         );
         drop(files);
         self.completion = result.map(|c| {
@@ -422,7 +421,7 @@ pub(crate) fn slash_command_event(cmd: &str, args: &str) -> Event {
 
 fn split_chained_line_command<'a>(
     tail: &'a str,
-    repo_root: Option<&std::path::Path>,
+    custom_skills: &[String],
 ) -> (&'a str, &'a str) {
     let bytes = tail.as_bytes();
     let mut idx = 0;
@@ -433,7 +432,7 @@ fn split_chained_line_command<'a>(
                 .find(char::is_whitespace)
                 .unwrap_or(candidate.len());
             let name = &candidate[..end];
-            if !name.is_empty() && crate::text::command_in(name, repo_root).is_some() {
+            if !name.is_empty() && crate::text::command_with_skills(name, custom_skills).is_some() {
                 return (tail[..idx].trim(), &tail[idx..]);
             }
         }
@@ -447,9 +446,18 @@ pub(super) fn split_leading_commands(full: &str) -> (Vec<(String, String)>, Opti
     split_leading_commands_in(full, None)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn split_leading_commands_in(
     full: &str,
     repo_root: Option<&std::path::Path>,
+) -> (Vec<(String, String)>, Option<String>) {
+    let custom_skills = crate::text::custom_skill_names(repo_root);
+    split_leading_commands_with_skills(full, &custom_skills)
+}
+
+pub(super) fn split_leading_commands_with_skills(
+    full: &str,
+    custom_skills: &[String],
 ) -> (Vec<(String, String)>, Option<String>) {
     let mut cmds = Vec::new();
     let mut body_lines: Vec<&str> = Vec::new();
@@ -516,7 +524,7 @@ pub(super) fn split_leading_commands_in(
             let tok_end = check_head.find(char::is_whitespace).unwrap_or(check_head.len());
             let raw_cmd_name = check_head[..tok_end].strip_prefix('/').filter(|c| !c.is_empty());
             let Some((resolved_name, cmd)) = raw_cmd_name.and_then(|name| {
-                crate::text::command_in(name, repo_root).map(|c| (name, c))
+                crate::text::command_with_skills(name, custom_skills).map(|c| (name, c))
             }) else {
                 break;
             };
@@ -533,7 +541,7 @@ pub(super) fn split_leading_commands_in(
                 }
                 crate::text::Arity::Line => {
                     let (raw_args, next_rest) =
-                        split_chained_line_command(&check_head[tok_end..], repo_root);
+                        split_chained_line_command(&check_head[tok_end..], custom_skills);
                     let args = match leading_mention {
                         Some(mention) if raw_args.is_empty() => mention.to_string(),
                         Some(mention) => format!("{mention} {raw_args}"),
@@ -586,10 +594,20 @@ pub(super) fn split_leading_commands_in(
 /// `/team-brainstorm`, `/brainstorm`, `/goal`), fold that preamble into the command's
 /// argument so a single unified message is posted with the full context rather than
 /// splitting into two concurrent messages where the preamble lacks the `@mention`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn fold_preamble_into_prompt_commands(
     cmds: &mut [(String, String)],
     body: &mut Option<String>,
     repo_root: Option<&std::path::Path>,
+) {
+    let custom_skills = crate::text::custom_skill_names(repo_root);
+    fold_preamble_into_prompt_commands_with_skills(cmds, body, &custom_skills);
+}
+
+pub(super) fn fold_preamble_into_prompt_commands_with_skills(
+    cmds: &mut [(String, String)],
+    body: &mut Option<String>,
+    custom_skills: &[String],
 ) {
     if body.is_none() {
         return;
@@ -610,7 +628,7 @@ pub(super) fn fold_preamble_into_prompt_commands(
                 | "loop"
                 | "steer"
                 | "scout"
-        ) && crate::text::command_in(cmd, repo_root)
+        ) && crate::text::command_with_skills(cmd, custom_skills)
             .is_some_and(|c| c.arity == crate::text::Arity::Body)
     });
     if let Some((_, args)) = target_cmd {
