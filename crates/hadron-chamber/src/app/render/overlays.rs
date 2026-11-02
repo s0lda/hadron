@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.37",
+        date: Some("2026-11-02"),
+        added: &[
+            "Skill × Mode Pairing, Multi-Quark Skill Resolution & Interactive Block Recovery: Added min_mode to built-in and custom skills with per-target multi-quark segment matching, split consecutive @quark /skill lines in composer input, and rendered inline Mode-Switch and Quark-Reassign action buttons on Gluon skill block notices",
+            "Config Schema Versioning & Nucleus Graph Refresh: Added CHAMBER_SCHEMA_VERSION=1 on ChamberPrefs and bumped TEAM_SCHEMA_VERSION=2 on Team with automatic migration, plus an interactive Refresh button in the Nucleus Graph HUD",
+        ],
+        changed: &[
+            "Legacy Roles Removal: Stripped deprecated roles, exclusive, role_body, and preferred_role fields and routing helpers across hadron-lattice, hadron-gluon, and hadron-chamber",
+        ],
+        fixed: &[
+            "Nucleus Orphan/Dead-Link Alignment, Live Disk Auto-Refresh & Blocked-Branch Routing: Unified orphan and dead-link detection across Git > Remote & Issues and Visualiser > Nucleus Graph with automatic refresh on .hadron/nucleus/ disk edits, and fixed CancelSlot WIP loops, park_blocked PermissionGrant recovery, and blocked-branch follow-up excitation",
+        ],
+    },
+    Release {
         version: "0.33.36",
         date: Some("2026-11-02"),
         added: &[

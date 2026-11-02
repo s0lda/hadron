@@ -5,6 +5,24 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.37] - 2026-11-02
+
+### Added
+- **Skill × Mode Pairing, Multi-Quark Skill Resolution & Interactive Block Recovery (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Ordered `Mode` (`Ask < Write < Auto < Bypass`) with `Mode::as_str` / `Mode::from_str_loose`, paired every built-in and custom skill with a minimum execution mode (`min_mode: Mode`), scoped multi-quark skill matching to each target quark's addressed segment (`router::extract_target_segment`, `skills::select_for_target`), filtered `deny_skills` out of `skills::index`, and surfaced peer `deny_skills` in orchestrator dynamic prompt suffixes (`crates/hadron-lattice/src/event/mod.rs`, `crates/hadron-gluon/src/skills.rs`, `crates/hadron-gluon/src/skills/select.rs`, `crates/hadron-gluon/src/router/mod.rs`, `crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/engine/routing.rs`, `crates/hadron-gluon/src/adapter/prompt/mod.rs`).
+  - Split consecutive `@<quark> /<skill>` invocations in `split_leading_commands_with_skills` without swallowing subsequent lines, parsed Gluon skill/mode block notices (`parse_skill_block_notice`), and rendered inline `#skill-block-switch-mode-{ix}` and `#skill-block-reassign-{ix}-{peer}` recovery buttons in chat (`crates/hadron-chamber/src/app/input.rs`, `crates/hadron-chamber/src/app/render/chat.rs`).
+- **Config Schema Versioning (`ChamberPrefs` v1 & `Team` v2) and Nucleus Graph Refresh Button (`hadron-chamber`, `hadron-lattice`)**:
+  - Added `CHAMBER_SCHEMA_VERSION = 1` (`ChamberPrefs::from_versioned_json`) gating `v0 -> v1` width/theme migrations and rejecting future versions, bumped `TEAM_SCHEMA_VERSION = 2` to auto-migrate legacy `team.json` files, and added an interactive `#nucleus-hud-refresh` button in the `Nucleus Graph` header HUD (`crates/hadron-chamber/src/config.rs`, `crates/hadron-lattice/src/team/mod.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+
+### Changed
+- **Legacy `Roles` / `exclusive` / `preferred_role` Removal (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Removed deprecated `roles`, `exclusive`, `role_body`, and `preferred_role` fields and routing helpers across `Seat`, `SeatOverride`, `QuarkCard`, `Projection`, `PreonConfig`, `Quark`, `Engine`, and `hadron-chamber` settings (`crates/hadron-lattice/src/team/seat.rs`, `crates/hadron-lattice/src/quark.rs`, `crates/hadron-gluon/src/preons.rs`, `crates/hadron-gluon/src/router/mod.rs`, `crates/hadron-chamber/src/app/settings/mod.rs`).
+
+### Fixed
+- **Nucleus Orphan/Dead-Link Alignment, Live Disk Auto-Refresh & Blocked-Branch Routing (`hadron-chamber`, `hadron-forge`, `hadron-gatekeeper`, `hadron-gluon`)**:
+  - Aligned `CachedNucleusGraph::build` and `NucleusLinter` with `hadron_forge::nucleus_graph::is_orphan_node`, tracked `compute_nucleus_graph_fingerprint` across `.hadron/nucleus/` in `WorkspaceScan::gather` to auto-refresh `Nucleus Graph` and `RepoHealthReport` on disk edits, and bumped `VISUALIZER_GRAPHS_CACHE_VERSION = 2` (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/render/visualizer.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-forge/src/nucleus_graph.rs`, `crates/hadron-gatekeeper/src/nucleus_linter.rs`).
+  - Prevented unfilled `CancelSlot` drops from triggering false WIP snapshot loops, preserved `PermissionGrant` recovery on `park_blocked` turns, and routed follow-up excitation cleanly onto blocked branches (`crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/engine/turn.rs`, `crates/hadron-gluon/src/adapter/cli.rs`).
+
 ## [0.33.36] - 2026-11-02
 
 ### Added
