@@ -32,9 +32,18 @@ pub struct WindowBoundsPrefs {
     pub height: f32,
 }
 
+/// Current schema version for `chamber.json` payloads.
+pub const CHAMBER_SCHEMA_VERSION: u32 = 1;
+
+fn default_chamber_schema_version() -> u32 {
+    CHAMBER_SCHEMA_VERSION
+}
+
 /// The persisted chamber state: rail layout, plus per-actor display identities.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChamberPrefs {
+    #[serde(default = "default_chamber_schema_version")]
+    pub schema_version: u32,
     #[serde(default = "default_false")]
     pub roster_collapsed: bool,
     #[serde(default = "default_false")]
@@ -1320,6 +1329,7 @@ pub fn is_install_or_system_dir(path: &Path, exe_dir: Option<&Path>) -> bool {
 impl Default for ChamberPrefs {
     fn default() -> Self {
         ChamberPrefs {
+            schema_version: CHAMBER_SCHEMA_VERSION,
             roster_collapsed: default_false(),
             inspector_collapsed: default_false(),
             close_gluon_on_exit: default_true(),
@@ -1364,32 +1374,44 @@ impl Default for ChamberPrefs {
     }
 }
 
-
-/// Resolve the on-disk preferences path: `~/.hadron/chamber.json` (cross-platform).
-/// `None` if the home directory can't be resolved.
-pub fn config_path() -> Option<PathBuf> {
-    Some(hadron_lattice::user_hadron_dir()?.join("chamber.json"))
-}
-
-/// Read preferences from an explicit path; missing or malformed → defaults.
-pub fn load_from(path: &Path) -> ChamberPrefs {
-    match std::fs::read_to_string(path) {
-        Ok(text) => {
-            let mut prefs: ChamberPrefs = serde_json::from_str(&text).unwrap_or_default();
-            // One-time migration: a chamber.json still pinned at an old default
+impl ChamberPrefs {
+    /// Parse a `chamber.json` payload with explicit schema versioning and `v0 -> v1` migration:
+    /// - Missing `"schema_version"` or `"schema_version": 0` (legacy `v0`) is upgraded to
+    ///   [`CHAMBER_SCHEMA_VERSION`] (`1`), applies the legacy `roster_width` and `custom_theme`
+    ///   color migrations, and returns `Ok((prefs, true))` (`migrated = true`).
+    /// - `"schema_version": 1` returns `Ok((prefs, false))` without clobbering user-chosen
+    ///   `roster_width` or `custom_theme` values.
+    /// - `"schema_version" > 1` is rejected with an `InvalidData` error so an older binary never
+    ///   silently clobbers a newer config.
+    pub fn from_versioned_json(text: &str) -> std::io::Result<(Self, bool)> {
+        let raw: serde_json::Value = serde_json::from_str(text)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let raw_version = raw
+            .get("schema_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        if raw_version > CHAMBER_SCHEMA_VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "chamber.json schema_version {} is newer than supported version {}",
+                    raw_version, CHAMBER_SCHEMA_VERSION
+                ),
+            ));
+        }
+        let mut prefs: ChamberPrefs = serde_json::from_value(raw)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let migrated = raw_version < CHAMBER_SCHEMA_VERSION;
+        if migrated {
+            // One-time v0 -> v1 migration: a chamber.json still pinned at an old default
             // (≤410, 450 or 500) is bumped to the new default so the trimmed roster
-            // applies without a manual edit. Any other width was deliberately chosen
-            // by the user and is untouched.
+            // applies without a manual edit.
             if prefs.roster_width <= 410.0
                 || prefs.roster_width == 450.0
                 || prefs.roster_width == 500.0
             {
                 prefs.roster_width = default_roster_width();
             }
-            // Prune any binary installation directory accidentally recorded by older Start Menu shortcuts.
-            prefs
-                .recent_projects
-                .retain(|p| !is_install_or_system_dir(Path::new(&p.path), None));
             // Migrate legacy pre-telemetry custom theme status/accent defaults so a saved
             // chamber.json does not stay stuck on bright Tailwind greens/blues/reds.
             if let Some(custom) = &mut prefs.custom_theme {
@@ -1437,8 +1459,34 @@ pub fn load_from(path: &Path) -> ChamberPrefs {
                     custom.text.muted = "#8e8e8e".into();
                 }
             }
-            prefs
         }
+        prefs.schema_version = CHAMBER_SCHEMA_VERSION;
+        // Prune any binary installation directory accidentally recorded by older Start Menu shortcuts.
+        prefs
+            .recent_projects
+            .retain(|p| !is_install_or_system_dir(Path::new(&p.path), None));
+        Ok((prefs, migrated))
+    }
+}
+
+/// Resolve the on-disk preferences path: `~/.hadron/chamber.json` (cross-platform).
+/// `None` if the home directory can't be resolved.
+pub fn config_path() -> Option<PathBuf> {
+    Some(hadron_lattice::user_hadron_dir()?.join("chamber.json"))
+}
+
+/// Read preferences from an explicit path; missing or malformed → defaults.
+pub fn load_from(path: &Path) -> ChamberPrefs {
+    match std::fs::read_to_string(path) {
+        Ok(text) => match ChamberPrefs::from_versioned_json(&text) {
+            Ok((prefs, migrated)) => {
+                if migrated {
+                    let _ = save_to(path, &prefs);
+                }
+                prefs
+            }
+            Err(_) => ChamberPrefs::default(),
+        },
         Err(_) => ChamberPrefs::default(),
     }
 }
@@ -1938,6 +1986,31 @@ mod tests {
         assert!(json.contains("\"show_console_window\":true"));
         let back: ChamberPrefs = serde_json::from_str(&json).unwrap();
         assert!(back.show_console_window);
+    }
+
+    #[test]
+    fn chamber_prefs_v0_to_v1_migration_v1_roundtrip_and_future_version_rejection() {
+        // v0 payload (missing schema_version) migrates roster_width <= 410 and upgrades to v1
+        let v0_json = r#"{"roster_width":410.0,"inspector_width":320.0}"#;
+        let (prefs, migrated) = ChamberPrefs::from_versioned_json(v0_json).unwrap();
+        assert!(migrated, "v0 payload must report migrated = true");
+        assert_eq!(prefs.schema_version, CHAMBER_SCHEMA_VERSION);
+        assert_eq!(prefs.roster_width, default_roster_width());
+        assert_eq!(prefs.inspector_width, 320.0);
+
+        // v1 payload preserves a deliberate user-chosen roster_width <= 410 without clobbering it
+        let v1_json = r#"{"schema_version":1,"roster_width":350.0,"inspector_width":320.0}"#;
+        let (v1_prefs, v1_migrated) = ChamberPrefs::from_versioned_json(v1_json).unwrap();
+        assert!(!v1_migrated, "v1 payload must report migrated = false");
+        assert_eq!(v1_prefs.schema_version, CHAMBER_SCHEMA_VERSION);
+        assert_eq!(v1_prefs.roster_width, 350.0, "v1 must not clobber user-chosen roster_width");
+
+        // Future schema_version > 1 is rejected
+        let future_json = r#"{"schema_version":99,"roster_width":400.0}"#;
+        assert!(
+            ChamberPrefs::from_versioned_json(future_json).is_err(),
+            "future schema_version must be rejected"
+        );
     }
 }
 

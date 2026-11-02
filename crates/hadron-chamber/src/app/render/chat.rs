@@ -1,11 +1,83 @@
 use super::*;
 use gpui_component::ActiveTheme;
 
-/// Maximum viewport height (in px, ~10 lines of rendered Markdown) for the live
+///Maximum viewport height (in px, ~10 lines of rendered Markdown) for the live
 /// `#composer-preview-content` pane stacked above the active composer input.
 /// Keeps long drafts scrollable without starving the chat history viewport or
 /// pushing the editor input off-screen.
 pub(super) const COMPOSER_PREVIEW_MAX_HEIGHT_PX: f32 = 220.0;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SkillBlockReason {
+    ModeMismatch {
+        current_mode: Mode,
+        required_mode: Mode,
+    },
+    DeniedSkill,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SkillBlockNotice {
+    pub quark_id: String,
+    pub skill_id: String,
+    pub reason: SkillBlockReason,
+}
+
+/// Parses a structured Gluon skill-block notice from `body`:
+/// - Mode mismatch: `"@<quark> is in <cur> mode and cannot run '<skill>' (requires <req> mode); skipping."`
+/// - Denied skill: `"@<quark> does not have skill '<skill>' enabled (deny_skills); skipping."`
+///   or `"@<quark> locks out '<skill>' tasks (deny_skills); skipping."`
+/// Also strips an optional leading `"@orchestrator "` prefix added by `reroute_blocked`.
+pub(super) fn parse_skill_block_notice(body: &str) -> Option<SkillBlockNotice> {
+    let trimmed = body.trim();
+    let rest = trimmed
+        .strip_prefix("@orchestrator ")
+        .map(str::trim_start)
+        .unwrap_or(trimmed);
+    let after_at = rest.strip_prefix('@')?;
+    let space_idx = after_at.find(char::is_whitespace)?;
+    let quark_id = after_at[..space_idx].trim().to_string();
+    if quark_id.is_empty() {
+        return None;
+    }
+    let tail = after_at[space_idx..].trim_start();
+
+    if let Some(after_in) = tail.strip_prefix("is in ") {
+        let (cur_str, after_cur) = after_in.split_once(" mode and cannot run '")?;
+        let (skill_id, after_skill) = after_cur.split_once("' (requires ")?;
+        let (req_str, _) = after_skill.split_once(" mode); skipping.")?;
+        let current_mode = Mode::from_str_loose(cur_str.trim())?;
+        let required_mode = Mode::from_str_loose(req_str.trim())?;
+        return Some(SkillBlockNotice {
+            quark_id,
+            skill_id: skill_id.to_string(),
+            reason: SkillBlockReason::ModeMismatch {
+                current_mode,
+                required_mode,
+            },
+        });
+    }
+
+    if let Some(after_not) = tail.strip_prefix("does not have skill '") {
+        let (skill_id, _) = after_not.split_once("' enabled (deny_skills); skipping.")?;
+        return Some(SkillBlockNotice {
+            quark_id,
+            skill_id: skill_id.to_string(),
+            reason: SkillBlockReason::DeniedSkill,
+        });
+    }
+
+    if let Some(after_locks) = tail.strip_prefix("locks out '") {
+        let (skill_id, _) = after_locks.split_once("' tasks (deny_skills); skipping.")?;
+        return Some(SkillBlockNotice {
+            quark_id,
+            skill_id: skill_id.to_string(),
+            reason: SkillBlockReason::DeniedSkill,
+        });
+    }
+
+    None
+}
 
 impl super::Chamber {
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
@@ -1616,7 +1688,159 @@ impl super::Chamber {
                             bubble_pad,
                         )
                         .into_any_element()
-                    }),
+                    })
+                    .when_some(
+                        (m.from == "gluon")
+                            .then(|| parse_skill_block_notice(&m.body))
+                            .flatten(),
+                        |this, notice| {
+                            let resolved_team = resolve_team(&self.team, &self.global);
+                            let preceding_task = self.view.messages[..ix]
+                                .iter()
+                                .rev()
+                                .find(|prev| {
+                                    prev.kind_label == "message"
+                                        && prev.from != "gluon"
+                                        && (prev.to.as_deref() == Some(notice.quark_id.as_str())
+                                            || prev.body.contains(&format!("@{}", notice.quark_id)))
+                                })
+                                .map(|prev| prev.body.clone())
+                                .unwrap_or_else(|| format!("/{}", notice.skill_id));
+
+                            let mut action_bar = h_flex()
+                                .id(SharedString::from(format!("skill-block-actions-{ix}")))
+                                .items_center()
+                                .gap_2()
+                                .flex_wrap()
+                                .mt_1();
+
+                            if let SkillBlockReason::ModeMismatch { required_mode, .. } =
+                                &notice.reason
+                            {
+                                let req_mode = *required_mode;
+                                let qid = notice.quark_id.clone();
+                                let resend_body = preceding_task.clone();
+                                let ent_sw = chamber_entity.clone();
+                                action_bar = action_bar.child(
+                                    h_flex()
+                                        .id(SharedString::from(format!(
+                                            "skill-block-switch-mode-{ix}"
+                                        )))
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .gap_1()
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme::accent_soft())
+                                        .border_1()
+                                        .border_color(theme::accent().opacity(0.45))
+                                        .hover(|s| s.bg(theme::accent().opacity(0.22)))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .on_click(move |_, window, cx| {
+                                            let qid_c = qid.clone();
+                                            let body_c = if resend_body.starts_with('@') {
+                                                resend_body.clone()
+                                            } else {
+                                                format!("@{qid_c} {resend_body}")
+                                            };
+                                            ent_sw.update(cx, |this, cx| {
+                                                this.append_and_reload(
+                                                    Event::new(
+                                                        Actor::Human,
+                                                        Some(QuarkId::new(&qid_c)),
+                                                        Kind::ModeSet { mode: req_mode },
+                                                    ),
+                                                    cx,
+                                                );
+                                                this.append_and_reload(
+                                                    Event::new(
+                                                        Actor::Human,
+                                                        None,
+                                                        Kind::Message { body: body_c },
+                                                    ),
+                                                    cx,
+                                                );
+                                            });
+                                            window.refresh();
+                                        })
+                                        .child(format!(
+                                            "Switch @{} to {} mode & retry",
+                                            notice.quark_id,
+                                            req_mode.as_str()
+                                        )),
+                                );
+                            }
+
+                            for r in &self.view.roster {
+                                if r.id == notice.quark_id || !r.enabled {
+                                    continue;
+                                }
+                                let denies_skill = resolved_team
+                                    .quarks
+                                    .iter()
+                                    .find(|s| s.id.as_str() == r.id)
+                                    .is_some_and(|s| {
+                                        s.deny_skills
+                                            .iter()
+                                            .any(|d| d.eq_ignore_ascii_case(&notice.skill_id))
+                                    });
+                                if denies_skill {
+                                    continue;
+                                }
+                                let peer_id = r.id.clone();
+                                let peer_label =
+                                    r.display_name.as_deref().unwrap_or(&r.id).to_string();
+                                let blocked_id = notice.quark_id.clone();
+                                let task_src = preceding_task.clone();
+                                let ent_re = chamber_entity.clone();
+                                action_bar = action_bar.child(
+                                    h_flex()
+                                        .id(SharedString::from(format!(
+                                            "skill-block-reassign-{ix}-{peer_id}"
+                                        )))
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .gap_1()
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme::bg_surface())
+                                        .border_1()
+                                        .border_color(theme::glass_highlight())
+                                        .hover(|s| s.bg(theme::bg_surface_raised()))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme::text_secondary())
+                                        .on_click(move |_, window, cx| {
+                                            let old_tag = format!("@{blocked_id}");
+                                            let new_tag = format!("@{peer_id}");
+                                            let body_c = if task_src.contains(&old_tag) {
+                                                task_src.replacen(&old_tag, &new_tag, 1)
+                                            } else {
+                                                format!("{new_tag} {task_src}")
+                                            };
+                                            ent_re.update(cx, |this, cx| {
+                                                this.append_and_reload(
+                                                    Event::new(
+                                                        Actor::Human,
+                                                        None,
+                                                        Kind::Message { body: body_c },
+                                                    ),
+                                                    cx,
+                                                );
+                                            });
+                                            window.refresh();
+                                        })
+                                        .child(format!("Assign to @{peer_label}")),
+                                );
+                            }
+
+                            this.child(action_bar)
+                        },
+                    ),
             )
     }
 
@@ -2241,6 +2465,47 @@ mod milestone_3_tests {
     fn test_composer_preview_max_height_bounds() {
         assert_eq!(super::COMPOSER_PREVIEW_MAX_HEIGHT_PX, 220.0);
         assert!((120.0..=300.0).contains(&super::COMPOSER_PREVIEW_MAX_HEIGHT_PX));
+    }
+
+    #[test]
+    fn parse_skill_block_notice_recognizes_mode_mismatch_and_denied_skill() {
+        use super::{parse_skill_block_notice, SkillBlockNotice, SkillBlockReason};
+        use hadron_lattice::Mode;
+
+        let mode_msg = "@orchestrator @acp-claude is in ask mode and cannot run 'executing-plans' (requires write mode); skipping.";
+        assert_eq!(
+            parse_skill_block_notice(mode_msg),
+            Some(SkillBlockNotice {
+                quark_id: "acp-claude".to_string(),
+                skill_id: "executing-plans".to_string(),
+                reason: SkillBlockReason::ModeMismatch {
+                    current_mode: Mode::Ask,
+                    required_mode: Mode::Write,
+                },
+            })
+        );
+
+        let deny_msg = "@cli-codex does not have skill 'release' enabled (deny_skills); skipping.";
+        assert_eq!(
+            parse_skill_block_notice(deny_msg),
+            Some(SkillBlockNotice {
+                quark_id: "cli-codex".to_string(),
+                skill_id: "release".to_string(),
+                reason: SkillBlockReason::DeniedSkill,
+            })
+        );
+
+        let locks_msg = "@cli-codex locks out 'writing-plans' tasks (deny_skills); skipping.";
+        assert_eq!(
+            parse_skill_block_notice(locks_msg),
+            Some(SkillBlockNotice {
+                quark_id: "cli-codex".to_string(),
+                skill_id: "writing-plans".to_string(),
+                reason: SkillBlockReason::DeniedSkill,
+            })
+        );
+
+        assert_eq!(parse_skill_block_notice("regular chat message"), None);
     }
 }
 

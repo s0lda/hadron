@@ -1,12 +1,9 @@
-//! Preons — a named voice a human can address by `@name` instead of by role or
-//! quark id.
+//! Preons — a named voice or specialist persona a quark seat can attach.
 //!
 //! A preon is authored as a `.md` file with front-matter (`name:`, optional
-//! `preferred_role:`) plus a body, loaded from `~/.hadron/preons` and
+//! `description:`) plus a body, loaded from `~/.hadron/preons` and
 //! `<repo>/.hadron/preons` — the same shape, and the same loader pattern, as
-//! [`crate::skills::load_skills`]. This module only loads and merges the files;
-//! routing `@preon-name` to a seat via its `preferred_role` is a separate
-//! concern (the router), not this one.
+//! [`crate::skills::load_skills`].
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,18 +15,15 @@ use crate::skills::{front_matter_value, split_front_matter};
 pub mod synth;
 pub use synth::*;
 
-/// One loaded preon: a name a human can address, an optional role it prefers to
-/// route through, and the body a quark speaking as this preon is handed.
+/// One loaded preon: a name, an optional description, and the body a quark
+/// speaking with this preon attached is handed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preon {
-    /// The merge key and the `@name` a human types. Required — a file with no
-    /// `name:` front-matter has nothing to key on and is skipped (see
-    /// [`load_dir`]).
+    /// The merge key. Required — a file with no `name:` front-matter has
+    /// nothing to key on and is skipped (see [`load_dir`]).
     pub name: String,
-    /// The role this preon prefers to route through (spec §4). Optional: a
-    /// preon with no preferred role still loads, it just has nothing for the
-    /// router to resolve against yet.
-    pub preferred_role: Option<String>,
+    /// Optional one-line summary of the preon's specialty.
+    pub description: Option<String>,
     /// The text after the front-matter block, trimmed.
     pub body: String,
 }
@@ -56,19 +50,6 @@ pub fn load_preons(global_dir: Option<&Path>, repo_dir: Option<&Path>) -> Vec<Pr
     }
 
     preons
-}
-
-/// Load roles from disk and merge them by name.
-pub fn load_roles(global_dir: Option<&Path>, repo_dir: Option<&Path>) -> Vec<Preon> {
-    let mut roles: Vec<Preon> = Vec::new();
-
-    for dir in [global_dir, repo_dir].into_iter().flatten() {
-        for loaded in load_dir(dir) {
-            upsert(&mut roles, loaded);
-        }
-    }
-
-    roles
 }
 
 /// Insert `preon`, replacing any existing entry with the same `name` in place
@@ -143,11 +124,11 @@ fn parse_preon_file(text: &str) -> Option<Preon> {
     let front = front?;
 
     let name = front_matter_value(front, "name")?.to_string();
-    let preferred_role = front_matter_value(front, "preferred_role").map(str::to_string);
+    let description = front_matter_value(front, "description").map(str::to_string);
 
     Some(Preon {
         name,
-        preferred_role,
+        description,
         body: body.trim().to_string(),
     })
 }
@@ -183,7 +164,7 @@ impl PreonHotSwapManager {
             self.registry.register_preon(
                 &preon.name,
                 &preon.body,
-                preon.preferred_role.as_deref(),
+                preon.description.as_deref(),
             );
         }
         count
@@ -200,12 +181,12 @@ impl PreonHotSwapManager {
     }
 
     /// Inject an ephemeral specialist preon directly into a quark seat.
-    pub fn inject_ephemeral(&mut self, quark_id: &str, role: &str, task: &str) {
-        let preon = synth::synthesize_ephemeral_preon(role, task);
+    pub fn inject_ephemeral(&mut self, quark_id: &str, specialty: &str, task: &str) {
+        let preon = synth::synthesize_ephemeral_preon(specialty, task);
         self.registry.register_preon(
             &preon.name,
             &preon.body,
-            preon.preferred_role.as_deref(),
+            preon.description.as_deref(),
         );
         let _ = self.registry.attach_to_seat(quark_id, &preon.name);
     }
@@ -234,18 +215,18 @@ mod tests {
     }
 
     #[test]
-    fn preon_parses_name_and_preferred_role() {
+    fn preon_parses_name_and_description() {
         let repo = tempfile::tempdir().unwrap();
         write_preon(
             repo.path(),
             "security-reviewer.md",
-            "---\nname: security-reviewer\npreferred_role: security\n---\n\nYou review for security issues.\n",
+            "---\nname: security-reviewer\ndescription: security\n---\n\nYou review for security issues.\n",
         );
 
         let loaded = load_preons(None, Some(repo.path()));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "security-reviewer");
-        assert_eq!(loaded[0].preferred_role.as_deref(), Some("security"));
+        assert_eq!(loaded[0].description.as_deref(), Some("security"));
     }
 
     #[test]
@@ -255,18 +236,18 @@ mod tests {
         write_preon(
             global.path(),
             "reviewer.md",
-            "---\nname: reviewer\npreferred_role: global-role\n---\n\nGLOBAL BODY.\n",
+            "---\nname: reviewer\ndescription: global-desc\n---\n\nGLOBAL BODY.\n",
         );
         write_preon(
             repo.path(),
             "reviewer.md",
-            "---\nname: reviewer\npreferred_role: repo-role\n---\n\nREPO BODY.\n",
+            "---\nname: reviewer\ndescription: repo-desc\n---\n\nREPO BODY.\n",
         );
 
         let loaded = load_preons(Some(global.path()), Some(repo.path()));
         assert_eq!(loaded.len(), 1, "override replaces in place, does not add");
         let p = &loaded[0];
-        assert_eq!(p.preferred_role.as_deref(), Some("repo-role"), "repo must win over global");
+        assert_eq!(p.description.as_deref(), Some("repo-desc"), "repo must win over global");
         assert!(p.body.contains("REPO BODY."));
         assert!(!p.body.contains("GLOBAL BODY."));
     }
@@ -274,7 +255,7 @@ mod tests {
     #[test]
     fn preon_without_name_is_skipped() {
         let repo = tempfile::tempdir().unwrap();
-        write_preon(repo.path(), "nameless.md", "---\npreferred_role: security\n---\n\nBODY.\n");
+        write_preon(repo.path(), "nameless.md", "---\ndescription: security\n---\n\nBODY.\n");
         write_preon(repo.path(), "no-front-matter.md", "# just a heading\n\nno front matter at all.\n");
 
         let loaded = load_preons(None, Some(repo.path()));
@@ -296,13 +277,13 @@ mod tests {
     }
 
     #[test]
-    fn preon_with_no_preferred_role_still_loads() {
+    fn preon_with_no_description_still_loads() {
         let repo = tempfile::tempdir().unwrap();
         write_preon(repo.path(), "roleless.md", "---\nname: roleless\n---\n\nBODY.\n");
 
         let loaded = load_preons(None, Some(repo.path()));
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].preferred_role, None);
+        assert_eq!(loaded[0].description, None);
     }
 
     #[test]
@@ -326,25 +307,12 @@ mod tests {
     }
 
     #[test]
-    fn load_roles_works() {
-        let global = tempfile::tempdir().unwrap();
-        let repo = tempfile::tempdir().unwrap();
-        write_preon(global.path(), "architect.md", "---\nname: architect\n---\n\nARCHITECT GLOBAL.\n");
-        write_preon(repo.path(), "architect.md", "---\nname: architect\n---\n\nARCHITECT REPO.\n");
-
-        let loaded = load_roles(Some(global.path()), Some(repo.path()));
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].name, "architect");
-        assert!(loaded[0].body.contains("ARCHITECT REPO."));
-    }
-
-    #[test]
     fn test_preon_hot_swap_manager() {
         let repo = tempfile::tempdir().unwrap();
         write_preon(
             repo.path(),
             "fuzz-expert.md",
-            "---\nname: fuzz-expert\npreferred_role: Fuzzer\n---\n\nRun cargo fuzz.\n",
+            "---\nname: fuzz-expert\ndescription: Fuzzer\n---\n\nRun cargo fuzz.\n",
         );
 
         let mut manager = PreonHotSwapManager::new(None, Some(repo.path()));

@@ -109,12 +109,6 @@ pub fn build_cache_stable_prefix(projection: &Projection) -> String {
         p.push_str("\n\n");
     }
 
-    if let Some(ref role_body) = projection.role_body {
-        p.push_str("# Your role\n");
-        p.push_str(role_body.trim());
-        p.push_str("\n\n");
-    }
-
     // 3. Available Hadron Forge Tools (gated on has_forge_tools)
     if projection.has_forge_tools {
         p.push_str(AVAILABLE_FORGE_TOOLS_DESCRIPTION);
@@ -149,12 +143,11 @@ pub fn build_cache_stable_prefix(projection: &Projection) -> String {
     p
 }
 
-/// Strip the static cache-stable prefix sections (`invariants`, `role_body`,
+/// Strip the static cache-stable prefix sections (`invariants`,
 /// `has_forge_tools`, `nucleus_digest`, and `nucleus_index`) from a projection bound
 /// for a resumed resident conversation that already received them on turn 1.
 pub fn without_static_prefix(mut projection: Projection) -> Projection {
     projection.invariants.clear();
-    projection.role_body = None;
     projection.has_forge_tools = false;
     projection.nucleus_digest.clear();
     projection.nucleus_index.clear();
@@ -390,12 +383,38 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
         p.push_str("\n");
     }
 
+    // Peer skill restrictions (for orchestrator dispatch awareness)
+    if is_orchestrator(projection, self_id) {
+        let restricted: Vec<String> = projection
+            .roster
+            .iter()
+            .filter(|c| &c.id != self_id && !c.deny_skills.is_empty())
+            .map(|c| {
+                format!(
+                    "- `@{}` (id `{}`): disabled skills (deny_skills): {}",
+                    display_for(&projection.roster, &c.id),
+                    c.id.as_str(),
+                    c.deny_skills.join(", ")
+                )
+            })
+            .collect();
+        if !restricted.is_empty() {
+            p.push_str("# Peer Skill Restrictions\n");
+            p.push_str("Do not dispatch a skill to a peer that has disabled it:\n");
+            for line in restricted {
+                p.push_str(&line);
+                p.push('\n');
+            }
+            p.push('\n');
+        }
+    }
+
     // Broadcast Status
     if is_worker(projection, self_id) && !projection.named_specifically {
         p.push_str(
             "# This is a broadcast, not an assignment\n\
              You were reached via `@team` or an unaddressed message, not named specifically by \
-             `@id`, display name, or role. **Think about this task and report your analysis to \
+             `@id` or display name. **Think about this task and report your analysis to \
              `@orchestrator` — do not implement it.** Do not edit files, run state-changing \
              commands, commit, or open a branch this turn. If the orchestrator delegates this \
              work to you specifically afterward, treat that as a new, separate assignment.\n\n",

@@ -70,7 +70,7 @@ pub enum Risk {
 ///   remembered (trust-on-first-use) per quark; off-list commands still ask.
 /// - `Bypass`: the orchestrator owns it — the gluon auto-approves and the human
 ///   is never asked (the request + grant are still recorded for audit).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     #[default]
@@ -78,6 +78,27 @@ pub enum Mode {
     Write,
     Auto,
     Bypass,
+}
+
+impl Mode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Mode::Ask => "ask",
+            Mode::Write => "write",
+            Mode::Auto => "auto",
+            Mode::Bypass => "bypass",
+        }
+    }
+
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "ask" => Some(Mode::Ask),
+            "write" => Some(Mode::Write),
+            "auto" => Some(Mode::Auto),
+            "bypass" => Some(Mode::Bypass),
+            _ => None,
+        }
+    }
 }
 
 /// Message severity for system/gluon/quark notifications.

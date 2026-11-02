@@ -136,49 +136,6 @@ fn a_cli_seat_serializes_without_an_acp_command() {
     assert_eq!(back.transport, Transport::Cli);
 }
 
-/// `roles`/`exclusive` round-trip through JSON like every other seat field.
-#[test]
-fn seat_roles_and_exclusive_serde_round_trip() {
-    let mut s = seat("architect", "claude", "opus", Flavor::Worker);
-    s.roles = vec!["architect".into(), "security".into()];
-    s.exclusive = true;
-    let json = serde_json::to_string(&s).unwrap();
-    assert!(json.contains("\"roles\":[\"architect\",\"security\"]"), "{json}");
-    assert!(json.contains("\"exclusive\":true"), "{json}");
-    let back: Seat = serde_json::from_str(&json).unwrap();
-    assert_eq!(back, s);
-}
-
-/// A seat with neither key — every `team.json` written before role-routing existed —
-/// must decode to empty roles / not-exclusive, and re-serializing it must not grow
-/// those keys back into the file.
-#[test]
-fn legacy_seat_has_no_roles_and_is_not_exclusive() {
-    let json = r#"{"id":"opus","provider":"claude","model":"opus-4.8","flavor":"orchestrator"}"#;
-    let s: Seat = serde_json::from_str(json).unwrap();
-    assert!(s.roles.is_empty());
-    assert!(!s.exclusive);
-    let out = serde_json::to_string(&s).unwrap();
-    assert!(!out.contains("roles"), "empty roles must not grow the file: {out}");
-    assert!(!out.contains("exclusive"), "false exclusive must not grow the file: {out}");
-}
-
-/// A role or exclusivity change is a different agent — same as a model/vendor
-/// change — so the re-seat planner must rebuild rather than silently keep routing
-/// the old scope.
-#[test]
-fn same_agent_rebuilds_on_role_or_exclusive_change() {
-    let base = Seat::cli(QuarkId::new("x"), "claude", "opus", Flavor::Worker);
-
-    let mut roles_changed = base.clone();
-    roles_changed.roles = vec!["architect".into()];
-    assert!(!base.same_agent(&roles_changed), "a role change must not look like the same agent");
-
-    let mut exclusive_changed = base.clone();
-    exclusive_changed.exclusive = true;
-    assert!(!base.same_agent(&exclusive_changed), "an exclusivity change must not look like the same agent");
-}
-
 /// `Seat.commands` round-trips through JSON: allow/deny patterns come back
 /// exactly as written.
 #[test]
@@ -694,39 +651,6 @@ mod resolve_tests {
         assert!(!s.enabled, "inherits catalogue state");
     }
 
-    /// A repo override MAY set `roles`/`exclusive`; absent means inherit the
-    /// catalogue's, mirroring every other definition-delta field.
-    #[test]
-    fn resolve_team_applies_role_and_exclusive_overrides() {
-        let global = Team {
-            quarks: vec![Seat {
-                roles: vec!["worker".into()],
-                ..seat("q", "acp-claude", "opus", Flavor::Worker)
-            }],
-            roster: vec![],
-            max_exchanges: None,
-            nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default()
-        };
-        // Absent override fields inherit the catalogue's roles/exclusive.
-        let inherit = Team { roster: vec![SeatOverride::role(QuarkId::new("q"))], ..Team::default() };
-        let s = &resolve_team(&inherit, &global).quarks[0];
-        assert_eq!(s.roles, vec!["worker".to_string()], "inherits catalogue roles");
-        assert!(!s.exclusive, "inherits catalogue exclusive (false)");
-
-        // An explicit override lands on the resolved seat.
-        let overridden = Team {
-            roster: vec![SeatOverride {
-                roles: Some(vec!["architect".into(), "security".into()]),
-                exclusive: Some(true),
-                ..SeatOverride::role(QuarkId::new("q"))
-            }],
-            ..Team::default()
-        };
-        let s = &resolve_team(&overridden, &global).quarks[0];
-        assert_eq!(s.roles, vec!["architect".to_string(), "security".to_string()], "override lands");
-        assert!(s.exclusive, "override lands");
-    }
-
     #[test]
     fn resolve_team_applies_deny_skills_override() {
         let global = Team {
@@ -1067,37 +991,6 @@ mod resolve_tests {
         assert!(s.enabled);
         assert_eq!(global.quarks[0].model, "opus", "shared catalogue default unchanged");
         assert_eq!(global.quarks[0].effort.as_deref(), Some("high"), "default effort unchanged");
-    }
-
-    /// The "differs from default → Some" branch for `roles`/`exclusive` specifically:
-    /// every other delta test leaves `desired.roles`/`desired.exclusive` equal to the
-    /// catalogue default, so only the `None` (inherit) arm of those two fields ever
-    /// ran. This edits both away from the default and checks the delta carries the
-    /// edit AND that resolving it reproduces `desired` — the same round-trip property
-    /// `a_settings_edit_becomes_a_delta_that_resolves_back_to_the_edit` proves for the
-    /// other knobs.
-    #[test]
-    fn seat_override_delta_carries_changed_roles_and_exclusive() {
-        let def = seat("acp-claude", "acp-claude", "opus", Flavor::Worker); // roles: [], exclusive: false
-        let global = Team { quarks: vec![def.clone()], roster: vec![], max_exchanges: None, nucleus_index_budget_kb: None, merge_strategy: None, ..Default::default() };
-
-        let desired = Seat {
-            roles: vec!["security".into()],
-            exclusive: true,
-            ..def.clone()
-        };
-        let ov = seat_override_delta(QuarkId::new("acp-claude"), &def, &desired, None);
-
-        assert_eq!(ov.roles, Some(vec!["security".to_string()]), "role edit is carried");
-        assert_eq!(ov.exclusive, Some(true), "exclusivity edit is carried");
-
-        // Resolving the delta reproduces `desired`; the catalogue default is untouched.
-        let repo = Team { roster: vec![ov], ..Team::default() };
-        let s = &resolve_team(&repo, &global).quarks[0];
-        assert_eq!(s.roles, vec!["security".to_string()]);
-        assert!(s.exclusive);
-        assert!(global.quarks[0].roles.is_empty(), "shared catalogue default unchanged");
-        assert!(!global.quarks[0].exclusive, "shared catalogue default unchanged");
     }
 
     #[test]
@@ -1511,16 +1404,25 @@ fn hadron_lab_config_serde_and_effective_helpers() {
 }
 
 #[test]
-fn team_schema_v0_migration_v1_roundtrip_and_forward_guard() {
-    let v0_json = r#"{"quarks":[{"id":"cli-agy","provider":"agy","model":"gemini-3-pro","flavor":"orchestrator"}],"nucleus_index_budget_kb":64}"#;
+fn team_schema_v0_and_v1_migration_v2_roundtrip_and_forward_guard() {
+    let v0_json = r#"{"quarks":[{"id":"cli-agy","provider":"agy","model":"gemini-3-pro","flavor":"orchestrator","roles":["architect"],"exclusive":true}],"nucleus_index_budget_kb":64}"#;
     let (team, migrated) = Team::from_versioned_json(v0_json).unwrap();
     assert!(migrated);
     assert_eq!(team.schema_version, TEAM_SCHEMA_VERSION);
     assert_eq!(team.nucleus_index_budget_kb, Some(64));
 
-    let v1_json = serde_json::to_string(&team).unwrap();
-    assert!(v1_json.contains("\"schema_version\":1"));
-    let (reloaded, migrated_again) = Team::from_versioned_json(&v1_json).unwrap();
+    let v1_json_with_roles = r#"{"schema_version":1,"quarks":[],"roster":[{"id":"cli-agy","roles":["architect"],"exclusive":true}]}"#;
+    let (v1_team, v1_migrated) = Team::from_versioned_json(v1_json_with_roles).unwrap();
+    assert!(v1_migrated, "v1 schema must migrate to v2 and strip legacy role keys");
+    assert_eq!(v1_team.schema_version, TEAM_SCHEMA_VERSION);
+    let v1_serialized = serde_json::to_string(&v1_team).unwrap();
+    assert!(!v1_serialized.contains("\"roles\""));
+    assert!(!v1_serialized.contains("\"exclusive\""));
+
+    let v2_json = serde_json::to_string(&team).unwrap();
+    assert!(v2_json.contains("\"schema_version\":2"));
+    assert!(!v2_json.contains("\"roles\""));
+    let (reloaded, migrated_again) = Team::from_versioned_json(&v2_json).unwrap();
     assert!(!migrated_again);
     assert_eq!(reloaded, team);
 

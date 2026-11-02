@@ -71,12 +71,11 @@ impl Chamber {
 
     /// Load the current target's name + image path into the editor inputs.
     pub(super) fn load_settings_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (name, path, model, effort, mode, roles, deny_skills, energy_limit_str, temp_str, top_p_str, max_tokens_str, secret_var, secret_is_set, secret_applies, supports_params) = {
+        let (name, path, model, effort, mode, deny_skills, energy_limit_str, temp_str, top_p_str, max_tokens_str, secret_var, secret_is_set, secret_applies, supports_params) = {
             let key = self.settings_target.key();
             let mut mdl = String::new();
             let mut eff = None;
             let mut mod_cfg = None;
-            let mut roles_str = String::new();
             let mut deny_skills_str = String::new();
             let mut energy_limit_str = String::new();
             let mut temp_str = String::new();
@@ -112,7 +111,6 @@ impl Chamber {
                     mdl = seat.model.clone();
                     eff = seat.effort.clone();
                     mod_cfg = seat.mode_config.clone();
-                    roles_str = seat.roles.join(", ");
                     deny_skills_str = seat.deny_skills.join(", ");
                     energy_limit_str = seat.energy_limit.map(|n| n.to_string()).unwrap_or_default();
                     temp_str = seat.model_params.temperature.map(|f| f.to_string()).unwrap_or_default();
@@ -143,7 +141,6 @@ impl Chamber {
                 mdl,
                 eff.unwrap_or_default(),
                 mod_cfg.unwrap_or_default(),
-                roles_str,
                 deny_skills_str,
                 energy_limit_str,
                 temp_str,
@@ -165,8 +162,6 @@ impl Chamber {
             .update(cx, |s, cx| s.set_value(effort, window, cx));
         self.settings_mode_config
             .update(cx, |s, cx| s.set_value(mode, window, cx));
-        self.settings_roles
-            .update(cx, |s, cx| s.set_value(roles, window, cx));
         self.settings_new_role
             .update(cx, |s, cx| s.set_value(String::new(), window, cx));
         self.settings_deny_skills
@@ -230,13 +225,6 @@ impl Chamber {
         let model_val = self.settings_model.read(cx).value().trim().to_string();
         let effort_val = self.settings_effort.read(cx).value().trim().to_string();
         let mode_val = self.settings_mode_config.read(cx).value().trim().to_string();
-
-        let roles_val = self.settings_roles.read(cx).value();
-        let new_roles: Vec<String> = roles_val
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
 
         let deny_skills_val = self.settings_deny_skills.read(cx).value();
         let new_deny_skills: Vec<String> = deny_skills_val
@@ -383,7 +371,6 @@ impl Chamber {
                     model: new_model,
                     effort: new_effort,
                     mode_config: new_mode,
-                    roles: new_roles,
                     deny_skills: new_deny_skills,
                     energy_limit: new_energy_limit,
                     model_params: new_model_params,
@@ -393,7 +380,6 @@ impl Chamber {
                 let knobs_changed = base.model != desired.model
                     || base.effort != desired.effort
                     || base.mode_config != desired.mode_config
-                    || base.roles != desired.roles
                     || base.deny_skills != desired.deny_skills
                     || base.energy_limit != desired.energy_limit
                     || base.model_params != desired.model_params;
@@ -450,7 +436,7 @@ impl Chamber {
         hadron_lattice::quark::validate_quark_display_name(name, qid_str, &refs)
     }
 
-    /// Persist updated configuration knobs (model, effort, mode, roles, deny_skills, energy_limit, model_params)
+    /// Persist updated configuration knobs (model, effort, mode, deny_skills, energy_limit, model_params)
     /// for a seat, handling both self-contained legacy seats and catalogue-adopted seats.
     pub(super) fn update_seat_config(
         &mut self,
@@ -463,7 +449,6 @@ impl Chamber {
             existing.model = desired.model.clone();
             existing.effort = desired.effort.clone();
             existing.mode_config = desired.mode_config.clone();
-            existing.roles = desired.roles.clone();
             existing.deny_skills = desired.deny_skills.clone();
             existing.energy_limit = desired.energy_limit;
             existing.model_params = desired.model_params.clone();

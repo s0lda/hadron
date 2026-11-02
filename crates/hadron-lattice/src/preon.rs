@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreonMetadata {
     pub name: String,
-    pub preferred_role: Option<String>,
     pub capabilities: Vec<String>,
     pub description: Option<String>,
 }
@@ -19,7 +18,7 @@ pub struct PreonMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreonDefinition {
     pub name: String,
-    pub preferred_role: Option<String>,
+    pub description: Option<String>,
     pub body: String,
     pub metadata: PreonMetadata,
 }
@@ -40,19 +39,18 @@ impl PreonRegistry {
     }
 
     /// Register or update a capability preon in the registry.
-    pub fn register_preon(&mut self, name: &str, content: &str, preferred_role: Option<&str>) {
+    pub fn register_preon(&mut self, name: &str, content: &str, description: Option<&str>) {
         let meta = PreonMetadata {
             name: name.to_string(),
-            preferred_role: preferred_role.map(str::to_string),
             capabilities: Vec::new(),
-            description: None,
+            description: description.map(str::to_string),
         };
 
         self.preons.insert(
             name.to_string(),
             PreonDefinition {
                 name: name.to_string(),
-                preferred_role: preferred_role.map(str::to_string),
+                description: description.map(str::to_string),
                 body: content.to_string(),
                 metadata: meta,
             },
@@ -127,8 +125,8 @@ impl PreonRegistry {
 
         for preon in attached {
             out.push_str(&format!("## Preon: `{}`\n", preon.name));
-            if let Some(ref role) = preon.preferred_role {
-                out.push_str(&format!("**Specialized Role**: `{}`\n", role));
+            if let Some(ref desc) = preon.description {
+                out.push_str(&format!("**Description**: {}\n", desc));
             }
             out.push_str(&preon.body);
             out.push_str("\n\n");

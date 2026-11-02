@@ -57,7 +57,7 @@ Categorize discovered artifacts into Hadron target structures:
 - Relocate execution plans to `.hadron/docs/plans/`.
 
 ### 5. Personas & Custom Prompts → `.hadron/preons/<name>.md`
-- Convert custom assistant personas, specialized reviewer prompts, or system instructions into Hadron preons with `preferred_role` frontmatter.
+- Convert custom assistant personas, specialized reviewer prompts, or system instructions into Hadron preons with `description` frontmatter.
 
 ## Phase 3: Verification & Reporting
 

@@ -65,19 +65,6 @@ impl super::Engine {
             }
         }
 
-        // Soft preference (spec 2026-07-20 §3.2): bubble preferred role-holder to the front
-        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let workspace_root = workspace_root_of(&self.field_path, &base);
-        let repo_skills_dir = workspace_root.join(".hadron").join("skills");
-        let skill_corpus = skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
-        if let Some(m) = skills::select(body, &skill_corpus) {
-            if let Some(role) = skills::preferred_role(&m.id) {
-                if let Some(preferred) = crate::router::card_for_role(&self.roster, role) {
-                    addressees.sort_by_key(|id| if id == &preferred.id { 0 } else { 1 });
-                }
-            }
-        }
-
         addressees
     }
 
@@ -144,7 +131,7 @@ impl super::Engine {
                         }
                         _ => body.clone(),
                     };
-                    out.push((addressee, HumanTask { task, addressing: body.clone() }));
+                    out.push((addressee, HumanTask { task }));
                 }
             }
         }
@@ -269,37 +256,6 @@ impl super::Engine {
             }
         }
         targets
-    }
-
-    /// Whether the task about to drive `target`'s turn actually names it — by one of
-    /// its `roles` (a `@role` mention naming it) or its own `@id` — the eligibility
-    /// test an `exclusive` card must pass before it is ever admitted.
-    ///
-    /// Deliberately reads the task's TEXT rather than trusting `to == target`: the
-    /// event that produced `target` may have addressed it directly (a hand-off, or a
-    /// `Kind::Assign` written straight to its id) with no relation between `to` and
-    /// the task body at all. `fallback_task` covers the unaddressed-human-message
-    /// case (the body IS the task, already in hand); anything else re-resolves the
-    /// driving event the same way dispatch itself will a moment later.
-    ///
-    /// Uses [`crate::router::task_names_card_specifically`], NOT `human_mentions`:
-    /// `human_mentions` expands `@team` to the whole roster, which let a plain
-    /// `@team status` broadcast admit an exclusive card that was never named by role
-    /// or id — the review-flagged gap this now closes.
-    pub(super) fn exclusive_task_names_target(
-        &self,
-        events: &[Event],
-        target: &QuarkId,
-        fallback_task: Option<&str>,
-    ) -> bool {
-        let Some(card) = self.roster.iter().find(|c| &c.id == target) else {
-            return false;
-        };
-        let task_text = fallback_task
-            .map(|s| s.to_string())
-            .or_else(|| self.driver_for(events, target, None).map(|d| d.task));
-        let preons = self.loaded_preons();
-        task_text.as_deref().is_some_and(|t| crate::router::task_names_card_specifically(t, card, &preons))
     }
 
     /// Which lane a dispatch to `target` belongs on (Task 6, Step 5). A seat with
@@ -548,28 +504,27 @@ impl super::Engine {
         // test already controls via its own tempdir field.
         let repo_skills_dir = workspace_root.join(".hadron").join("skills");
         let skill_corpus = skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
-        invariants_text.push_str(&skills::index(&skill_corpus));
+        let card_deny_skills = self
+            .roster
+            .iter()
+            .find(|c| &c.id == target)
+            .map(|c| c.deny_skills.as_slice())
+            .unwrap_or(&[]);
+        let allowed_skills: Vec<skills::ResolvedSkill> = skill_corpus
+            .into_iter()
+            .filter(|s| !card_deny_skills.iter().any(|d| d.eq_ignore_ascii_case(&s.id)))
+            .collect();
+        invariants_text.push_str(&skills::index(&allowed_skills));
 
-        let mut role_body = None;
         let mut active_skill = None;
-        if let Some(m) = skills::select(&task_desc, &skill_corpus) {
-            if let Some(role) = skills::preferred_role(&m.id) {
-                if let Some(card) = self.roster.iter().find(|c| &c.id == target) {
-                    if card.roles.iter().any(|r| r.eq_ignore_ascii_case(role)) {
-                        let roles_corpus = self.loaded_roles();
-                        if let Some(matched_role) = roles_corpus.iter().find(|p| p.name.eq_ignore_ascii_case(role)) {
-                            role_body = Some(matched_role.body.clone());
-                        }
-                    }
-                }
-            }
-
+        if let Some(m) = skills::select_for_target(&task_desc, target, &self.roster, &allowed_skills) {
             let peers = self
                 .roster
                 .iter()
                 .filter(|c| &c.id != target)
                 .filter(|c| c.energy != EnergyState::Depleted)
                 .filter(|c| self.is_enabled(&c.id))
+                .filter(|c| !c.deny_skills.iter().any(|d| d.eq_ignore_ascii_case(&m.id)))
                 .map(|c| c.id.clone())
                 .collect();
 
@@ -650,7 +605,6 @@ impl super::Engine {
             isolated: cwd.is_some(),
             cwd: cwd.unwrap_or(workspace_root),
             mode: turn_mode,
-            role_body,
             active_skill,
             named_specifically,
             has_forge_tools,

@@ -290,7 +290,6 @@ mod tests {
             isolated: true,
             cwd: wt_cwd.clone(),
             mode: hadron_lattice::Mode::default(),
-            role_body: None,
             active_skill: None,
             named_specifically: true,
             has_forge_tools: false,

@@ -69,10 +69,6 @@ pub struct AcpQuark {
     flavor: Flavor,
     /// The `@mention` name (see [`Quark::display_name`]); `None` = id-only.
     display_name: Option<String>,
-    /// This quark's `@role` roles (see [`Quark::roles`]); empty = no roles.
-    roles: Vec<String>,
-    /// Whether this quark is scoped only to its roles (see [`Quark::exclusive`]).
-    exclusive: bool,
     /// This quark's per-seat command allow/deny lists (see [`Quark::commands`]).
     commands: SeatCommands,
     /// This seat's resolved secret env — `(name, value)` pairs from
@@ -124,8 +120,6 @@ impl AcpQuark {
             id,
             flavor,
             display_name: None,
-            roles: Vec::new(),
-            exclusive: false,
             commands: SeatCommands::default(),
             env: RedactedEnv::default(),
             model: model.into(),
@@ -197,12 +191,6 @@ impl AcpQuark {
     }
 
     /// Set the `@role` roles and exclusivity (from the resolved seat).
-    pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
-        self.roles = roles;
-        self.exclusive = exclusive;
-        self
-    }
-
     /// Set the per-seat command allow/deny lists (from the resolved seat).
     pub fn with_commands(mut self, commands: SeatCommands) -> Self {
         self.commands = commands;
@@ -257,12 +245,6 @@ impl Quark for AcpQuark {
     }
     fn display_name(&self) -> Option<String> {
         self.display_name.clone()
-    }
-    fn roles(&self) -> Vec<String> {
-        self.roles.clone()
-    }
-    fn exclusive(&self) -> bool {
-        self.exclusive
     }
     fn deny_skills(&self) -> Vec<String> {
         self.deny_skills.clone()

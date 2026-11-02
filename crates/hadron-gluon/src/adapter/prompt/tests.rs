@@ -14,8 +14,6 @@ fn projection(task: &str) -> Projection {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
-            roles: vec![],
-            exclusive: false,
             commands: Default::default(),
             energy_limit: None,
             deny_skills: vec![],
@@ -36,7 +34,6 @@ fn projection(task: &str) -> Projection {
         isolated: true,
         cwd: std::path::PathBuf::from("/repo/.hadron/trees/agy"),
         mode: hadron_lattice::Mode::default(),
-        role_body: None,
         active_skill: None,
         named_specifically: true,
         has_forge_tools: false,
@@ -68,8 +65,6 @@ fn peers_are_named_by_display_name_not_raw_id() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -179,8 +174,6 @@ fn worker_is_told_to_escalate_to_the_orchestrator_role() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -210,8 +203,6 @@ fn a_finished_worker_reports_up_and_is_never_told_to_drop_the_mention() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -257,8 +248,6 @@ fn only_the_orchestrator_is_told_to_stay_available() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -288,8 +277,6 @@ fn orchestrator_is_told_to_delegate_before_implementing() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -313,8 +300,6 @@ fn worker_prompt_prescribes_hub_and_spoke_and_forbids_peer_delegation() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -349,8 +334,6 @@ fn a_broadcast_reached_worker_is_told_to_think_not_do() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -384,8 +367,6 @@ fn a_specifically_named_worker_gets_no_broadcast_clause() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -407,8 +388,6 @@ fn bypass_orchestrator_gets_autonomous_loop_directives() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -436,8 +415,6 @@ fn bypass_completion_gate_forbids_menus() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -506,8 +483,6 @@ fn the_orchestrator_must_verify_a_workers_claim_before_relaying_it() {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: vec![],
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
@@ -587,12 +562,24 @@ fn empty_optional_sections_are_omitted() {
 }
 
 #[test]
-fn prompt_contains_your_role_when_present() {
-    let mut proj = projection("Build login");
-    proj.role_body = Some("You must act as the lead architect and write design docs.".into());
-    let p = build(&proj, &QuarkId::new("agy"));
-    assert!(p.contains("# Your role"));
-    assert!(p.contains("You must act as the lead architect and write design docs."));
+fn orchestrator_prompt_surfaces_peer_deny_skills() {
+    let mut proj = projection("dispatch review");
+    proj.roster[0].deny_skills = vec!["security-review".into()];
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("opus"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+        has_forge_tools: false,
+    });
+    let orch = build(&proj, &QuarkId::new("opus"));
+    assert!(orch.contains("# Peer Skill Restrictions"));
+    assert!(orch.contains("security-review"));
 }
 
 #[test]
@@ -882,11 +869,10 @@ fn active_skill_is_rendered_after_nucleus_index_and_before_task() {
 fn stress_test_huge_inputs_and_context_items() {
     let mut proj = projection("huge task");
     
-    // Huge task, invariants, git diff, role body, active skill
+    // Huge task, invariants, git diff, active skill
     proj.task = "A".repeat(1_000_000);
     proj.invariants = "B".repeat(500_000);
     proj.git_diff = "C".repeat(500_000);
-    proj.role_body = Some("D".repeat(500_000));
     proj.active_skill = Some("E".repeat(500_000));
     proj.nucleus_digest = "F".repeat(500_000);
 
@@ -974,7 +960,6 @@ fn stress_test_unicode_and_multibyte_sequences() {
 
     let mut proj = projection("Task with multi-byte unicode: 🦀🔥💻🚀 你好世界  الكلمة e\u{0301} 👨‍👩‍👧‍👦");
     proj.invariants = "Invariant: 🦝 ñoño 🌍".to_string();
-    proj.role_body = Some("Role: 🦸‍♀️ Architect 🏗️".to_string());
     proj.active_skill = Some("Skill: 🪄 Wizardry ✨".to_string());
     proj.git_diff = "--- a/unicode.rs\n+++ b/unicode.rs\n+ // 🦀 Rust emoji and CJK 🎉".to_string();
 
@@ -1023,7 +1008,6 @@ fn stress_test_malformed_notes_and_empty_input_list() {
     proj.invariants = String::new();
     proj.nucleus_digest = String::new();
     proj.git_diff = String::new();
-    proj.role_body = None;
     proj.active_skill = None;
     proj.roster = vec![]; // Empty roster
     proj.field_window = vec![]; // Empty field window
@@ -1115,7 +1099,6 @@ fn test_cache_stable_prefix_remains_byte_identical_across_different_tasks() {
 fn without_static_prefix_strips_cached_reference_sections_and_preserves_task() {
     let mut proj = projection("Delta task");
     proj.invariants = "Standard model rules".to_string();
-    proj.role_body = Some("Architect role".to_string());
     proj.has_forge_tools = true;
     proj.nucleus_digest = "Feature map".to_string();
     proj.nucleus_index = "- [lesson](notes/lesson.md) — hook".to_string();
@@ -1123,7 +1106,6 @@ fn without_static_prefix_strips_cached_reference_sections_and_preserves_task() {
 
     let stripped = without_static_prefix(proj);
     assert!(stripped.invariants.is_empty());
-    assert!(stripped.role_body.is_none());
     assert!(!stripped.has_forge_tools);
     assert!(stripped.nucleus_digest.is_empty());
     assert!(stripped.nucleus_index.is_empty());

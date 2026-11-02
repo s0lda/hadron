@@ -1,4 +1,4 @@
-use hadron_lattice::QuarkId;
+use hadron_lattice::{Mode, QuarkCard, QuarkId};
 
 use super::parse::{front_matter_value, split_front_matter};
 use super::ResolvedSkill;
@@ -21,6 +21,8 @@ pub struct Match {
     /// The trigger phrase that matched, quoted back to the quark so a misfire is
     /// visible and debuggable rather than a mysterious extra section in the prompt.
     pub trigger: String,
+    /// Minimum permission mode required to execute this skill.
+    pub min_mode: Mode,
 }
 
 /// Pick the skill for a task, or `None` — which leaves the prompt exactly as it was.
@@ -48,20 +50,24 @@ pub fn select(task: &str, skills: &[ResolvedSkill]) -> Option<Match> {
         id: skill.id.clone(),
         body: skill.body.clone(),
         trigger,
+        min_mode: skill.min_mode,
     })
 }
 
-/// The role a task of this kind prefers (spec 2026-07-20 §3.2). None = no preference.
-pub fn preferred_role(skill_name: &str) -> Option<&'static str> {
-    match skill_name {
-        "writing-plans" | "brainstorming" | "architecture-audit" | "api-design" | "debate" => Some("architect"),
-        "requesting-code-review" | "reviewing-work" | "security-review" => Some("reviewer"),
-        "executing-plans" | "subagent-driven-development" | "code-simplification" | "migration-deprecation" => Some("executor"),
-        "chaos-testing" | "test-driven-development" => Some("qa"),
-        "performance-audit" | "benchmarking" => Some("optimizer"),
-        "incident-investigation" | "systematic-debugging" => Some("triage"),
-        "memory-curation" | "doc-drift-audit" => Some("scribe"),
-        _ => None,
+/// Pick the skill for `target` within `task`: when `task` addresses multiple quarks,
+/// evaluates only the segment addressed to `target` (via [`crate::router::extract_target_segment`])
+/// so a skill trigger aimed at `@quark1` never bleeds into `@quark2`'s turn.
+pub fn select_for_target(
+    task: &str,
+    target: &QuarkId,
+    roster: &[QuarkCard],
+    skills: &[ResolvedSkill],
+) -> Option<Match> {
+    let segment = crate::router::extract_target_segment(task, target, roster);
+    if !segment.trim().is_empty() {
+        select(&segment, skills)
+    } else {
+        select(task, skills)
     }
 }
 

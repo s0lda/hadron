@@ -188,7 +188,7 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     }
 
     // Still over budget: drop the working diff and reference sections
-    // (`nucleus_index`, `nucleus_digest`, tool catalogue, active skill, role body)
+    // (`nucleus_index`, `nucleus_digest`, tool catalogue, active skill)
     // before shedding the last 2 field messages or excess `invariants`.
     p.git_diff = String::new();
     p.field_window.insert(
@@ -234,13 +234,6 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     }
     if p.active_skill.is_some() {
         p.active_skill = None;
-        out = render(&p);
-        if out.len() <= max_bytes {
-            return out;
-        }
-    }
-    if p.role_body.is_some() {
-        p.role_body = None;
         out = render(&p);
         if out.len() <= max_bytes {
             return out;
@@ -351,10 +344,6 @@ pub struct CliQuark<R: CliRunner> {
     /// Optional reasoning effort level, passed via `spec.effort_flag` when both are set.
     effort: Option<String>,
     spec: CliSpec,
-    /// This quark's `@role` roles (see [`Quark::roles`]); empty = no roles.
-    roles: Vec<String>,
-    /// Whether this quark is scoped only to its roles (see [`Quark::exclusive`]).
-    exclusive: bool,
     /// This quark's per-seat command allow/deny lists (see [`Quark::commands`]).
     commands: SeatCommands,
     /// This seat's resolved secret env — `(name, value)` pairs from
@@ -391,8 +380,6 @@ impl<R: CliRunner> CliQuark<R> {
             spec,
             resident: false,
             runner,
-            roles: Vec::new(),
-            exclusive: false,
             commands: SeatCommands::default(),
             env: RedactedEnv::default(),
             energy_limit: None,
@@ -436,13 +423,6 @@ impl<R: CliRunner> CliQuark<R> {
     /// Set the `@mention` display name (from the resolved team config).
     pub fn with_display_name(mut self, name: Option<String>) -> Self {
         self.display_name = name;
-        self
-    }
-
-    /// Set the `@role` roles and exclusivity (from the resolved seat).
-    pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
-        self.roles = roles;
-        self.exclusive = exclusive;
         self
     }
 
@@ -697,12 +677,6 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     fn display_name(&self) -> Option<String> {
         self.display_name.clone()
     }
-    fn roles(&self) -> Vec<String> {
-        self.roles.clone()
-    }
-    fn exclusive(&self) -> bool {
-        self.exclusive
-    }
     fn deny_skills(&self) -> Vec<String> {
         self.deny_skills.clone()
     }
@@ -847,7 +821,6 @@ mod tests {
             git_diff: String::new(),
             cwd,
             mode,
-            role_body: None,
             active_skill: None,
             named_specifically: true,
             has_forge_tools: false,

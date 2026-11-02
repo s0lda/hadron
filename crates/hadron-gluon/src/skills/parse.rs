@@ -93,6 +93,9 @@ pub(super) fn parse_skill_file(text: &str) -> Option<ResolvedSkill> {
     }
 
     let tools = front_matter_value(front, "tools").map(parse_list_value).unwrap_or_default();
+    let min_mode = front_matter_value(front, "min_mode")
+        .and_then(hadron_lattice::Mode::from_str_loose)
+        .unwrap_or(hadron_lattice::Mode::Ask);
 
     Some(ResolvedSkill {
         id,
@@ -100,6 +103,7 @@ pub(super) fn parse_skill_file(text: &str) -> Option<ResolvedSkill> {
         body: body.trim().to_string(),
         description,
         tools,
+        min_mode,
     })
 }
 

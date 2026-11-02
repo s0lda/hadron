@@ -7,13 +7,12 @@ fn msg(from: Actor, to: Option<&str>, body: &str) -> Event {
 
 fn roster() -> Vec<QuarkCard> {
     vec![
-        QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None, deny_skills: vec![], has_forge_tools: false },
-        QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), roles: vec![], exclusive: false, commands: Default::default(), energy_limit: None, deny_skills: vec![], has_forge_tools: false },
+        QuarkCard { id: QuarkId::new("orch"), display_name: None, flavor: Flavor::Orchestrator, energy: EnergyState::Available, provider: String::new(), model: String::new(), commands: Default::default(), energy_limit: None, deny_skills: vec![], has_forge_tools: false },
+        QuarkCard { id: QuarkId::new("worker"), display_name: None, flavor: Flavor::Worker, energy: EnergyState::Available, provider: String::new(), model: String::new(), commands: Default::default(), energy_limit: None, deny_skills: vec![], has_forge_tools: false },
     ]
 }
 
-/// A worker seat carrying `roles`, for the `@role` routing tests below.
-fn card(id: &str, roles: &[&str]) -> QuarkCard {
+fn card(id: &str, _unused_roles: &[&str]) -> QuarkCard {
     QuarkCard {
         id: QuarkId::new(id),
         display_name: None,
@@ -21,20 +20,11 @@ fn card(id: &str, roles: &[&str]) -> QuarkCard {
         energy: EnergyState::Available,
         provider: String::new(),
         model: String::new(),
-        roles: roles.iter().map(|r| r.to_string()).collect(),
-        exclusive: false,
         commands: Default::default(),
         energy_limit: None,
         deny_skills: vec![],
         has_forge_tools: false,
     }
-}
-
-/// A preon named `name` preferring `role`, body empty (the router pass
-/// under test never reads the body — that's a separate, deferred concern,
-/// see the module doc). Mirrors `card()` for the preon-routing tests below.
-fn preon(name: &str, role: &str) -> Preon {
-    Preon { name: name.to_string(), preferred_role: Some(role.to_string()), body: String::new() }
 }
 
 /// A message whose bytes place a multi-byte char (e.g. the smart apostrophe
@@ -348,322 +338,52 @@ fn human_mentions_finds_every_mention_anywhere_deduped_in_order() {
     assert_eq!(human_mentions("mail me at user@orch.dev", &roster(), &[]), Vec::<QuarkId>::new());
 }
 
-/// Phase 1 soft `@role` routing: a token that is neither a quark id nor a
-/// reserved alias resolves to the (enabled) card whose `roles` carries it.
-#[test]
-fn role_mention_resolves_to_the_role_holder() {
-    let r = vec![card("qa1", &["architect"]), card("worker", &[])];
-    assert_eq!(human_mentions("@architect do X", &r, &[]), vec![QuarkId::new("qa1")]);
-}
+// ---- task_names_card_specifically -------------------------------------------
 
-/// A role that matches no seat falls through to the existing no-match
-/// behaviour (empty result) — never a panic or hard error.
-#[test]
-fn role_falls_back_softly_when_no_seat_has_it() {
-    let r = vec![card("qa1", &["architect"])];
-    assert_eq!(human_mentions("@nobody do X", &r, &[]), Vec::<QuarkId>::new());
-    assert_eq!(parse_addressee("@nobody do X", &r, None, &[]), None);
-}
-
-/// A card whose ID equals the token wins over a different card whose ROLE
-/// equals the same token — id precedence over role. The role-carrying card
-/// is placed FIRST in roster order so the test actually exercises the
-/// precedence logic rather than passing by roster-order coincidence (a
-/// naive "match roles inline with ids" implementation would register the
-/// role first and let it win the length tie).
-#[test]
-fn id_precedence_over_role() {
-    let r = vec![card("has_role", &["architect"]), card("architect", &[])];
-    assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("architect")]);
-}
-
-/// `@team`/`@orchestrator` are reserved aliases and must resolve before a
-/// same-named role is even considered.
-#[test]
-fn team_and_orchestrator_alias_beat_a_same_named_role() {
-    let mut r = roster(); // has "orch" as Flavor::Orchestrator
-    r.push(card("team_role_holder", &["team"]));
-    r.push(card("orch_role_holder", &["orchestrator"]));
-    assert_eq!(human_mentions("@team status", &r, &[]), vec![
-        QuarkId::new("orch"),
-        QuarkId::new("worker"),
-        QuarkId::new("team_role_holder"),
-        QuarkId::new("orch_role_holder"),
-    ]);
-    assert_eq!(
-        parse_addressee("@orchestrator your call", &r, Some(&QuarkId::new("worker")), &[]),
-        Some(QuarkId::new("orch"))
-    );
-}
-
-/// Role matching is case-insensitive, same as id/alias matching.
-#[test]
-fn role_match_is_case_insensitive() {
-    let r = vec![card("qa1", &["architect"])];
-    assert_eq!(human_mentions("@Architect do X", &r, &[]), vec![QuarkId::new("qa1")]);
-}
-
-/// Two cards share a role; the first in roster order wins (deterministic
-/// tie-break — a tuning point for later, not least-busy yet).
-#[test]
-fn role_tiebreak_is_roster_order() {
-    let r = vec![card("second", &["architect"]), card("first", &["architect"])];
-    assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("second")]);
-}
-
-/// A depleted seat is skipped in the role SELECTION pass — this is picking
-/// among candidates (like the peer list `engine.rs` builds for skill
-/// delegation), not resolving an explicit id, so it follows that filter's
-/// convention rather than the id/alias path's "resolve even a disabled
-/// seat" convention.
-#[test]
-fn depleted_seat_is_skipped_by_role_selection() {
-    let mut depleted = card("tired", &["architect"]);
-    depleted.energy = EnergyState::Depleted;
-    let r = vec![depleted, card("fresh", &["architect"])];
-    assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("fresh")]);
-}
-
-// ---- task_names_card_specifically (WS4 §4 Phase 2 exclusivity eligibility) --
-
-/// The gap this function exists to close: `human_mentions` expands `@team` to
-/// the whole roster, so a plain broadcast must NOT read as "named this card
-/// specifically" — no role, no id, just everyone.
 #[test]
 fn team_broadcast_does_not_name_a_specific_card() {
-    let sec = card("sec", &["security"]);
+    let sec = card("sec", &[]);
     assert!(!task_names_card_specifically("@team status check", &sec, &[]));
 }
 
-/// A `@team` broadcast that ALSO names the card's role still counts — the
-/// exclusion above is about `@team` itself conferring no naming power, not about
-/// broadcasts being disqualified wholesale.
-#[test]
-fn team_broadcast_naming_the_role_still_names_the_card() {
-    let sec = card("sec", &["security"]);
-    assert!(task_names_card_specifically("@team we have a @security incident", &sec, &[]));
-}
-
-/// An explicit `@id` names the card, independent of any role.
 #[test]
 fn explicit_id_names_the_card() {
-    let sec = card("sec", &["security"]);
+    let sec = card("sec", &[]);
     assert!(task_names_card_specifically("please loop in @sec on this", &sec, &[]));
 }
 
-/// A task naming neither the card's id nor any of its roles does not name it.
 #[test]
 fn unrelated_task_does_not_name_the_card() {
-    let sec = card("sec", &["security"]);
+    let sec = card("sec", &[]);
     assert!(!task_names_card_specifically("please fix the css typo", &sec, &[]));
 }
 
-/// Two cards share a role: a task naming that role names BOTH of them, even
-/// though `@role` mention-routing (`human_mentions`/`match_longest_mention`)
-/// only ever picks one via roster-order tie-break. Eligibility is "is this a
-/// role-matching task for this card", not "did routing land on this card".
-#[test]
-fn a_shared_role_names_every_card_that_carries_it() {
-    let first = card("first", &["architect"]);
-    let second = card("second", &["architect"]);
-    assert!(task_names_card_specifically("@architect go", &first, &[]));
-    assert!(task_names_card_specifically("@architect go", &second, &[]));
-}
-
-/// `@orchestrator` is a reserved alias, never a card's own id or role — it must
-/// not be read as naming an unrelated card.
 #[test]
 fn orchestrator_alias_does_not_name_an_unrelated_card() {
-    let sec = card("sec", &["security"]);
+    let sec = card("sec", &[]);
     assert!(!task_names_card_specifically("@orchestrator please advise", &sec, &[]));
 }
 
-/// Inherits `boundary_match`'s char-boundary safety: a multi-byte char (the
-/// smart apostrophe '’', 3 bytes) straddling a candidate's byte length must not
-/// panic — the same real-world trigger as
-/// `multibyte_char_straddling_a_candidate_length_does_not_panic` above, now
-/// exercised through the new function instead of a second hand-rolled matcher.
 #[test]
 fn multibyte_char_straddling_a_candidate_length_does_not_panic_here_either() {
-    let sec = card("sec", &["security"]);
+    let sec = card("sec", &[]);
     let task = "@abcdefghij’klmn and that’s all";
     assert!(!task_names_card_specifically(task, &sec, &[]));
 }
 
-/// **Whole-branch review follow-up.** `match_longest_mention` resolves
-/// `@DisplayName` to a card independent of `id`/`roles` — this function must
-/// agree, or a card the router happily dispatches by display name gets rejected
-/// here as "not addressed by role or @id".
 #[test]
 fn display_name_names_the_card() {
-    let mut claude = card("acp-claude", &["security"]);
+    let mut claude = card("acp-claude", &[]);
     claude.display_name = Some("Claude".to_string());
     assert!(task_names_card_specifically("@Claude handle this", &claude, &[]));
-    // Case-insensitive, same as id/role matching.
     assert!(task_names_card_specifically("@claude handle this", &claude, &[]));
 }
 
-/// A display name is still just a specific-card handle, not a broadcast: `@team`
-/// must not name the card even when it carries a display name.
 #[test]
 fn team_broadcast_does_not_name_a_card_via_its_display_name() {
-    let mut claude = card("acp-claude", &["security"]);
+    let mut claude = card("acp-claude", &[]);
     claude.display_name = Some("Claude".to_string());
     assert!(!task_names_card_specifically("@team status check", &claude, &[]));
-}
-
-// ---- preon-name routing (spec §4: `@preon-name` routes via preferred_role) --
-
-/// The core case: `@security-reviewer` is neither a card id, an alias, nor a
-/// role — it's a preon whose `preferred_role` is `security`, and that role
-/// is carried by `sec`. The preon pass resolves the name to that seat.
-#[test]
-fn preon_routes_to_a_seat_with_its_preferred_role() {
-    let r = vec![card("sec", &["security"])];
-    let p = vec![preon("security-reviewer", "security")];
-    assert_eq!(human_mentions("@security-reviewer go", &r, &p), vec![QuarkId::new("sec")]);
-}
-
-/// A preon whose `preferred_role` holds no seat on the roster falls through
-/// softly — empty result, no panic — exactly like an unmatched `@role`.
-#[test]
-fn preon_with_no_matching_seat_falls_back_softly() {
-    let r = vec![card("sec", &["security"])];
-    let p = vec![preon("security-reviewer", "nobody-has-this-role")];
-    assert_eq!(human_mentions("@security-reviewer go", &r, &p), Vec::<QuarkId>::new());
-    assert_eq!(parse_addressee("@security-reviewer go", &r, None, &p), None);
-}
-
-/// A card id, or a reserved alias, named the same as a preon wins — id and
-/// alias precedence over a preon name, same as over a role.
-#[test]
-fn id_and_alias_beat_a_preon_name() {
-    // A card whose id IS the preon's name wins over the preon resolving to
-    // a DIFFERENT seat via its preferred_role.
-    let r = vec![card("security-reviewer", &[]), card("sec", &["security"])];
-    let p = vec![preon("security-reviewer", "security")];
-    assert_eq!(human_mentions("@security-reviewer go", &r, &p), vec![QuarkId::new("security-reviewer")]);
-
-    // `@team`, named the same as a preon, still broadcasts rather than
-    // resolving through the preon's preferred_role.
-    let p2 = vec![preon("team", "worker")];
-    assert_eq!(
-        human_mentions("@team go", &roster(), &p2),
-        vec![QuarkId::new("orch"), QuarkId::new("worker")]
-    );
-}
-
-/// Preon-name matching is case-insensitive, same as id/alias/role matching.
-#[test]
-fn preon_match_is_case_insensitive() {
-    let r = vec![card("sec", &["security"])];
-    let p = vec![preon("security-reviewer", "security")];
-    assert_eq!(human_mentions("@Security-Reviewer go", &r, &p), vec![QuarkId::new("sec")]);
-}
-
-/// The back-compat pin: an EMPTY preons slice must route byte-for-byte the
-/// way WS4§4 did before this pass existed, across id, alias, role, and the
-/// soft-fallback cases — the preon pass runs, finds nothing, and does not
-/// change a single outcome.
-#[test]
-fn no_preons_is_todays_routing() {
-    let r = vec![card("has_role", &["architect"]), card("architect", &[])];
-    assert_eq!(human_mentions("@architect go", &r, &[]), vec![QuarkId::new("architect")]);
-    assert_eq!(human_mentions("@team status", &roster(), &[]), vec![QuarkId::new("orch"), QuarkId::new("worker")]);
-    assert_eq!(
-        parse_addressee("@orchestrator your call", &roster(), Some(&QuarkId::new("worker")), &[]),
-        Some(QuarkId::new("orch"))
-    );
-    assert_eq!(human_mentions("@ghost @nobody nothing here", &roster(), &[]), Vec::<QuarkId>::new());
-}
-
-/// A task naming a preon is treated as naming every card that carries the
-/// preon's `preferred_role` — the same "a shared role names every card that
-/// carries it" rule `a_shared_role_names_every_card_that_carries_it` pins for
-/// `@role`, extended to `@preon-name`.
-#[test]
-fn preon_name_in_a_task_names_the_role_holder_specifically() {
-    let sec = card("sec", &["security"]);
-    let p = vec![preon("security-reviewer", "security")];
-    assert!(task_names_card_specifically("@security-reviewer please look", &sec, &p));
-    assert!(!task_names_card_specifically("please fix the css typo", &sec, &p));
-}
-
-// ---- review follow-up: role pass / card_for_role cross-checks -------------
-
-/// Direct cross-check of the drift risk `card_for_role`'s doc comment flags:
-/// the role pass (fused text-match loop) and the preon pass (`card_for_role`,
-/// a separate direct lookup) must independently agree on which seat a SHARED
-/// role resolves to. Two cards carry "security"; `@security` (role pass) and
-/// `@security-reviewer` (preon pass, `preferred_role: security`) must land
-/// on the exact same first-roster-order card — this is not tautological: the
-/// two assertions exercise two genuinely different code paths
-/// (`try_match`-fused role loop vs. `card_for_role`'s `.find()`) against the
-/// same roster, not the same call twice.
-///
-/// The depleted variant re-runs both against a roster where the FIRST
-/// same-role card is `Depleted`, proving the two paths also agree on
-/// *skipping* it and falling through to the second — the other half of the
-/// shared "skip-depleted, roster-order-wins" rule.
-#[test]
-fn preon_and_its_role_resolve_to_the_same_card() {
-    let r = vec![card("sec-a", &["security"]), card("sec-b", &["security"])];
-    let p = vec![preon("security-reviewer", "security")];
-
-    let via_role = human_mentions("@security go", &r, &p);
-    let via_preon = human_mentions("@security-reviewer go", &r, &p);
-    assert_eq!(via_role, vec![QuarkId::new("sec-a")], "the role pass must land on the first same-role card");
-    assert_eq!(via_preon, vec![QuarkId::new("sec-a")], "the preon pass must land on the SAME card");
-    assert_eq!(via_role, via_preon, "role pass and preon pass must never disagree about a shared role");
-
-    // Same roster, first same-role card now Depleted — both paths must skip
-    // it identically and resolve to the second.
-    let mut first_depleted = r.clone();
-    first_depleted[0].energy = EnergyState::Depleted;
-    assert_eq!(
-        human_mentions("@security go", &first_depleted, &p),
-        vec![QuarkId::new("sec-b")],
-        "the role pass must skip a depleted seat"
-    );
-    assert_eq!(
-        human_mentions("@security-reviewer go", &first_depleted, &p),
-        vec![QuarkId::new("sec-b")],
-        "the preon pass must skip a depleted seat the same way"
-    );
-}
-
-/// A card's OWN role beats a preon named identically: the role pass runs
-/// BEFORE the preon pass (`match_longest_mention`'s gate), so `@architect`
-/// resolves to whichever seat carries the role `architect`, never through a
-/// preon whose `name` happens to also be `architect` — even when that
-/// preon's `preferred_role` points somewhere else entirely.
-#[test]
-fn a_cards_role_beats_a_same_named_preon() {
-    let r = vec![card("qa1", &["architect"])];
-    // A preon named identically to the role, but preferring a DIFFERENT
-    // role held by no one — if the preon pass ever won here, this would
-    // resolve to nobody instead of `qa1`.
-    let p = vec![preon("architect", "some-other-role-nobody-has")];
-    assert_eq!(human_mentions("@architect go", &r, &p), vec![QuarkId::new("qa1")]);
-
-    // A same-length preon name ties with the role text under
-    // `try_match`'s strict `len > *best_len` comparison, so the assertion
-    // above alone would still pass even if the preon pass's precedence
-    // GATE (`if best_match.is_none()`) were deleted — the role pass simply
-    // runs first in source order and the tie never overwrites it. This
-    // second case is gate-sensitive: a preon name LONGER than the role
-    // text is a legal literal match too (spaces are valid inside a mention
-    // name, per `match_longest_mention`'s own doc comment), so if the
-    // preon pass were ever allowed to run unconditionally, its strictly
-    // LONGER match would overwrite the role pass's shorter one under plain
-    // longest-match rules. Only the gate stops that.
-    let r2 = vec![card("qa1", &["architect"]), card("qa3", &["support"])];
-    let p2 = vec![preon("architect team", "support")];
-    assert_eq!(
-        human_mentions("@architect team please help", &r2, &p2),
-        vec![QuarkId::new("qa1")],
-        "role precedence must hold even when a preon name is a literally LONGER match"
-    );
 }
 
 #[test]
@@ -876,8 +596,6 @@ fn test_reserved_and_colliding_display_names_ignored() {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
-            roles: vec![],
-            exclusive: false,
             commands: Default::default(),
             energy_limit: None,
             deny_skills: vec![],
@@ -890,8 +608,6 @@ fn test_reserved_and_colliding_display_names_ignored() {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
-            roles: vec![],
-            exclusive: false,
             commands: Default::default(),
             energy_limit: None,
             deny_skills: vec![],
@@ -904,8 +620,6 @@ fn test_reserved_and_colliding_display_names_ignored() {
             energy: EnergyState::Available,
             provider: String::new(),
             model: String::new(),
-            roles: vec![],
-            exclusive: false,
             commands: Default::default(),
             energy_limit: None,
             deny_skills: vec![],
@@ -925,5 +639,90 @@ fn test_reserved_and_colliding_display_names_ignored() {
         Some(QuarkId::new("worker-1"))
     );
 }
+
+#[test]
+fn extract_target_segment_isolates_per_quark_clauses() {
+    let r = vec![
+        card("quark1", &[]),
+        card("quark2", &[]),
+        card("quark3", &[]),
+    ];
+
+    // Single quark mentioned: returns empty string so caller uses full message
+    assert_eq!(
+        extract_target_segment("@quark1 /brainstorming", &QuarkId::new("quark1"), &r),
+        ""
+    );
+
+    // Multi-line per-quark instructions
+    let multi_line = "@quark1 /brainstorming design the auth flow\n@quark2 /plan write the migration steps";
+    assert_eq!(
+        extract_target_segment(multi_line, &QuarkId::new("quark1"), &r),
+        "@quark1 /brainstorming design the auth flow"
+    );
+    assert_eq!(
+        extract_target_segment(multi_line, &QuarkId::new("quark2"), &r),
+        "@quark2 /plan write the migration steps"
+    );
+
+    // Conjoined targets ("@quark1 and @quark2 ... and @quark3 ...")
+    let conjoined = "@quark1 and @quark2 /brainstorming design auth and @quark3 /plan write steps";
+    assert_eq!(
+        extract_target_segment(conjoined, &QuarkId::new("quark1"), &r),
+        "@quark1 and @quark2 /brainstorming design auth and"
+    );
+    assert_eq!(
+        extract_target_segment(conjoined, &QuarkId::new("quark2"), &r),
+        "@quark1 and @quark2 /brainstorming design auth and"
+    );
+    assert_eq!(
+        extract_target_segment(conjoined, &QuarkId::new("quark3"), &r),
+        "@quark3 /plan write steps"
+    );
+}
+
+#[test]
+fn unstamped_blocked_status_does_not_mask_prior_answered_handback() {
+    let agy = QuarkId::new("cli-agy");
+    let assignment = ulid::Ulid::new();
+
+    // 1. Merge gate handback addressed to cli-agy continuing `assignment`
+    let handback = Event::new(
+        Actor::Gluon,
+        Some(agy.clone()),
+        Kind::Message {
+            body: "@orchestrator The merge gate stopped this branch from landing.".into(),
+        },
+    )
+    .with_answers(assignment);
+
+    // 2. cli-agy answers the handback
+    let reply = Event::new(
+        Actor::Quark(agy.clone()),
+        None,
+        Kind::Message { body: "fixed".into() },
+    )
+    .with_answers(assignment);
+
+    // 3. Subsequent merge attempt issues an audit PermissionGrant and fails with Blocked (unstamped)
+    let grant = Event::new(
+        Actor::Gluon,
+        Some(agy.clone()),
+        Kind::PermissionGrant { approved: true, remember: false },
+    );
+    let blocked = Event::new(
+        Actor::Quark(agy.clone()),
+        None,
+        Kind::Status { state: QuarkState::Blocked },
+    );
+
+    let events = vec![handback, reply, grant, blocked];
+    assert!(
+        is_request_answered(&events[1..], &events[0], &agy),
+        "handback answered by `reply` must remain answered even when a later unstamped `Blocked` status follows"
+    );
+    assert_eq!(next_pending(&events), None);
+}
+
 
 

@@ -12,6 +12,7 @@ fn skill_with_tools(tools: &[&str]) -> ResolvedSkill {
         body: String::new(),
         description: None,
         tools: tools.iter().map(|t| t.to_string()).collect(),
+        min_mode: hadron_lattice::Mode::Ask,
     }
 }
 
@@ -488,6 +489,7 @@ fn index_snapshot_pins_the_exact_line_format() {
             body: "alpha body".to_string(),
             description: Some("does alpha things".to_string()),
             tools: vec![],
+            min_mode: hadron_lattice::Mode::Ask,
         },
         ResolvedSkill {
             id: "beta".to_string(),
@@ -495,6 +497,7 @@ fn index_snapshot_pins_the_exact_line_format() {
             body: "beta body".to_string(),
             description: None,
             tools: vec![],
+            min_mode: hadron_lattice::Mode::Ask,
         },
     ];
 
@@ -509,6 +512,7 @@ fn render_snapshot_pins_the_exact_wrapper_text() {
         id: "alpha".to_string(),
         body: "  alpha procedure body  \n".to_string(),
         trigger: "do alpha".to_string(),
+        min_mode: hadron_lattice::Mode::Ask,
     };
     let out = render(&m, &QuarkId::new("opus"), &Handoff::default(), true);
 
@@ -683,28 +687,59 @@ fn parse_list_value_accepts_bracketed_and_bare_forms() {
 }
 
 #[test]
-fn skills_map_to_their_preferred_role() {
-    assert_eq!(preferred_role("writing-plans"), Some("architect"));
-    assert_eq!(preferred_role("brainstorming"), Some("architect"));
-    assert_eq!(preferred_role("architecture-audit"), Some("architect"));
-    assert_eq!(preferred_role("api-design"), Some("architect"));
-    assert_eq!(preferred_role("requesting-code-review"), Some("reviewer"));
-    assert_eq!(preferred_role("reviewing-work"), Some("reviewer"));
-    assert_eq!(preferred_role("security-review"), Some("reviewer"));
-    assert_eq!(preferred_role("executing-plans"), Some("executor"));
-    assert_eq!(preferred_role("subagent-driven-development"), Some("executor"));
-    assert_eq!(preferred_role("code-simplification"), Some("executor"));
-    assert_eq!(preferred_role("chaos-testing"), Some("qa"));
-    assert_eq!(preferred_role("test-driven-development"), Some("qa"));
-    assert_eq!(preferred_role("performance-audit"), Some("optimizer"));
-    assert_eq!(preferred_role("incident-investigation"), Some("triage"));
-    assert_eq!(preferred_role("systematic-debugging"), Some("triage"));
-    assert_eq!(preferred_role("memory-curation"), Some("scribe"));
-    assert_eq!(preferred_role("debate"), Some("architect"));
-    assert_eq!(preferred_role("migration-deprecation"), Some("executor"));
-    assert_eq!(preferred_role("benchmarking"), Some("optimizer"));
-    assert_eq!(preferred_role("doc-drift-audit"), Some("scribe"));
-    assert_eq!(preferred_role("release"), None);
+fn skills_pair_with_expected_min_mode_and_select_for_target_isolates_segments() {
+    use hadron_lattice::{EnergyState, Flavor, Mode, QuarkCard};
+
+    let builtins = builtins();
+    let mode_of = |id: &str| builtins.iter().find(|s| s.id == id).unwrap().min_mode;
+    assert_eq!(mode_of("brainstorming"), Mode::Ask);
+    assert_eq!(mode_of("reviewing-work"), Mode::Ask);
+    assert_eq!(mode_of("security-review"), Mode::Ask);
+    assert_eq!(mode_of("writing-plans"), Mode::Write);
+    assert_eq!(mode_of("executing-plans"), Mode::Write);
+    assert_eq!(mode_of("test-driven-development"), Mode::Write);
+    assert_eq!(mode_of("release"), Mode::Auto);
+    assert_eq!(mode_of("chaos-testing"), Mode::Auto);
+    assert_eq!(mode_of("benchmarking"), Mode::Auto);
+
+    let custom_raw = "---\nname: auto-custom\ndescription: needs auto\nmin_mode: auto\n---\n\nBODY.\n";
+    let custom = parse_skill_file(custom_raw).expect("parsed");
+    assert_eq!(custom.min_mode, Mode::Auto);
+
+    let roster = vec![
+        QuarkCard {
+            id: QuarkId::new("opus"),
+            display_name: Some("Claude".into()),
+            flavor: Flavor::Orchestrator,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            commands: Default::default(),
+            energy_limit: None,
+            deny_skills: vec![],
+            has_forge_tools: false,
+        },
+        QuarkCard {
+            id: QuarkId::new("agy"),
+            display_name: Some("Antigravity".into()),
+            flavor: Flavor::Worker,
+            energy: EnergyState::Available,
+            provider: String::new(),
+            model: String::new(),
+            commands: Default::default(),
+            energy_limit: None,
+            deny_skills: vec![],
+            has_forge_tools: false,
+        },
+    ];
+
+    let prompt = "@Claude write a plan for auth\n@Antigravity conduct a security review of auth";
+    let m_opus = select_for_target(prompt, &QuarkId::new("opus"), &roster, &builtins).unwrap();
+    let m_agy = select_for_target(prompt, &QuarkId::new("agy"), &roster, &builtins).unwrap();
+    assert_eq!(m_opus.id, "writing-plans");
+    assert_eq!(m_opus.min_mode, Mode::Write);
+    assert_eq!(m_agy.id, "security-review");
+    assert_eq!(m_agy.min_mode, Mode::Ask);
 }
 
 #[test]

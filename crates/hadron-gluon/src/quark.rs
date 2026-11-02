@@ -31,6 +31,11 @@ impl CancelSlot {
         *self.0.lock().unwrap() = f;
     }
 
+    /// Whether this slot currently holds a live cancel handle.
+    pub fn is_filled(&self) -> bool {
+        self.0.lock().unwrap().is_some()
+    }
+
     /// Ask whatever currently occupies the slot to cancel gracefully. `false`
     /// with no effect when the slot is empty — nothing booted, or (every CLI
     /// seat) a transport that never fills it, by construction: `Quark`'s
@@ -58,21 +63,6 @@ pub trait Quark: Send {
     fn display_name(&self) -> Option<String> {
         None
     }
-    /// The roles this quark plays for `@role` routing (e.g. `"security"`,
-    /// `"architect"`). Carried on the quark for the same reason `display_name` is:
-    /// the engine's roster card is always built with the right roles — including
-    /// after a re-seat — rather than relying on a daemon-side population step that
-    /// does not exist. Resolved from the seat; the adapter merely holds it.
-    /// Defaults to empty — most quarks play no particular role.
-    fn roles(&self) -> Vec<String> {
-        Vec::new()
-    }
-    /// Whether this quark is scoped ONLY to tasks that name one of its `roles`.
-    /// Carried the same way `roles` is. Defaults to `false` — most quarks stay in
-    /// general dispatch.
-    fn exclusive(&self) -> bool {
-        false
-    }
     /// Skill names this quark must NEVER be handed (hard lock). Matched against
     /// `skills::select`'s chosen name.
     fn deny_skills(&self) -> Vec<String> {
@@ -80,8 +70,7 @@ pub trait Quark: Send {
     }
     /// This quark's per-seat command allow/deny lists (see
     /// `hadron_lattice::SeatCommands`), folded into the gatekeeper's
-    /// `AllowRules`/`DenyRules` under No-Human-Mode. Carried the same way
-    /// `roles`/`exclusive` are. Defaults to empty — no config allow/deny.
+    /// `AllowRules`/`DenyRules` under No-Human-Mode. Defaults to empty — no config allow/deny.
     fn commands(&self) -> &hadron_lattice::SeatCommands {
         static EMPTY: hadron_lattice::SeatCommands =
             hadron_lattice::SeatCommands { allowed: Vec::new(), not_allowed: Vec::new() };

@@ -29,6 +29,8 @@
 
 use std::path::Path;
 
+use hadron_lattice::Mode;
+
 mod parse;
 mod select;
 pub mod review_board;
@@ -38,7 +40,7 @@ mod tests;
 
 pub use review_board::*;
 pub use grill_me::*;
-pub use select::{description, index, plan_author, plan_ref, research_ref, render, select, preferred_role, Handoff, Match};
+pub use select::{description, index, plan_author, plan_ref, research_ref, render, select, select_for_target, Handoff, Match};
 // `pub`, not `pub(crate)`: `/add-skill` (hadron-chamber) needs to inspect a
 // candidate skill's front-matter (the `tools:` warning, spec §10) before writing
 // it, and re-implementing this parser there would be a second definition of the
@@ -58,6 +60,8 @@ pub struct Skill {
     pub triggers: &'static [&'static str],
     /// The procedure itself, as handed to the model.
     pub body: &'static str,
+    /// Minimum permission mode required to execute this skill.
+    pub min_mode: Mode,
 }
 
 /// Every skill the engine can inject. Adding a file to `invariants/skills/` does
@@ -87,6 +91,7 @@ pub const SKILLS: &[Skill] = &[
             "plan for",
         ],
         body: include_str!("../invariants/skills/writing-plans.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "executing-plans",
@@ -107,6 +112,7 @@ pub const SKILLS: &[Skill] = &[
             "docs/plans/",
         ],
         body: include_str!("../invariants/skills/executing-plans.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "reviewing-work",
@@ -132,71 +138,85 @@ pub const SKILLS: &[Skill] = &[
             "double-check the work",
         ],
         body: include_str!("../invariants/skills/reviewing-work.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "brainstorming",
         triggers: &["brainstorm", "explore ideas", "think about", "design feature", "design the feature"],
         body: include_str!("../invariants/skills/brainstorming.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "dispatching-parallel-agents",
         triggers: &["dispatch agents", "parallel tasks", "run in parallel", "do these in parallel"],
         body: include_str!("../invariants/skills/dispatching-parallel-agents.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "finishing-a-development-branch",
         triggers: &["finish the branch", "ready to merge", "create pr", "cleanup branch", "wrap up the branch"],
         body: include_str!("../invariants/skills/finishing-a-development-branch.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "receiving-code-review",
         triggers: &["received code review", "review feedback", "address comments", "fix the review comments"],
         body: include_str!("../invariants/skills/receiving-code-review.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "requesting-code-review",
         triggers: &["request review", "ready for review", "please review", "needs review"],
         body: include_str!("../invariants/skills/requesting-code-review.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "subagent-driven-development",
         triggers: &["use subagents", "dispatch subagents", "subagent driven"],
         body: include_str!("../invariants/skills/subagent-driven-development.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "systematic-debugging",
         triggers: &["debug", "fix bug", "test failure", "investigate error", "why does it fail", "systematic debugging"],
         body: include_str!("../invariants/skills/systematic-debugging.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "test-driven-development",
         triggers: &["tdd", "write tests first", "test driven"],
         body: include_str!("../invariants/skills/test-driven-development.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "using-git-worktrees",
         triggers: &["use worktree", "create worktree", "isolated workspace", "git worktree"],
         body: include_str!("../invariants/skills/using-git-worktrees.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "using-superpowers",
         triggers: &["use superpowers", "what are your superpowers"],
         body: include_str!("../invariants/skills/using-superpowers.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "verification-before-completion",
         triggers: &["verify completion", "check before done", "verify before", "double check completion"],
         body: include_str!("../invariants/skills/verification-before-completion.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "writing-skills",
         triggers: &["write a skill", "create skill", "edit skill", "create a skill", "new skill"],
         body: include_str!("../invariants/skills/writing-skills.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "release",
         triggers: &["release", "project release", "execute release", "run release", "make release"],
         body: include_str!("../invariants/skills/release.md"),
+        min_mode: Mode::Auto,
     },
     Skill {
         id: "absorb",
@@ -213,6 +233,7 @@ pub const SKILLS: &[Skill] = &[
             "absorb assistant",
         ],
         body: include_str!("../invariants/skills/absorb.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "security-review",
@@ -228,6 +249,7 @@ pub const SKILLS: &[Skill] = &[
             "review security",
         ],
         body: include_str!("../invariants/skills/security-review.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "architecture-audit",
@@ -241,6 +263,7 @@ pub const SKILLS: &[Skill] = &[
             "ssot audit",
         ],
         body: include_str!("../invariants/skills/architecture-audit.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "chaos-testing",
@@ -255,6 +278,7 @@ pub const SKILLS: &[Skill] = &[
             "failure injection",
         ],
         body: include_str!("../invariants/skills/chaos-testing.md"),
+        min_mode: Mode::Auto,
     },
     Skill {
         id: "performance-audit",
@@ -270,6 +294,7 @@ pub const SKILLS: &[Skill] = &[
             "hot path",
         ],
         body: include_str!("../invariants/skills/performance-audit.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "code-simplification",
@@ -283,6 +308,7 @@ pub const SKILLS: &[Skill] = &[
             "dead code pruning",
         ],
         body: include_str!("../invariants/skills/code-simplification.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "api-design",
@@ -296,6 +322,7 @@ pub const SKILLS: &[Skill] = &[
             "protocol schema",
         ],
         body: include_str!("../invariants/skills/api-design.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "incident-investigation",
@@ -309,6 +336,7 @@ pub const SKILLS: &[Skill] = &[
             "postmortem investigation",
         ],
         body: include_str!("../invariants/skills/incident-investigation.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "memory-curation",
@@ -322,6 +350,7 @@ pub const SKILLS: &[Skill] = &[
             "prune memory index",
         ],
         body: include_str!("../invariants/skills/memory-curation.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "debate",
@@ -334,6 +363,7 @@ pub const SKILLS: &[Skill] = &[
             "dialectic analysis",
         ],
         body: include_str!("../invariants/skills/debate.md"),
+        min_mode: Mode::Ask,
     },
     Skill {
         id: "migration-deprecation",
@@ -346,6 +376,7 @@ pub const SKILLS: &[Skill] = &[
             "deprecation",
         ],
         body: include_str!("../invariants/skills/migration-deprecation.md"),
+        min_mode: Mode::Write,
     },
     Skill {
         id: "benchmarking",
@@ -358,6 +389,7 @@ pub const SKILLS: &[Skill] = &[
             "latency benchmark",
         ],
         body: include_str!("../invariants/skills/benchmarking.md"),
+        min_mode: Mode::Auto,
     },
     Skill {
         id: "doc-drift-audit",
@@ -370,6 +402,7 @@ pub const SKILLS: &[Skill] = &[
             "features audit",
         ],
         body: include_str!("../invariants/skills/doc-drift-audit.md"),
+        min_mode: Mode::Ask,
     },
 ];
 
@@ -416,6 +449,8 @@ pub struct ResolvedSkill {
     /// (spec §3.2). Not enforced yet; carried here so a later task can read it.
     /// Always empty for built-ins.
     pub tools: Vec<String>,
+    /// Minimum permission mode required to execute this skill.
+    pub min_mode: Mode,
 }
 
 /// The compiled-in [`SKILLS`], mapped into owned [`ResolvedSkill`]s. The starting
@@ -429,6 +464,7 @@ pub fn builtins() -> Vec<ResolvedSkill> {
             body: s.body.to_string(),
             description: description(s.body).map(str::to_string),
             tools: Vec::new(),
+            min_mode: s.min_mode,
         })
         .collect()
 }

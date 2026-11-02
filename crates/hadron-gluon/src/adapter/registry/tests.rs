@@ -139,8 +139,6 @@ fn build_wires_the_right_adapter() {
         effort: None,
         mode_config: None,
         display_name: None,
-        roles: Vec::new(),
-        exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv::default(),
         energy_limit: None,
@@ -160,8 +158,6 @@ fn build_wires_the_right_adapter() {
         effort: None,
         mode_config: None,
         display_name: None,
-        roles: Vec::new(),
-        exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv::default(),
         energy_limit: None,
@@ -184,8 +180,6 @@ fn build_rejects_reserved_id() {
         effort: None,
         mode_config: None,
         display_name: None,
-        roles: Vec::new(),
-        exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv::default(),
         energy_limit: None,
@@ -390,40 +384,6 @@ fn catalogue_is_keyed_on_pure_vendor() {
     assert!(AcpTarget::for_vendor("acp-claude").is_none(), "the old smeared key is gone");
 }
 
-/// Role routing's build-time seam: a seat's `roles`/`exclusive` must reach the
-/// quark `build_seat` constructs, the same way `display_name` already does — not
-/// via a daemon-side population step that does not exist.
-#[test]
-fn build_seat_carries_the_seats_roles_onto_the_quark() {
-    let mut s = seat("security-quark", "agy");
-    s.roles = vec!["security".to_string()];
-    s.exclusive = true;
-
-    let q = build_seat(&s, &store()).unwrap();
-    assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the built quark");
-    assert!(q.exclusive(), "exclusive never reached the built quark");
-}
-
-/// The site the brief flagged as easiest to miss: `build_seat_watched`'s ACP
-/// fast-path constructs `AcpQuark` directly, bypassing `build()` entirely — so
-/// `build_seat`'s coverage above proves nothing about it. This is also the
-/// daemon's REAL production path for a resident quark (`seat_quarks`/
-/// `apply_reseat` call `build_seat_watched`), so an untested gap here would mean
-/// the live `@Claude` seat's roles never actually reach its roster card.
-/// Building spawns nothing (see `building_an_acp_seat_spawns_no_process`), so
-/// this is free and INERT.
-#[test]
-fn build_seat_watched_carries_roles_onto_an_acp_quark() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut s = acp_seat("acp-sec", "claude");
-    s.roles = vec!["security".to_string()];
-    s.exclusive = true;
-
-    let q = build_seat_watched(&s, dir.path(), &store()).unwrap();
-    assert_eq!(q.roles(), vec!["security".to_string()], "roles never reached the ACP quark");
-    assert!(q.exclusive(), "exclusive never reached the ACP quark");
-}
-
 /// **The CLI half of `build_seat_watched`'s new branch, end to end.** A CLI seat
 /// whose `cli.stream` is `Some` must come back `.watching()`-wired: a real turn
 /// (a plain `sh` subprocess standing in for a streaming CLI — cheap, no network,
@@ -475,7 +435,6 @@ async fn build_seat_watched_wires_a_streaming_cli_seat_and_leaves_a_plain_one_al
         git_diff: String::new(),
         cwd: std::env::temp_dir(),
         mode: hadron_lattice::Mode::default(),
-        role_body: None,
         active_skill: None,
         named_specifically: true,
         has_forge_tools: false,
@@ -577,7 +536,6 @@ fn http_turn() -> hadron_lattice::Projection {
         git_diff: String::new(),
         cwd: std::env::temp_dir(),
         mode: hadron_lattice::Mode::default(),
-        role_body: None,
         active_skill: None,
         named_specifically: true,
         has_forge_tools: false,
@@ -585,8 +543,7 @@ fn http_turn() -> hadron_lattice::Projection {
 }
 
 /// The command allow/deny carry path's build-time seam: a seat's `commands`
-/// must reach the quark `build_seat` constructs, the same way `roles`/
-/// `exclusive` already do (see `build_seat_carries_the_seats_roles_onto_the_quark`).
+/// must reach the quark `build_seat` constructs.
 #[test]
 fn built_quark_exposes_its_seat_commands() {
     let mut s = seat("cmd-quark", "agy");
@@ -615,8 +572,6 @@ fn resolved_env_is_not_in_debug_output() {
         effort: None,
         mode_config: None,
         display_name: None,
-        roles: Vec::new(),
-        exclusive: false,
         commands: SeatCommands::default(),
         env: RedactedEnv(vec![("GEMINI_API_KEY".to_string(), secret_value.to_string())]),
         energy_limit: None,

@@ -697,9 +697,6 @@ pub struct QuarkSpec {
     pub display_name: Option<String>,
     /// This seat's `@role` roles (see [`Quark::roles`]). Resolved from the team
     /// config; empty means the seat plays no particular role.
-    pub roles: Vec<String>,
-    /// Whether this seat is scoped only to its roles (see [`Quark::exclusive`]).
-    pub exclusive: bool,
     /// This seat's per-seat command allow/deny lists (see [`Quark::commands`]).
     /// Resolved from the team config; empty means no config allow/deny.
     pub commands: SeatCommands,
@@ -805,8 +802,6 @@ pub fn build(spec: QuarkSpec) -> anyhow::Result<Box<dyn Quark>> {
 fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow::Result<Box<dyn Quark>> {
     validate_quark_id(&spec.id)?;
     let name = spec.display_name.clone();
-    let roles = spec.roles.clone();
-    let exclusive = spec.exclusive;
     let commands = spec.commands.clone();
     let env = spec.env.clone();
     let energy_limit = spec.energy_limit;
@@ -819,7 +814,6 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
                 .with_effort(spec.effort)
                 .with_sandbox(sandbox)
                 .with_display_name(name)
-                .with_roles(roles, exclusive)
                 .with_commands(commands)
                 .with_env(env)
                 .with_energy_limit(energy_limit)
@@ -834,7 +828,6 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
                 AcpQuark::new(spec.id, spec.flavor, spec.model, spec.effort, spec.mode_config, target)
                     .with_sandbox(sandbox)
                     .with_display_name(name)
-                    .with_roles(roles, exclusive)
                     .with_commands(commands)
                     .with_env(env)
                     .with_energy_limit(energy_limit)
@@ -848,7 +841,6 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
         QuarkKind::Http(target) => {
             let mut q = LocalQuark::new(spec.id, spec.flavor, spec.model, attach_http_api_key(target, &env))
                 .with_display_name(name)
-                .with_roles(roles, exclusive)
                 .with_commands(commands)
                 .with_energy_limit(energy_limit)
                 .with_deny_skills(deny_skills);
@@ -895,8 +887,6 @@ fn spec_for_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) 
         effort: seat.supports_effort().then(|| seat.effort.clone()).flatten(),
         mode_config: seat.mode_config.clone(),
         display_name: seat.display_name.clone(),
-        roles: seat.roles.clone(),
-        exclusive: seat.exclusive,
         commands: seat.commands.clone(),
         env: seat.resolve_env(store).into(),
         energy_limit: seat.energy_limit,

@@ -25,7 +25,7 @@ pub use migrate::{migrate_to_catalogue, seat_override_delta, orphan_overrides, l
 pub(crate) use seat::is_false;
 
 /// Frozen schema version for `.hadron/team.json` and `~/.hadron/team.json`.
-pub const TEAM_SCHEMA_VERSION: u32 = 1;
+pub const TEAM_SCHEMA_VERSION: u32 = 2;
 
 fn default_team_schema_version() -> u32 {
     TEAM_SCHEMA_VERSION
@@ -141,10 +141,11 @@ impl Default for Team {
 }
 
 impl Team {
-    /// Parse a `team.json` payload with explicit schema versioning and v0-to-v1 migration:
-    /// - Missing `"schema_version"` or `"schema_version": 0` (legacy `v0`) is upgraded to
-    ///   [`TEAM_SCHEMA_VERSION`] (`1`) and returns `Ok((team, true))` (`migrated = true`).
-    /// - `"schema_version": 1` returns `Ok((team, false))` (`migrated = false`).
+    /// Parse a `team.json` payload with explicit schema versioning and v0/v1-to-v2 migration:
+    /// - Missing `"schema_version"`, `"schema_version": 0`, or `"schema_version": 1` (or any
+    ///   entry still carrying legacy `"roles"` / `"exclusive"` keys) is upgraded to
+    ///   [`TEAM_SCHEMA_VERSION`] (`2`) and returns `Ok((team, true))` (`migrated = true`).
+    /// - `"schema_version": 2` with no legacy keys returns `Ok((team, false))` (`migrated = false`).
     /// - `"schema_version" > TEAM_SCHEMA_VERSION` is rejected with an error so newer
     ///   incompatible files are never silently misparsed or overwritten.
     pub fn from_versioned_json(text: &str) -> std::io::Result<(Self, bool)> {
@@ -153,6 +154,16 @@ impl Team {
         let obj = value
             .as_object()
             .ok_or_else(|| std::io::Error::other("team.json root must be an object"))?;
+        let has_legacy_role_keys = ["quarks", "roster"].iter().any(|arr_key| {
+            obj.get(*arr_key)
+                .and_then(|v| v.as_array())
+                .is_some_and(|arr| {
+                    arr.iter().any(|item| {
+                        item.as_object()
+                            .is_some_and(|m| m.contains_key("roles") || m.contains_key("exclusive"))
+                    })
+                })
+        });
         let migrated = match obj.get("schema_version") {
             None | Some(serde_json::Value::Null) => true,
             Some(v) => {
@@ -162,14 +173,14 @@ impl Team {
                     .ok_or_else(|| {
                         std::io::Error::other("team.json schema_version must be a non-negative integer")
                     })?;
-                if ver == 0 {
+                if ver < TEAM_SCHEMA_VERSION {
                     true
                 } else if ver > TEAM_SCHEMA_VERSION {
                     return Err(std::io::Error::other(format!(
                         "unsupported team.json schema_version {ver} (max supported is {TEAM_SCHEMA_VERSION})"
                     )));
                 } else {
-                    false
+                    has_legacy_role_keys
                 }
             }
         };
@@ -317,12 +328,6 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         }
         if let Some(display_name) = ov.display_name.clone() {
             seat.display_name = display_name;
-        }
-        if let Some(roles) = ov.roles.clone() {
-            seat.roles = roles;
-        }
-        if let Some(exclusive) = ov.exclusive {
-            seat.exclusive = exclusive;
         }
         if let Some(commands) = ov.commands.clone() {
             seat.commands = commands;

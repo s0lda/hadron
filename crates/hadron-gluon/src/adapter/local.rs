@@ -615,8 +615,6 @@ pub struct LocalQuark {
     display_name: Option<String>,
     model: String,
     target: HttpTarget,
-    roles: Vec<String>,
-    exclusive: bool,
     commands: SeatCommands,
     energy_limit: Option<u32>,
     deny_skills: Vec<String>,
@@ -637,8 +635,6 @@ impl LocalQuark {
             display_name: None,
             model: model.into(),
             target,
-            roles: Vec::new(),
-            exclusive: false,
             commands: SeatCommands::default(),
             energy_limit: None,
             deny_skills: Vec::new(),
@@ -660,12 +656,6 @@ impl LocalQuark {
 
     pub fn with_display_name(mut self, name: Option<String>) -> Self {
         self.display_name = name;
-        self
-    }
-
-    pub fn with_roles(mut self, roles: Vec<String>, exclusive: bool) -> Self {
-        self.roles = roles;
-        self.exclusive = exclusive;
         self
     }
 
@@ -695,12 +685,6 @@ impl Quark for LocalQuark {
     }
     fn display_name(&self) -> Option<String> {
         self.display_name.clone()
-    }
-    fn roles(&self) -> Vec<String> {
-        self.roles.clone()
-    }
-    fn exclusive(&self) -> bool {
-        self.exclusive
     }
     fn deny_skills(&self) -> Vec<String> {
         self.deny_skills.clone()
@@ -1428,7 +1412,6 @@ mod tests {
             git_diff: String::new(),
             cwd,
             mode: hadron_lattice::Mode::Bypass,
-            role_body: None,
             active_skill: None,
             named_specifically: true,
             has_forge_tools: false,

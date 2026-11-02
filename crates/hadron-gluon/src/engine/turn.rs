@@ -34,7 +34,7 @@ impl super::Engine {
         severity: hadron_lattice::Severity,
     ) -> anyhow::Result<()> {
         let quoted_why = super::quote_paths(why);
-        let msg = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator) && !why.starts_with('@') {
+        let msg = if self.roster.iter().any(|c| c.flavor == Flavor::Orchestrator && &c.id != target) && !why.starts_with('@') {
             format!("@{} {quoted_why}", crate::router::ORCHESTRATOR_ALIAS)
         } else {
             quoted_why
@@ -52,15 +52,24 @@ impl super::Engine {
     /// so the two can never disagree about what "blocked" writes to the field.
     pub(super) async fn park_blocked(&self, target: &QuarkId) -> anyhow::Result<()> {
         let events = read_events(&self.field_path).unwrap_or_default();
-        let last_status = events.iter().rev().find_map(|e| {
+        let already_blocked_and_settled = events.iter().rev().find_map(|e| {
             if e.from == Actor::Quark(target.clone()) {
                 if let Kind::Status { state } = &e.kind {
-                    return Some(*state);
+                    return Some(*state == QuarkState::Blocked);
                 }
+            }
+            if e.to.as_ref() == Some(target) && crate::router::is_turn_request(e) {
+                return Some(false);
+            }
+            if matches!(&e.kind, Kind::Message { .. })
+                && e.from != Actor::Quark(target.clone())
+                && e.from != Actor::Gluon
+            {
+                return Some(false);
             }
             None
         });
-        if last_status == Some(QuarkState::Blocked) {
+        if already_blocked_and_settled == Some(true) {
             return Ok(());
         }
         self.append(Event::new(

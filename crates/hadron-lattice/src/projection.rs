@@ -103,18 +103,14 @@ pub struct Projection {
     /// most restrictive rung.
     #[serde(default)]
     pub mode: Mode,
-    /// Matched role body if this turn matched a role (spec §3.3).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role_body: Option<String>,
     /// Matched skill body and handoff text if this turn matched a skill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_skill: Option<String>,
-    /// Whether the driving task names THIS quark specifically — by `@id`,
     /// Whether the target quark of this projection has Hadron Forge MCP tools attached.
     #[serde(default)]
     pub has_forge_tools: bool,
-    /// Whether the driving task names THIS quark specifically — by `@id`,
-    /// display name, or role (`router::task_names_card_specifically`, which
+    /// Whether the driving task names THIS quark specifically — by `@id` or
+    /// display name (`router::task_names_card_specifically`, which
     /// deliberately does not count a `@team` broadcast). A worker reached only
     /// by broadcast was handed the identical "go implement this" prompt as one
     /// explicitly assigned, so a `@team` brainstorm read as a work order and
@@ -186,8 +182,6 @@ mod tests {
                 energy: EnergyState::Available,
                 provider: String::new(),
                 model: String::new(),
-                roles: vec![],
-                exclusive: false,
                 commands: crate::team::SeatCommands::default(),
                 energy_limit: None,
                 deny_skills: vec![],
@@ -209,7 +203,6 @@ mod tests {
             isolated: true,
             cwd: std::path::PathBuf::from("/tmp/wt"),
             mode: Mode::Bypass,
-            role_body: None,
             active_skill: None,
             named_specifically: true,
             has_forge_tools: false,

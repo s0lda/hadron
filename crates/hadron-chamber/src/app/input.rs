@@ -560,16 +560,62 @@ pub(super) fn split_leading_commands_with_skills(
                         Some(mention) => format!("{mention} {first}"),
                         None => first.to_string(),
                     };
-                    let arg = if i + 1 < lines.len() {
+                    let mut body_end = lines.len();
+                    if cmd_name != "add-skill" {
+                        let mut scan_fence = false;
+                        for (idx, next_line) in lines.iter().enumerate().skip(i + 1) {
+                            if fenced && next_line.trim_start().starts_with("```") {
+                                scan_fence = !scan_fence;
+                                continue;
+                            }
+                            if scan_fence {
+                                continue;
+                            }
+                            let next_head = next_line.trim_start();
+                            let next_check = if next_head.starts_with('@') {
+                                if let Some(sp) = next_head.find(char::is_whitespace) {
+                                    if sp + 1 < next_head.len()
+                                        && next_head[sp..].trim_start().starts_with('/')
+                                    {
+                                        next_head[sp..].trim_start()
+                                    } else {
+                                        next_head
+                                    }
+                                } else {
+                                    next_head
+                                }
+                            } else {
+                                next_head
+                            };
+                            let next_tok_end = next_check
+                                .find(char::is_whitespace)
+                                .unwrap_or(next_check.len());
+                            let next_raw = next_check[..next_tok_end]
+                                .strip_prefix('/')
+                                .filter(|c| !c.is_empty());
+                            if next_raw
+                                .and_then(|name| crate::text::command_with_skills(name, custom_skills))
+                                .is_some()
+                            {
+                                body_end = idx;
+                                break;
+                            }
+                        }
+                    }
+                    let arg = if i + 1 < body_end {
                         if first_arg.is_empty() {
-                            lines[i + 1..].join("\n")
+                            lines[i + 1..body_end].join("\n")
                         } else {
-                            format!("{first_arg}\n{}", lines[i + 1..].join("\n"))
+                            format!("{first_arg}\n{}", lines[i + 1..body_end].join("\n"))
                         }
                     } else {
                         first_arg
                     };
                     cmds.push((cmd_name.to_string(), arg));
+                    if body_end < lines.len() {
+                        i = body_end;
+                        continue 'lines;
+                    }
                     break 'lines;
                 }
             }
@@ -1233,6 +1279,26 @@ mod tests {
         let (cmds_int, body_int) = split_leading_commands_in("/intercom @Agy", None);
         assert_eq!(cmds_int, vec![("intercom".to_string(), "@Agy".to_string())]);
         assert_eq!(body_int, None);
+    }
+
+    #[test]
+    fn split_leading_commands_splits_multi_quark_body_skill_invocations() {
+        let raw = "@A /writing-plans task one\nmore details for A\n@B /executing-plans task two\ndetails for B";
+        let (cmds, body) = split_leading_commands(raw);
+        assert_eq!(body, None);
+        assert_eq!(
+            cmds,
+            vec![
+                (
+                    "writing-plans".to_string(),
+                    "@A task one\nmore details for A".to_string()
+                ),
+                (
+                    "executing-plans".to_string(),
+                    "@B task two\ndetails for B".to_string()
+                ),
+            ]
+        );
     }
 }
 

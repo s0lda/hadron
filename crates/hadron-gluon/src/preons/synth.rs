@@ -38,7 +38,7 @@ pub fn synthesize_ephemeral_preon(role: &str, task: &str) -> Preon {
 
     Preon {
         name: role.to_string(),
-        preferred_role: Some(role.to_string()),
+        description: Some(role.to_string()),
         body,
     }
 }
@@ -51,7 +51,7 @@ mod tests {
     fn synthesizes_ephemeral_preon_with_targeted_rules() {
         let preon = synthesize_ephemeral_preon("VulkanDebugger", "Trace lavapipe pipeline barrier failure");
         assert_eq!(preon.name, "VulkanDebugger");
-        assert_eq!(preon.preferred_role.as_deref(), Some("VulkanDebugger"));
+        assert_eq!(preon.description.as_deref(), Some("VulkanDebugger"));
         assert!(preon.body.contains("Vulkan"));
         assert!(preon.body.contains("Lavapipe"));
     }

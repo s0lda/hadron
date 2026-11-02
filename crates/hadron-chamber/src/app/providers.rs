@@ -106,8 +106,6 @@ pub(super) fn cli_seat_from(
         enabled: true,
         effort: None,
         mode_config: None,
-        roles: vec![],
-        exclusive: false,
         commands: hadron_lattice::SeatCommands::default(),
         secret_env: Vec::new(),
         energy_limit: None,

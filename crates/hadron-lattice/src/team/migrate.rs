@@ -59,8 +59,6 @@ pub fn seat_override_delta(
         mode_config: (desired.mode_config != def.mode_config).then(|| desired.mode_config.clone()),
         display_name: (desired.display_name != def.display_name)
             .then(|| desired.display_name.clone()),
-        roles: (desired.roles != def.roles).then(|| desired.roles.clone()),
-        exclusive: (desired.exclusive != def.exclusive).then_some(desired.exclusive),
         deny_skills: (desired.deny_skills != def.deny_skills).then(|| desired.deny_skills.clone()),
         model_params: (desired.model_params != def.model_params).then(|| desired.model_params.clone()),
         ..SeatOverride::role(id)

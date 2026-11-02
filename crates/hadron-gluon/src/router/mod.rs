@@ -1,4 +1,4 @@
-use hadron_lattice::{Actor, EnergyState, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
+use hadron_lattice::{Actor, Event, Flavor, Kind, QuarkCard, QuarkId, QuarkState};
 
 use crate::preons::Preon;
 
@@ -54,9 +54,29 @@ pub fn request_completion<'a>(
             _ => false,
         }
     };
+    let is_unstamped_before_next_request = |idx: usize, c: &Event| -> bool {
+        c.answers.is_none()
+            && matches!(
+                c.kind,
+                Kind::Status {
+                    state: QuarkState::Ground
+                        | QuarkState::Blocked
+                        | QuarkState::Error
+                        | QuarkState::Waiting
+                }
+            )
+            && !events_after[..idx]
+                .iter()
+                .any(|r| r.to.as_ref() == Some(target) && is_turn_request(r))
+    };
     if let Some(direct) = events_after
         .iter()
-        .find(|c| is_turn_completion(c, target) && is_direct_match(c))
+        .enumerate()
+        .find(|(idx, c)| {
+            is_turn_completion(c, target)
+                && (is_direct_match(c) || is_unstamped_before_next_request(*idx, c))
+        })
+        .map(|(_, c)| c)
     {
         return Some(direct);
     }
@@ -219,49 +239,16 @@ fn boundary_match(text: &str, target_name: &str) -> bool {
     !matches!(next_char, Some(c) if c.is_alphanumeric() || c == '-' || c == '_')
 }
 
-/// First enabled (non-depleted) card in roster order carrying `role` (case-
-/// insensitive) — "enabled" here meaning the same *selection* filter the role
-/// pass below applies (a depleted seat is skipped), not the id/alias path's
-/// "resolve even a disabled seat" rule.
-///
-/// This is the preon pass's counterpart to the role pass's fused text-match
-/// loop below, not a literal extraction of it: the role pass matches TEXT
-/// against roster role strings it doesn't know in advance (so it fuses the
-/// match into `try_match`'s longest-wins scan); the preon pass already has
-/// the exact `preferred_role` string in hand from a preon that matched by
-/// name, so it needs only a direct roster-order lookup. Both agree on roster-
-/// order-wins-ties and skip-depleted, so a role resolved by `@role` and by
-/// `@preon-name` never disagree about which seat holds it — but the role
-/// pass itself is deliberately left untouched: threading every card/role pair
-/// through this instead risks shifting the existing equal-length tie order.
-pub(crate) fn card_for_role<'a>(roster: &'a [QuarkCard], role: &str) -> Option<&'a QuarkCard> {
-    roster.iter().find(|card| {
-        card.energy != EnergyState::Depleted
-            && card.roles.iter().any(|r| !r.is_empty() && r.eq_ignore_ascii_case(role))
-    })
-}
-
 /// Tries to find the longest target that matches the START of `text` (case-insensitively).
 /// To prevent partial word matches (e.g. `@Google` matching `@GoogleBot`),
 /// the character immediately following the match in `text` must NOT be a valid
 /// intra-word mention character (alphanumeric, '-', '_'). Note that spaces ARE
 /// allowed inside display names, but a matched name's boundary still applies.
-///
-/// `preons` adds a fourth, LOWEST-precedence pass (after id/alias/role): a
-/// token matching a preon's `name` resolves as if it were that preon's
-/// `preferred_role` — i.e. via [`card_for_role`]. A preon with no
-/// `preferred_role`, or whose role holds no seat, simply never matches here —
-/// no panic, no error, the same soft fall-through an unmatched `@role` gets.
 fn match_longest_mention<'a>(
     text: &str,
     roster: &'a [QuarkCard],
-    preons: &[Preon],
+    _preons: &[Preon],
 ) -> Option<(usize, ResolvedMention<'a>)> {
-    // A free function rather than a capturing closure: `best_match` is passed in
-    // explicitly so the borrow ends when each call returns, letting the id/alias
-    // pass and the role pass below run as two separate, sequential loops over
-    // `best_match` instead of one closure holding it mutably borrowed for the
-    // whole function (which would make `best_match.is_none()` unborrowable).
     fn try_match<'a>(
         text: &str,
         target_name: &str,
@@ -294,47 +281,6 @@ fn match_longest_mention<'a>(
             if !is_reserved && !collides_id {
                 try_match(text, dn.as_str(), ResolvedMention::Quark(card), &mut best_match);
             }
-        }
-    }
-
-    // Role resolution (Phase 1, soft): only attempted when NO id/alias/display-name
-    // matched at all — a separate pass, not folded into the loop above, so id/alias
-    // precedence cannot be lost to roster ordering. If it were one loop, a roster
-    // with the role-carrying card before the id-carrying card would register the
-    // role first and let it win the longest-match tie, silently inverting the
-    // "id beats role" rule the spec requires.
-    //
-    // Filtered to non-depleted cards: this is a *selection* among candidates (like
-    // the peer list at `engine.rs`'s `EnergyState::Depleted` filter), unlike an
-    // explicit `@id`/alias mention, which resolves even a depleted/disabled seat on
-    // purpose (`Engine::set_enabled`'s doc comment) so the engine can report "that
-    // quark is disabled" instead of silently answering as someone else.
-    if best_match.is_none() {
-        for card in roster {
-            if card.energy == EnergyState::Depleted {
-                continue;
-            }
-            for role in &card.roles {
-                if role.is_empty() {
-                    continue;
-                }
-                try_match(text, role.as_str(), ResolvedMention::Quark(card), &mut best_match);
-            }
-        }
-    }
-
-    // Preon resolution (Phase 2, soft): only attempted when NOTHING above
-    // matched — id, alias, AND role all keep precedence over a preon name,
-    // same "separate, later pass" reasoning the role pass's own comment gives
-    // for id/alias. A preon name resolves to whichever seat carries its
-    // `preferred_role` (`card_for_role`); a preon with no `preferred_role`,
-    // or whose role holds no seat, is simply skipped — soft fall-through, not
-    // an error.
-    if best_match.is_none() {
-        for preon in preons {
-            let Some(role) = &preon.preferred_role else { continue };
-            let Some(card) = card_for_role(roster, role) else { continue };
-            try_match(text, preon.name.as_str(), ResolvedMention::Quark(card), &mut best_match);
         }
     }
 
@@ -664,18 +610,12 @@ pub fn human_mentions(body: &str, roster: &[QuarkCard], preons: &[Preon]) -> Vec
     out
 }
 
-/// Whether `task` specifically names `card` — by its own `@id`, its `display_name`
-/// (case-insensitive), or a `@role` it carries — using the same char-boundary-safe
-/// mention scan [`human_mentions`] uses ([`boundary_match`], inherited, not
-/// re-implemented). `display_name` is checked because `match_longest_mention` (the
-/// router's OWN resolver) treats it as a full alternate handle for the card — e.g.
-/// `@Claude` routes to seat `acp-claude` via `with_display_name` — so an exclusive
-/// card the router happily dispatches by its display name must not then be rejected
-/// here for "not being addressed by role or @id"; a display name names exactly one
-/// card, so admitting it introduces no broadcast-style leak the way `@team` would.
+/// Whether `task` specifically names `card` — by its own `@id` or its `display_name`
+/// (case-insensitive) — using the same char-boundary-safe mention scan [`human_mentions`]
+/// uses ([`boundary_match`]).
 ///
 /// Mentions inside Markdown code blocks (fenced ```/~~~ or inline `...`) are ignored.
-pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preon]) -> bool {
+pub fn task_names_card_specifically(task: &str, card: &QuarkCard, _preons: &[Preon]) -> bool {
     let clean = strip_markdown_code(task);
     let mut i = 0;
     while let Some(at_idx) = clean[i..].find('@') {
@@ -687,12 +627,6 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preo
             let rest = &clean[actual_at + 1..];
             if boundary_match(rest, card.id.as_str())
                 || card.display_name.as_deref().is_some_and(|dn| boundary_match(rest, dn))
-                || card.roles.iter().any(|role| !role.is_empty() && boundary_match(rest, role))
-                || preons.iter().any(|p| {
-                    p.preferred_role.as_deref().is_some_and(|pr| {
-                        card.roles.iter().any(|role| role.eq_ignore_ascii_case(pr))
-                    }) && boundary_match(rest, p.name.as_str())
-                })
             {
                 return true;
             }
@@ -700,6 +634,106 @@ pub fn task_names_card_specifically(task: &str, card: &QuarkCard, preons: &[Preo
         i = actual_at + 1;
     }
     false
+}
+
+/// Extracts the clause(s) addressed to `target` from a multi-quark message `body`.
+///
+/// Consecutive `@mention`s separated only by whitespace, commas, `&`, `*`, or `"and"`
+/// share a single clause (e.g. `@quark1 and @quark2 /brainstorming ...`). When a
+/// subsequent `@mention` appears after task prose (e.g. `... and @quark3 /plan`),
+/// a new clause begins at that mention.
+///
+/// Returns an empty `String` if `body` addresses fewer than 2 distinct quarks (or if
+/// `target` is not specifically addressed in any clause), signalling the caller to
+/// evaluate `body` as a whole.
+pub fn extract_target_segment(body: &str, target: &QuarkId, roster: &[QuarkCard]) -> String {
+    let clean = strip_markdown_code(body);
+    let mut clauses: Vec<(usize, usize, Vec<QuarkId>)> = Vec::new();
+    let mut prev_mention_end: Option<usize> = None;
+    let mut i = 0;
+
+    while let Some(at_idx) = clean[i..].find('@') {
+        let actual_at = i + at_idx;
+        let bold_prefix = actual_at >= 2 && &clean[actual_at - 2..actual_at] == "**";
+        let valid_start = actual_at == 0
+            || clean.as_bytes()[actual_at - 1].is_ascii_whitespace()
+            || bold_prefix;
+
+        if valid_start {
+            let rest = &clean[actual_at + 1..];
+            if let Some((match_len, resolution)) = match_longest_mention(rest, roster, &[]) {
+                let mention_start = if bold_prefix { actual_at - 2 } else { actual_at };
+                let mut mention_end = actual_at + 1 + match_len;
+                if clean[mention_end..].starts_with("**") {
+                    mention_end += 2;
+                }
+
+                let targets: Vec<QuarkId> = match resolution {
+                    ResolvedMention::Team => roster.iter().map(|c| c.id.clone()).collect(),
+                    ResolvedMention::Quark(card) => vec![card.id.clone()],
+                };
+
+                let shares_previous_clause = if let Some(prev_end) = prev_mention_end {
+                    let between = &clean[prev_end..mention_start];
+                    is_mention_conjunction(between)
+                } else {
+                    false
+                };
+
+                if shares_previous_clause {
+                    if let Some((_, _, clause_targets)) = clauses.last_mut() {
+                        for t in targets {
+                            if !clause_targets.contains(&t) {
+                                clause_targets.push(t);
+                            }
+                        }
+                    }
+                } else {
+                    if let Some((_, prev_clause_end, _)) = clauses.last_mut() {
+                        *prev_clause_end = mention_start;
+                    }
+                    clauses.push((mention_start, body.len(), targets));
+                }
+
+                prev_mention_end = Some(mention_end);
+                i = mention_end;
+                continue;
+            }
+        }
+        i = actual_at + 1;
+    }
+
+    let mut distinct_quarks: Vec<QuarkId> = Vec::new();
+    for (_, _, targets) in &clauses {
+        for t in targets {
+            if !distinct_quarks.contains(t) {
+                distinct_quarks.push(t.clone());
+            }
+        }
+    }
+
+    if distinct_quarks.len() < 2 {
+        return String::new();
+    }
+
+    let target_clauses: Vec<&str> = clauses
+        .iter()
+        .filter(|(_, _, targets)| targets.contains(target))
+        .filter_map(|&(start, end, _)| body.get(start..end))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    target_clauses.join("\n")
+}
+
+fn is_mention_conjunction(between: &str) -> bool {
+    if between.contains('\n') {
+        return false;
+    }
+    let cleaned = between
+        .trim_matches(|c: char| c.is_whitespace() || c == ',' || c == '&' || c == '*' || c == '/');
+    cleaned.is_empty() || cleaned.eq_ignore_ascii_case("and") || cleaned.eq_ignore_ascii_case("or")
 }
 
 pub mod balancer;

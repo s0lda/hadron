@@ -341,7 +341,7 @@ impl super::Engine {
             // Stop *starting* work once we're aborting or out of budget — but keep
             // looping, so already-running turns are drained rather than dropped.
             if first_err.is_none() && !backstop {
-                let events = read_events(&self.field_path)?;
+                let mut events = read_events(&self.field_path)?;
 
                 // The human's force-restart, serviced on the same re-read the poll
                 // tick loops back to — so a *solo* wedged quark (nothing else pending,
@@ -423,6 +423,7 @@ impl super::Engine {
                     lane: Lane,
                     quark: SharedQuark,
                     driver: Option<Driver>,
+                    branch_assignment: Option<ulid::Ulid>,
                 }
                 let mut ready_candidates: Vec<ReadyCandidate> = Vec::new();
 
@@ -540,7 +541,9 @@ impl super::Engine {
                                 let since = dispatched_at_len.get(&key).copied().unwrap_or(0);
                                 let slot = self.cancel_slots.get(&key).cloned();
                                 if let Some(slot) = slot {
-                                    if self.message_arrived_since(&events, &target, since) {
+                                    if slot.is_filled()
+                                        && self.message_arrived_since(&events, &target, since)
+                                    {
                                         // Commit whatever this turn has written but not
                                         // yet committed BEFORE asking it to stop (Task 5
                                         // of `.hadron/docs/plans/2026-07-31-responsive-
@@ -589,6 +592,8 @@ impl super::Engine {
                                         }
                                         if slot.request_cancel() {
                                             cancel_requested.insert(key, std::time::Instant::now());
+                                        } else {
+                                            dispatched_at_len.insert(key, events.len());
                                         }
                                     }
                                 }
@@ -634,26 +639,6 @@ impl super::Engine {
                     }
 
                     if let Some(card) = self.roster.iter().find(|c| c.id == target) {
-                        // The eligibility text is `addressing`, NOT `task`: the two
-                        // differ the moment the human names a seat in one message and
-                        // types the ask in the next, and an exclusive seat must be
-                        // judged on the words that named it.
-                        if card.exclusive
-                            && !self.exclusive_task_names_target(
-                                &events,
-                                &target,
-                                fallback_task.as_ref().map(|t| t.addressing.as_str()),
-                            )
-                        {
-                            let msg = format!(
-                                "@{} is exclusive to role(s) [{}] and this task did not address it by role or @id; skipping.",
-                                target.as_str(),
-                                card.roles.join(", ")
-                            );
-                            self.reroute_blocked(&target, &msg).await?;
-                            continue;
-                        }
-
                         let human_task = fallback_task.as_ref().map(|t| t.task.as_str());
                         let task_text = self.driver_for(&events, &target, human_task)
                             .map(|d| d.task)
@@ -662,12 +647,29 @@ impl super::Engine {
                         let workspace_root = workspace_root_of(&self.field_path, &base);
                         let repo_skills_dir = workspace_root.join(".hadron").join("skills");
                         let skill_corpus = crate::skills::load_skills(self.global_skills_dir.as_deref(), Some(&repo_skills_dir));
-                        if let Some(m) = crate::skills::select(&task_text, &skill_corpus) {
+                        if let Some(m) = crate::skills::select_for_target(&task_text, &target, &self.roster, &skill_corpus) {
                             if card.deny_skills.iter().any(|d| d.eq_ignore_ascii_case(&m.id)) {
                                 let msg = format!(
-                                    "@{} locks out '{}' tasks (deny_skills); skipping.",
+                                    "@{} does not have skill '{}' enabled (deny_skills); skipping.",
                                     target.as_str(),
                                     m.id
+                                );
+                                self.reroute_blocked(&target, &msg).await?;
+                                continue;
+                            }
+                            let turn_mode = hadron_gatekeeper::effective_mode(
+                                &events,
+                                &target,
+                                self.no_human,
+                                self.is_orchestrator(&target),
+                            );
+                            if turn_mode < m.min_mode {
+                                let msg = format!(
+                                    "@{} is in {} mode and cannot run '{}' (requires {} mode); skipping.",
+                                    target.as_str(),
+                                    turn_mode.as_str(),
+                                    m.id,
+                                    m.min_mode.as_str()
                                 );
                                 self.reroute_blocked(&target, &msg).await?;
                                 continue;
@@ -705,6 +707,7 @@ impl super::Engine {
 
                     // Worktree discipline (on iff `with_git`): the quark works in its
                     // own checkout, on its own branch, and never in the human's tree.
+                    let mut branch_assignment: Option<ulid::Ulid> = None;
                     if let Some(root) = self.repo_root.clone() {
                         // No task-bearing driver ⇒ no assignment ⇒ no branch to cut.
                         // Refuse rather than commit a quark's work to an unnamed branch.
@@ -760,10 +763,31 @@ impl super::Engine {
                                                 .await?;
                                                 match self.merge_gate(&target, &old_turn_tree).await {
                                                     Ok(true) => {
-                                                        spawned_any = true;
-                                                        continue;
+                                                        events = read_events(&self.field_path)?;
+                                                        let has_pending_handback_or_waiting = events
+                                                            .iter()
+                                                            .rev()
+                                                            .find_map(|e| {
+                                                                if e.from == Actor::Quark(target.clone()) {
+                                                                    if let Kind::Status { state } = &e.kind {
+                                                                        return Some(*state == QuarkState::Waiting);
+                                                                    }
+                                                                }
+                                                                if Self::is_gate_handback(e, &target, old_assignment) {
+                                                                    return Some(true);
+                                                                }
+                                                                None
+                                                            })
+                                                            .unwrap_or(false);
+                                                        if has_pending_handback_or_waiting {
+                                                            spawned_any = true;
+                                                            continue;
+                                                        }
+                                                        branch_assignment = Some(old_assignment);
                                                     }
-                                                    Ok(false) => {}
+                                                    Ok(false) => {
+                                                        events = read_events(&self.field_path)?;
+                                                    }
                                                     Err(e) => {
                                                         self.reroute_blocked_with_severity(
                                                             &target,
@@ -804,6 +828,7 @@ impl super::Engine {
                         lane,
                         quark,
                         driver,
+                        branch_assignment,
                     });
                 }
 
@@ -874,10 +899,13 @@ impl super::Engine {
                         if ready_candidates.len() == 1 {
                             let cand = ready_candidates.into_iter().next().expect("len == 1");
                             let assignment = cand
-                                .driver
-                                .as_ref()
-                                .expect("checked driver above")
-                                .assignment;
+                                .branch_assignment
+                                .unwrap_or_else(|| {
+                                    cand.driver
+                                        .as_ref()
+                                        .expect("checked driver above")
+                                        .assignment
+                                });
                             let _ = hadron_lattice::live::publish(
                                 &live_dir,
                                 &hadron_lattice::Activity::new(
@@ -916,10 +944,13 @@ impl super::Engine {
                                 let field_c = self.field_path.clone();
                                 let target_c = cand.target.clone();
                                 let assignment = cand
-                                    .driver
-                                    .as_ref()
-                                    .expect("checked driver above")
-                                    .assignment;
+                                    .branch_assignment
+                                    .unwrap_or_else(|| {
+                                        cand.driver
+                                            .as_ref()
+                                            .expect("checked driver above")
+                                            .assignment
+                                    });
                                 handles.push(tokio::task::spawn_blocking(move || {
                                     provision_one(root_c, field_c, target_c, assignment)
                                 }));
@@ -982,6 +1013,7 @@ impl super::Engine {
                         lane,
                         quark,
                         driver,
+                        branch_assignment: _,
                     } = cand;
                     let mut tree: Option<TurnTree> = None;
                     let mut git_diff = String::new();

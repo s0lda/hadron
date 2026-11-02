@@ -267,7 +267,7 @@ pub fn format_remediation_instructions(diag: &StructuredDiagnostics) -> String {
 
 impl super::Engine {
     /// Whether `e` is a merge-gate hand-back already issued to `target` for `assignment`.
-    fn is_gate_handback(e: &Event, target: &QuarkId, assignment: ulid::Ulid) -> bool {
+    pub(super) fn is_gate_handback(e: &Event, target: &QuarkId, assignment: ulid::Ulid) -> bool {
         e.from == Actor::Gluon
             && e.to.as_ref() == Some(target)
             && e.answers == Some(assignment)

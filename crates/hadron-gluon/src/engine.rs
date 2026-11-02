@@ -171,8 +171,6 @@ struct Driver {
 struct HumanTask {
     /// The body the quark is dispatched on.
     task: String,
-    /// The body that named this quark — the eligibility text, never substituted.
-    addressing: String,
 }
 
 /// The worktree a turn ran in, carried from dispatch through to `finish_turn` so the
@@ -579,15 +577,9 @@ impl Engine {
                 // empty here keeps the pure engine independent of seating.
                 provider: String::new(),
                 model: String::new(),
-                // The `@role` roles, carried on the quark exactly like `display_name`
-                // above (resolved from the seat at build time), so a re-seat rebuilds
-                // the card with the right roles instead of silently dropping them.
-                roles: q.roles(),
-                exclusive: q.exclusive(),
-                // The per-seat command allow/deny lists, carried on the quark exactly
-                // like `roles`/`exclusive` above (resolved from the seat at build
-                // time), so `Engine::commands_for` can fold them at the `decide()`
-                // call sites without re-reading `team.json`.
+                // The per-seat command allow/deny lists, carried on the quark (resolved
+                // from the seat at build time), so `Engine::commands_for` can fold them
+                // at the `decide()` call sites without re-reading `team.json`.
                 commands: q.commands().clone(),
                 energy_limit: q.energy_limit(),
                 deny_skills: q.deny_skills(),
@@ -810,9 +802,6 @@ impl Engine {
             // a seat added at runtime must not acquire fields a booted one lacks.
             provider: String::new(),
             model: String::new(),
-            // Carried on the quark exactly as `Engine::new` reads it (see above).
-            roles: quark.roles(),
-            exclusive: quark.exclusive(),
             commands: quark.commands().clone(),
             energy_limit: quark.energy_limit(),
             deny_skills: quark.deny_skills(),
@@ -1144,14 +1133,6 @@ impl Engine {
         let workspace_root = workspace_root_of(&self.field_path, &base);
         let repo_preons_dir = workspace_root.join(".hadron").join("preons");
         preons::load_preons(self.global_preons_dir.as_deref(), Some(&repo_preons_dir))
-    }
-
-    fn loaded_roles(&self) -> Vec<Preon> {
-        let base = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let workspace_root = workspace_root_of(&self.field_path, &base);
-        let repo_roles_dir = workspace_root.join(".hadron").join("roles");
-        let global_roles_dir = self.global_preons_dir.as_deref().and_then(|p| p.parent()).map(|p| p.join("roles"));
-        preons::load_roles(global_roles_dir.as_deref(), Some(&repo_roles_dir))
     }
 
 }

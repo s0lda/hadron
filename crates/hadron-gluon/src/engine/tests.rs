@@ -2397,71 +2397,6 @@ async fn engine_uses_injected_global_skills_dir() {
     engine.run_until_quiesce().await.unwrap();
 }
 
-/// Task 2 (preon routing): a REPO `.hadron/preons/*.md` preon must reach
-/// actual dispatch, not just parse (`preons.rs` Task 1 proved parsing in
-/// isolation). `@security-reviewer` is neither a card id, a reserved alias,
-/// nor a role — it's a preon whose `preferred_role` is `security`; the
-/// engine must resolve it to the seat carrying that role and excite it, the
-/// same unaddressed-human-message path an `@role` mention already takes.
-///
-/// `Engine::new` leaves `global_preons_dir` at its `None` default, so this
-/// test never touches the real `~/.hadron/preons` — only the repo (tempdir)
-/// preon is in play, mirroring `engine_loads_repo_skills`.
-#[tokio::test]
-async fn engine_routes_a_repo_preon() {
-    use std::fs;
-    let fdir = tempdir().unwrap();
-    let preons_dir = fdir.path().join(".hadron").join("preons");
-    fs::create_dir_all(&preons_dir).unwrap();
-    fs::write(
-        preons_dir.join("security-reviewer.md"),
-        "---\nname: security-reviewer\npreferred_role: security\n---\n\nYou review for security issues.\n",
-    )
-    .unwrap();
-
-    let path = fdir.path().join("field.jsonl");
-    append_event(
-        &path,
-        &Event::new(Actor::Human, None, Kind::Message { body: "@security-reviewer please review this diff".into() }),
-    )
-    .unwrap();
-
-    use hadron_lattice::{Projection, TurnOutcome};
-    struct Probe;
-    #[async_trait::async_trait]
-    impl crate::quark::Quark for Probe {
-        fn id(&self) -> QuarkId {
-            QuarkId::new("sec")
-        }
-        fn flavor(&self) -> Flavor {
-            Flavor::Worker
-        }
-        fn energy(&self) -> EnergyState {
-            EnergyState::Available
-        }
-        fn roles(&self) -> Vec<String> {
-            vec!["security".to_string()]
-        }
-        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
-            assert!(
-                turn.task.contains("please review this diff"),
-                "the preon-addressed message must reach the role holder's turn:\n{}",
-                turn.task
-            );
-            Ok(TurnOutcome { message: Some("reviewed".into()), permission: None, ..Default::default()})
-        }
-    }
-
-    let mut engine = Engine::new(path.clone(), vec![Box::new(Probe)], 10);
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&path).unwrap();
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body == "reviewed")),
-        "the security seat (resolved via the repo preon's preferred_role) must have actually run and replied:\n{events:#?}"
-    );
-}
-
 #[tokio::test]
 async fn engine_injects_invariants() {
     use std::fs;
@@ -4939,22 +4874,17 @@ async fn disabling_keeps_the_very_same_instance_and_re_enabling_uses_it() {
     );
 }
 
-// ---- exclusivity filter + routing-gap reporting (WS4 §4 Phase 2) -----------
+// ---- skill x mode gating, deny_skills & per-target skill resolution ---------
 
-/// A quark carrying `roles` and `exclusive`, for the exclusivity-filter tests
-/// below. `roles()`/`exclusive()` override the `Quark` trait's defaults exactly
-/// the way a real (e.g. ACP) seat built from `team.json` would.
-struct RoledQuark {
+struct SkillTestQuark {
     id: QuarkId,
     display_name: Option<String>,
-    roles: Vec<String>,
-    exclusive: bool,
     reply: String,
     deny_skills: Vec<String>,
 }
 
 #[async_trait::async_trait]
-impl crate::quark::Quark for RoledQuark {
+impl crate::quark::Quark for SkillTestQuark {
     fn id(&self) -> QuarkId {
         self.id.clone()
     }
@@ -4963,12 +4893,6 @@ impl crate::quark::Quark for RoledQuark {
     }
     fn display_name(&self) -> Option<String> {
         self.display_name.clone()
-    }
-    fn roles(&self) -> Vec<String> {
-        self.roles.clone()
-    }
-    fn exclusive(&self) -> bool {
-        self.exclusive
     }
     fn deny_skills(&self) -> Vec<String> {
         self.deny_skills.clone()
@@ -4981,231 +4905,26 @@ impl crate::quark::Quark for RoledQuark {
     }
 }
 
-fn roled_quark(id: &str, roles: &[&str], exclusive: bool, reply: &str) -> RoledQuark {
-    RoledQuark {
-        id: QuarkId::new(id),
-        display_name: None,
-        roles: roles.iter().map(|r| r.to_string()).collect(),
-        exclusive,
-        reply: reply.into(),
-        deny_skills: vec![],
-    }
-}
-
-/// Same as [`roled_quark`], but carrying a `display_name` — the router resolves
-/// `@DisplayName` mentions to the card via this (`match_longest_mention`'s
-/// display-name pass), independent of `id`/`roles`, which is exactly what
-/// `exclusive_seat_admitted_by_its_display_name` exercises.
-fn roled_quark_named(id: &str, display_name: &str, roles: &[&str], exclusive: bool, reply: &str) -> RoledQuark {
-    RoledQuark {
+fn named_quark(id: &str, display_name: &str, reply: &str) -> SkillTestQuark {
+    SkillTestQuark {
         id: QuarkId::new(id),
         display_name: Some(display_name.to_string()),
-        roles: roles.iter().map(|r| r.to_string()).collect(),
-        exclusive,
         reply: reply.into(),
         deny_skills: vec![],
     }
-}
-
-/// **The exclusivity property.** A card marked `exclusive` must never take a turn
-/// it isn't scoped for — even when something *directly* addresses it (`to:
-/// Some(id)`) for a task whose text never names its role or its id. This is the
-/// gap a text-only router check can't close: `seed_human_message` here mirrors
-/// exactly what a raw `Kind::Assign`/hand-off event can do — set `to` to any id,
-/// completely independent of what the task text says — which is the "picked as a
-/// general fallback worker" case the spec calls out.
-#[tokio::test]
-async fn exclusive_seat_excluded_from_non_matching_task() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    // Directly addressed, but the task text names neither "@security" nor "@sec".
-    seed_human_message(&field, "sec", "please fix the css typo on the landing page");
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "an exclusive seat took a turn it was never scoped for"
-    );
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("exclusive"))),
-        "the field must SAY why the exclusive seat was skipped, not silently swallow the task"
-    );
-}
-
-/// The same exclusive card IS eligible once the task actually names its role or
-/// its id — exclusivity is a restriction, not a block on ever being reached.
-#[tokio::test]
-async fn exclusive_seat_eligible_for_matching_role_task() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    seed_human_message(&field, "sec", "please review this @security issue");
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "a role-matching task must still reach the exclusive seat"
-    );
-}
-
-/// **The `@team` gap (review follow-up).** `human_mentions` expands `@team` to
-/// EVERY roster card, so a plain broadcast — naming nobody in particular by role
-/// or id — must not be read as "addressed to this exclusive card specifically".
-/// Reproduces the review's exact finding: `@team status check` admitting an
-/// exclusive `security` card with no role/id in sight.
-#[tokio::test]
-async fn exclusive_seat_excluded_from_a_team_broadcast() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    // Unaddressed human message, `@team` only — no role, no id.
-    append_event(
-        &field,
-        &Event::new(Actor::Human, None, Kind::Message { body: "@team status check".into() }),
-    )
-    .unwrap();
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "a `@team` broadcast admitted an exclusive seat it never named by role or id"
-    );
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("exclusive"))),
-        "the field must SAY why the exclusive seat was skipped, not silently swallow the broadcast"
-    );
-}
-
-/// A `@team` broadcast that ALSO names the exclusive card's role still admits it —
-/// exclusivity reads the whole task text, not just whether `@team` appears in it.
-#[tokio::test]
-async fn exclusive_seat_admitted_when_team_broadcast_also_names_its_role() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    append_event(
-        &field,
-        &Event::new(
-            Actor::Human,
-            None,
-            Kind::Message { body: "@team we have a @security incident".into() },
-        ),
-    )
-    .unwrap();
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "a broadcast that also names the exclusive seat's role must still reach it"
-    );
-}
-
-/// **Whole-branch review follow-up.** `match_longest_mention` resolves
-/// `@DisplayName` to a card (the `display_name` pass, independent of `id`/
-/// `roles`), so an exclusive card WITH a display name must be admitted by its
-/// own primary handle — not rejected as "did not address it by role or @id"
-/// just because the exclusivity check forgot to look at `display_name`.
-#[tokio::test]
-async fn exclusive_seat_admitted_by_its_display_name() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark_named("acp-claude", "Claude", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    seed_human_message(&field, "acp-claude", "@Claude handle this");
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "an exclusive seat named by its own display name must be admitted"
-    );
-}
-
-/// A display name must not widen the `@team` exclusion: broadcasting to
-/// everyone still does not name this card specifically, display name or not.
-#[tokio::test]
-async fn exclusive_seat_with_display_name_still_excluded_from_a_team_broadcast() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark_named("acp-claude", "Claude", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    append_event(
-        &field,
-        &Event::new(Actor::Human, None, Kind::Message { body: "@team status check".into() }),
-    )
-    .unwrap();
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "a `@team` broadcast must still exclude an exclusive seat even when it has a display name"
-    );
-}
-
-/// A card carrying `roles` but NOT `exclusive` stays in general dispatch — the
-/// filter only ever *removes* eligibility, never grants it, and it must not
-/// over-fire on a seat that never opted into exclusivity.
-#[tokio::test]
-async fn non_exclusive_role_seat_always_eligible() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark("docs", &["documentation"], false, "I ANSWERED"))],
-        12,
-    );
-    // Task text names neither its role nor its id — irrelevant, since it is not exclusive.
-    seed_human_message(&field, "docs", "please fix the css typo on the landing page");
-    engine.run_until_quiesce().await.unwrap();
-
-    let events = read_events(&field).unwrap();
-    assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "a non-exclusive role seat must take any task, matching or not"
-    );
 }
 
 // ---- broadcast scope (Projection.named_specifically) -----------------------
 
 /// A worker directly named — by `@id` or display name — is `named_specifically`,
-/// regardless of whether anyone else was also addressed. Reuses
-/// `router::task_names_card_specifically` (the exact predicate the exclusive-seat
-/// filter already relies on), not a second matcher.
+/// regardless of whether anyone else was also addressed.
 #[tokio::test]
 async fn projection_marks_a_specifically_named_worker() {
     let dir = tempdir().unwrap();
     let field = dir.path().join("field.jsonl");
     let engine = Engine::new(
         field.clone(),
-        vec![Box::new(roled_quark_named("sonnet", "Sonnet", &[], false, "reply"))],
+        vec![Box::new(named_quark("sonnet", "Sonnet", "reply"))],
         12,
     );
     append_event(
@@ -5219,18 +4938,13 @@ async fn projection_marks_a_specifically_named_worker() {
     assert!(proj.named_specifically, "a direct @Sonnet mention must be named specifically");
 }
 
-/// The gap this closes: `@team` expands to the whole roster (the
-/// fan-out itself is non-negotiable), so a worker reached ONLY that way used to
-/// get the identical "go implement this" prompt as one directly assigned, and a
-/// `@team` brainstorm read as a work order. `named_specifically` is what the
-/// prompt now keys the think-vs-do directive on.
 #[tokio::test]
 async fn projection_does_not_mark_a_team_broadcast_as_specifically_named() {
     let dir = tempdir().unwrap();
     let field = dir.path().join("field.jsonl");
     let engine = Engine::new(
         field.clone(),
-        vec![Box::new(roled_quark_named("sonnet", "Sonnet", &[], false, "reply"))],
+        vec![Box::new(named_quark("sonnet", "Sonnet", "reply"))],
         12,
     );
     append_event(
@@ -5248,20 +4962,38 @@ async fn projection_does_not_mark_a_team_broadcast_as_specifically_named() {
 }
 
 /// **The deny_skills property.** A card carrying `deny_skills: vec!["writing-plans".into()]`
-/// must never receive a task whose starting skill is `writing-plans`.
+/// must never receive a task whose starting skill is `writing-plans`, and `projection_for`
+/// must filter `writing-plans` out of `invariants` (`skills::index`).
 #[tokio::test]
-async fn deny_skills_locks_out_matching_skill_task() {
+async fn deny_skills_locks_out_matching_skill_task_and_filters_skill_index() {
     let dir = tempdir().unwrap();
     let field = dir.path().join("field.jsonl");
-    let mut q = roled_quark("sec", &["security"], false, "I ANSWERED");
-    q.deny_skills = vec!["writing-plans".into()];
+    let q = SkillTestQuark {
+        id: QuarkId::new("sec"),
+        display_name: None,
+        reply: "I ANSWERED".into(),
+        deny_skills: vec!["writing-plans".into()],
+    };
     let mut engine = Engine::new(
         field.clone(),
         vec![Box::new(q)],
         12,
     );
-    // Directly addressed, but the task matches the denied skill "writing-plans"
     seed_human_message(&field, "sec", "write a plan for authentication");
+    let events_before = read_events(&field).unwrap();
+    let driver = engine.driver_for(&events_before, &QuarkId::new("sec"), None);
+    let proj = engine.projection_for(&events_before, &QuarkId::new("sec"), driver.as_ref(), String::new(), None);
+    assert!(
+        !proj.invariants.contains("- **writing-plans**"),
+        "denied skill must be omitted from the quark's skill index:\n{}",
+        proj.invariants
+    );
+    assert!(
+        proj.invariants.contains("- **brainstorming**"),
+        "allowed skills must remain in the quark's skill index:\n{}",
+        proj.invariants
+    );
+
     engine.run_until_quiesce().await.unwrap();
 
     let events = read_events(&field).unwrap();
@@ -5270,120 +5002,112 @@ async fn deny_skills_locks_out_matching_skill_task() {
         "a seat received a task whose starting skill it denied"
     );
     assert!(
-        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("locks out 'writing-plans' tasks"))),
-        "the field must SAY why the seat was skipped (locks out 'writing-plans' tasks)"
+        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("@sec does not have skill 'writing-plans' enabled (deny_skills); skipping."))),
+        "the field must emit the structured deny_skills block notice:\n{events:#?}"
     );
 }
 
-/// **The soft preference property.** A task whose skill maps to a role
-/// prefers the role-holder first among candidate targets.
 #[tokio::test]
-async fn soft_preference_bubbles_role_holder_to_front() {
+async fn skill_min_mode_blocks_turn_when_quark_in_lower_mode() {
     let dir = tempdir().unwrap();
     let field = dir.path().join("field.jsonl");
+    let q = SkillTestQuark {
+        id: QuarkId::new("sec"),
+        display_name: None,
+        reply: "I ANSWERED".into(),
+        deny_skills: vec![],
+    };
+    let mut engine = Engine::new(field.clone(), vec![Box::new(q)], 12);
 
-    // Roster of two workers, the second carries the role "architect"
-    let q1 = roled_quark("w1", &[], false, "W1 ANSWERED");
-    let q2 = roled_quark("w2", &["architect"], false, "W2 ANSWERED");
-
-    let engine = Engine::new(
-        field.clone(),
-        vec![Box::new(q1), Box::new(q2)],
-        12,
-    );
-
-    // Broadcast target list: a "@team write a plan" message.
-    // It matches the skill "writing-plans", which prefers the role "architect" (held by w2).
-    let addressees = engine.human_addressees("@team write a plan for authentication");
-    assert_eq!(addressees, vec![QuarkId::new("w2"), QuarkId::new("w1")]);
-}
-
-/// **Role prompt injection.** A turn dispatched to a seat holding role R,
-/// for a task whose skill maps to R, carries the roles/R.md body.
-#[tokio::test]
-async fn role_prompt_injection_carries_role_body() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-
-    // Write a roles directory structure
-    let roles_dir = dir.path().join(".hadron").join("roles");
-    std::fs::create_dir_all(&roles_dir).unwrap();
-    std::fs::write(
-        roles_dir.join("architect.md"),
-        "---\nname: architect\n---\n\nYou design the system architecture.\n",
-    ).unwrap();
-
-    // Roster of two workers, the second carries the role "architect"
-    let q1 = roled_quark("w1", &[], false, "W1 ANSWERED");
-    let q2 = roled_quark("w2", &["architect"], false, "W2 ANSWERED");
-
-    let engine = Engine::new(
-        field.clone(),
-        vec![Box::new(q1), Box::new(q2)],
-        12,
-    );
-
-    let driver = Some(crate::engine::Driver {
-        assignment: ulid::Ulid::new(),
-        task: "write a plan for auth".into(),
-        invariants: vec![],
-    });
-
-    // Get projection for w2 with a task that matches "writing-plans"
-    let events = vec![Event::new(
-        Actor::Human,
-        Some(QuarkId::new("w2")),
-        Kind::Message { body: "write a plan for auth".into() },
-    )];
-    let proj = engine.projection_for(&events, &QuarkId::new("w2"), driver.as_ref(), String::new(), None);
-    assert_eq!(
-        proj.role_body.as_deref(),
-        Some("You design the system architecture.")
-    );
-
-    // A worker not holding the role does not get the body
-    let proj_w1 = engine.projection_for(&events, &QuarkId::new("w1"), driver.as_ref(), String::new(), None);
-    assert_eq!(proj_w1.role_body, None);
-}
-
-/// **Routing gap, reported not stalled.** A task needs a role; the only seat that
-/// carries it is `exclusive` AND disabled. The router's role resolution (Phase 1)
-/// still resolves the mention to that card (it only filters `Depleted`, not
-/// disabled), so this rides the EXISTING `is_enabled`/`reroute_blocked` diagnostic
-/// — reused, not reinvented — and the turn quiesces instead of hanging.
-#[tokio::test]
-async fn routing_gap_is_reported_not_stalled() {
-    let dir = tempdir().unwrap();
-    let field = dir.path().join("field.jsonl");
-    let mut engine = Engine::new(
-        field.clone(),
-        vec![Box::new(roled_quark("sec", &["security"], true, "I ANSWERED"))],
-        12,
-    );
-    engine.set_enabled(&QuarkId::new("sec"), false);
-
-    // Unaddressed human message naming the ROLE, not the id — routed by Phase 1.
+    // Put `sec` in Ask mode (Mode::default() is Write, so explicitly set Mode::Ask).
     append_event(
         &field,
-        &Event::new(Actor::Human, None, Kind::Message { body: "@security please look at this".into() }),
+        &Event::new(
+            Actor::Human,
+            Some(QuarkId::new("sec")),
+            Kind::ModeSet { mode: hadron_lattice::Mode::Ask },
+        ),
     )
     .unwrap();
-
-    tokio::time::timeout(Duration::from_secs(5), engine.run_until_quiesce())
-        .await
-        .expect("must quiesce, not hang, on an unreachable role")
-        .unwrap();
+    // `writing-plans` requires `Mode::Write` -> blocked in `Mode::Ask`!
+    seed_human_message(&field, "sec", "write a plan for authentication");
+    engine.run_until_quiesce().await.unwrap();
 
     let events = read_events(&field).unwrap();
     assert!(
         !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("I ANSWERED"))),
-        "a disabled exclusive seat must never take the turn"
+        "a seat in Ask mode must not run a Write-mode skill"
     );
-    // The `is_enabled` gate fires before the exclusive gate, so this lands on the
-    // quiet path: the refusal is the `Blocked` status, not a chat message.
     assert!(
-        events.iter().any(|e| matches!(e.kind, Kind::Status { state: QuarkState::Blocked })),
-        "the routing gap must be recorded in the field, not silently dropped"
+        events.iter().any(|e| matches!(
+            &e.kind,
+            Kind::Message { body } if body.contains("@sec is in ask mode and cannot run 'writing-plans' (requires write mode); skipping.")
+        )),
+        "the field must emit the structured min_mode block notice:\n{events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn multi_quark_message_resolves_skills_per_target_segment() {
+    let dir = tempdir().unwrap();
+    let field = dir.path().join("field.jsonl");
+    let q1 = SkillTestQuark {
+        id: QuarkId::new("q1"),
+        display_name: None,
+        reply: "Q1 ANSWERED".into(),
+        deny_skills: vec![],
+    };
+    let q2 = SkillTestQuark {
+        id: QuarkId::new("q2"),
+        display_name: None,
+        reply: "Q2 ANSWERED".into(),
+        deny_skills: vec![],
+    };
+    let mut engine = Engine::new(field.clone(), vec![Box::new(q1), Box::new(q2)], 12);
+
+    // Put both q1 and q2 in Ask mode.
+    for id in ["q1", "q2"] {
+        append_event(
+            &field,
+            &Event::new(
+                Actor::Human,
+                Some(QuarkId::new(id)),
+                Kind::ModeSet { mode: hadron_lattice::Mode::Ask },
+            ),
+        )
+        .unwrap();
+    }
+
+    // Multi-quark prompt: q1 gets `/brainstorming` (Ask mode -> allowed!),
+    // q2 gets `write a plan` (`writing-plans`, Write mode -> blocked!).
+    append_event(
+        &field,
+        &Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "@q1 let's brainstorm the design\n@q2 write a plan for authentication".into(),
+            },
+        ),
+    )
+    .unwrap();
+    engine.run_until_quiesce().await.unwrap();
+
+    let events = read_events(&field).unwrap();
+    assert!(
+        events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("Q1 ANSWERED"))),
+        "q1 in Ask mode must succeed on its brainstorming segment:\n{events:#?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(&e.kind, Kind::Message { body } if body.contains("Q2 ANSWERED"))),
+        "q2 in Ask mode must be blocked on its writing-plans segment:\n{events:#?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            &e.kind,
+            Kind::Message { body } if body.contains("@q2 is in ask mode and cannot run 'writing-plans' (requires write mode); skipping.")
+        )),
+        "q2 must receive the min_mode block notice for writing-plans:\n{events:#?}"
     );
 }
 
@@ -5561,14 +5285,8 @@ fn a_seats_display_name_reaches_the_router_so_at_mentions_resolve() {
     assert_eq!(engine.human_addressees("just a thought"), vec![QuarkId::new("agy")]);
 }
 
-/// Role routing's make-or-break wiring. A seat's `roles`/`exclusive` must reach the
-/// roster card the same way `display_name` does — carried on the live quark, not
-/// populated by a daemon-side step that does not exist (see
-/// `docs/superpowers/specs/2026-07-18-role-routing-design.md` §2.1). Exercises the
-/// real Seat → registry → adapter → `Quark::roles`/`Quark::exclusive` →
-/// roster-card path.
 #[test]
-fn roster_card_carries_the_quarks_roles() {
+fn roster_card_carries_the_quarks_deny_skills() {
     use crate::adapter::registry;
     use hadron_lattice::secrets::MemoryStore;
     use hadron_lattice::Seat;
@@ -5576,8 +5294,7 @@ fn roster_card_carries_the_quarks_roles() {
     let path = dir.path().join("field.jsonl");
 
     let mut security = Seat::cli(QuarkId::new("security-quark"), "agy", "", Flavor::Worker);
-    security.roles = vec!["security".to_string()];
-    security.exclusive = true;
+    security.deny_skills = vec!["writing-plans".to_string()];
 
     let engine = Engine::new(path, vec![registry::build_seat(&security, &MemoryStore::new()).unwrap()], 10);
 
@@ -5586,8 +5303,7 @@ fn roster_card_carries_the_quarks_roles() {
         .iter()
         .find(|c| c.id == QuarkId::new("security-quark"))
         .expect("the seat is on the roster");
-    assert_eq!(card.roles, vec!["security".to_string()], "roles never reached the roster card");
-    assert!(card.exclusive, "exclusive never reached the roster card");
+    assert_eq!(card.deny_skills, vec!["writing-plans".to_string()], "deny_skills never reached the roster card");
 }
 
 // ---- force-restart (Kind::Reboot) ------------------------------------------
@@ -5959,8 +5675,7 @@ async fn a_named_worker_is_dispatched_on_the_humans_latest_message_not_the_namin
         "worker was dispatched on the naming message, not the ask: {:?}",
         claude.1.task
     );
-    // …but WHO named it is preserved, because the exclusive-seat gate reads that text.
-    assert!(claude.1.addressing.contains("@claude"), "the naming text was lost: {:?}", claude.1.addressing);
+    assert!(claude.1.task.contains("@claude"), "the naming text was lost: {:?}", claude.1.task);
 }
 
 /// The human's caveat: `@mention prompt` keeps working exactly as before. When the
@@ -5987,7 +5702,6 @@ async fn a_mention_that_carries_its_own_prompt_is_unchanged() {
     let targets = engine.unaddressed_message_targets(&events);
     let claude = targets.iter().find(|(q, _)| q.as_str() == "claude").expect("claude pending");
     assert_eq!(claude.1.task, "@claude do X");
-    assert_eq!(claude.1.addressing, "@claude do X");
 }
 
 /// A quark→quark delegation keeps its OWN body. Substitution is a human-input rule:
@@ -6231,15 +5945,19 @@ async fn a_busy_quark_with_no_cancel_slot_is_not_interrupted() {
         // `attach_cancel_slot` deliberately NOT overridden — this quark relies
         // on the trait's default no-op, so the engine's slot for it is never
         // filled. That is the whole point of this test.
-        async fn excite(&mut self, _turn: Projection) -> anyhow::Result<TurnOutcome> {
-            self.excite_count.fetch_add(1, Ordering::SeqCst);
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let n = self.excite_count.fetch_add(1, Ordering::SeqCst);
+            std::fs::write(turn.cwd.join(format!("edit-{n}.txt")), "dirty while unfilled\n")?;
             tokio::time::sleep(self.hold).await;
             Ok(TurnOutcome { message: Some("done".into()), permission: None, ..Default::default()})
         }
     }
 
-    let dir = tempdir().unwrap();
-    let path = dir.path().join("field.jsonl");
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let path = root.join(".hadron").join("field.jsonl");
+    seed_mode(&path, Some("seat"), Mode::Bypass);
     let hold = Duration::from_millis(300);
     let excite_count = Arc::new(AtomicUsize::new(0));
 
@@ -6271,7 +5989,8 @@ async fn a_busy_quark_with_no_cancel_slot_is_not_interrupted() {
         path.clone(),
         vec![Box::new(SlowQuark { id: QuarkId::new("seat"), excite_count: excite_count.clone(), hold })],
         10,
-    );
+    )
+    .with_git(root.clone());
 
     let started = std::time::Instant::now();
     engine.run_until_quiesce().await.unwrap();
@@ -6283,6 +6002,11 @@ async fn a_busy_quark_with_no_cancel_slot_is_not_interrupted() {
         "elapsed {:?} is well under 2x the hold — the first turn was cut short, \
          meaning something interrupted a quark whose cancel slot was never filled",
         started.elapsed()
+    );
+    let git_log = crate::snapshot::git(&root, &["log", "--all", "--oneline"]).unwrap();
+    assert!(
+        !git_log.contains("WIP snapshot before graceful interrupt"),
+        "a quark with an unfilled cancel slot must never commit 'WIP snapshot before graceful interrupt':\n{git_log}"
     );
 }
 
@@ -7443,6 +7167,113 @@ async fn worktree_turn_hitting_silence_deadline_checkpoints_resets_session_and_a
         "both checkpointed pre-stall work and post-retry work must land on main"
     );
 }
+
+#[tokio::test]
+async fn human_message_to_quark_blocked_by_target_checkout_excites_with_new_task_on_existing_branch() {
+    struct FailOnceThenDirtyLandRunner {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::merge::MergeRunner for FailOnceThenDirtyLandRunner {
+        async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
+            let c = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if c == 0 {
+                Ok((false, "Ban Allow Dead Code".to_string()))
+            } else {
+                Ok((true, "test result: ok".to_string()))
+            }
+        }
+        fn land(
+            &self,
+            _repo_root: &std::path::Path,
+            _wt: &crate::worktree::Worktree,
+            _base: &str,
+        ) -> anyhow::Result<crate::merge::Landed> {
+            anyhow::bail!("error: Your local changes to the following files would be overwritten by merge")
+        }
+    }
+
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("w"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(Actor::Human, None, Kind::Message { body: "@w do task 2".into() }),
+    )
+    .unwrap();
+
+    let turns = Arc::new(Mutex::new(vec![]));
+    let runner = Arc::new(FailOnceThenDirtyLandRunner {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(RecordingWriter {
+            id: QuarkId::new("w"),
+            turns: turns.clone(),
+            handoff: None,
+        })],
+        20,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(runner.clone());
+
+    engine.run_until_quiesce().await.unwrap();
+    assert_eq!(
+        turns.lock().unwrap().len(),
+        2,
+        "turn 1 should fail tests (handback) and turn 2 should pass tests then block on dirty target checkout"
+    );
+
+    // Now the human sends a follow-up message while the target checkout is still dirty.
+    append_event(
+        &field,
+        &Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "@w please also finish Task 1 while the branch is unmerged".into(),
+            },
+        ),
+    )
+    .unwrap();
+
+    engine.run_until_quiesce().await.unwrap();
+
+    let recorded = turns.lock().unwrap().clone();
+    assert_eq!(
+        recorded.len(),
+        3,
+        "human follow-up message must excite the quark once instead of being swallowed or looping"
+    );
+    assert!(
+        recorded[2].1.contains("please also finish Task 1"),
+        "turn 3 must receive the human's newest message rather than the stale handback, got: {}",
+        recorded[2].1
+    );
+    assert!(
+        !recorded[2].1.contains("Ban Allow Dead Code"),
+        "turn 3 must not resurrect the already-answered handback, got: {}",
+        recorded[2].1
+    );
+    // And all 3 turns stayed on the original branch so w1.txt, w2.txt, and w3.txt all exist in the worktree!
+    let wt_dir = &recorded[2].0;
+    assert!(
+        wt_dir.join("w1.txt").exists()
+            && wt_dir.join("w2.txt").exists()
+            && wt_dir.join("w3.txt").exists(),
+        "quark must stay on its existing unmerged branch with all prior commits preserved"
+    );
+    let events = read_events(&field).unwrap();
+    assert!(
+        crate::router::next_pending(&events).is_none(),
+        "no unanswered PermissionGrant or turn request may remain after quiesce"
+    );
+}
+
 
 
 

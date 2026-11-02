@@ -81,17 +81,6 @@ pub struct Seat {
     /// which is what stops the re-seat planner from mistaking a toggle for a rebuild.
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
-    /// Roles this seat plays for `@role` routing (e.g. `"architect"`, `"security"`).
-    /// Empty by default: a seat with no roles is never a role-mention's preferred
-    /// target, and every `team.json` written before role-routing existed decodes to
-    /// this default. See `docs/superpowers/specs/2026-07-18-role-routing-design.md`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub roles: Vec<String>,
-    /// Whether this seat is scoped ONLY to tasks that name one of its `roles`
-    /// (a Phase 2 dispatch filter, not yet wired by this task). `false` by default,
-    /// so a legacy `team.json` keeps every seat in general dispatch exactly as before.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub exclusive: bool,
     /// Per-seat command allow/deny lists, folded into the gatekeeper's
     /// `AllowRules`/`DenyRules` under No-Human-Mode. Empty by default, so a
     /// `team.json` written before this field existed decodes to no rules and
@@ -230,7 +219,7 @@ impl Seat {
     /// a field to `Seat` without deciding which side of this line it falls on will not
     /// compile.
     pub fn same_agent(&self, other: &Seat) -> bool {
-        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, roles, exclusive, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url, model_params, sandbox } = self;
+        let Seat { id, display_name: _, vendor, model, flavor, transport, command, cli, enabled: _, effort, mode_config, commands, secret_env, energy_limit, deny_skills, external_roots, http_base_url, model_params, sandbox } = self;
         id == &other.id
             && vendor == &other.vendor
             && model == &other.model
@@ -240,8 +229,6 @@ impl Seat {
             && cli == &other.cli
             && effort == &other.effort
             && mode_config == &other.mode_config
-            && roles == &other.roles
-            && exclusive == &other.exclusive
             && commands == &other.commands
             && secret_env == &other.secret_env
             && energy_limit == &other.energy_limit
@@ -315,8 +302,6 @@ impl Seat {
             enabled: true,
             effort: None,
             mode_config: None,
-            roles: vec![],
-            exclusive: false,
             commands: SeatCommands::default(),
             secret_env: Vec::new(),
             energy_limit: None,
@@ -432,12 +417,6 @@ pub struct SeatOverride {
         deserialize_with = "present_option"
     )]
     pub display_name: Option<Option<String>>,
-    /// Per-repo role assignment. Absent = inherit the catalogue's `roles`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub roles: Option<Vec<String>>,
-    /// Per-repo exclusivity. Absent = inherit the catalogue's `exclusive`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclusive: Option<bool>,
     /// Per-repo command allow/deny lists. Absent = inherit the catalogue's `commands`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commands: Option<SeatCommands>,
@@ -484,8 +463,6 @@ impl SeatOverride {
             effort: None,
             mode_config: None,
             display_name: None,
-            roles: None,
-            exclusive: None,
             commands: None,
             energy_limit: None,
             deny_skills: None,
