@@ -1517,7 +1517,7 @@ pub struct CachedCrateGraph {
     pub crate_positions: HashMap<String, (f32, f32)>,
 }
 
-pub const VISUALIZER_GRAPHS_CACHE_VERSION: u32 = 1;
+pub const VISUALIZER_GRAPHS_CACHE_VERSION: u32 = 2;
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x00000100000001b3;
@@ -1629,41 +1629,46 @@ pub fn compute_crate_graph_fingerprint(repo_root: &std::path::Path) -> u64 {
     hash
 }
 
-/// Computes a fast, deterministic 64-bit metadata fingerprint across `.hadron/nucleus/index.md`
-/// and `.hadron/nucleus/notes/*.md` using directory entry metadata.
+/// Computes a fast, deterministic 64-bit metadata fingerprint across `.hadron/nucleus/index.md`,
+/// `.hadron/nucleus/features.md`, `.hadron/nucleus/invariants/*.md`, and `.hadron/nucleus/notes/*.md`
+/// using directory entry metadata.
 pub fn compute_nucleus_graph_fingerprint(repo_root: &std::path::Path) -> u64 {
     let nucleus_dir = repo_root.join(".hadron").join("nucleus");
     let mut entries_meta: Vec<(String, u64, u128)> = Vec::new();
 
-    let index_path = nucleus_dir.join("index.md");
-    if let Ok(meta) = std::fs::metadata(&index_path) {
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        entries_meta.push(("index.md".to_string(), meta.len(), mtime));
+    for root_doc in ["index.md", "features.md", "invariants.md"] {
+        let doc_path = nucleus_dir.join(root_doc);
+        if let Ok(meta) = std::fs::metadata(&doc_path) {
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            entries_meta.push((root_doc.to_string(), meta.len(), mtime));
+        }
     }
 
-    let notes_dir = nucleus_dir.join("notes");
-    if let Ok(read_dir) = std::fs::read_dir(&notes_dir) {
-        for entry in read_dir.flatten() {
-            let file_name = entry.file_name();
-            let Some(name_str) = file_name.to_str() else {
-                continue;
-            };
-            if !name_str.ends_with(".md") {
-                continue;
-            }
-            if let Ok(meta) = entry.metadata() {
-                let mtime = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                entries_meta.push((format!("notes/{}", name_str), meta.len(), mtime));
+    for subdir in ["notes", "invariants"] {
+        let dir_path = nucleus_dir.join(subdir);
+        if let Ok(read_dir) = std::fs::read_dir(&dir_path) {
+            for entry in read_dir.flatten() {
+                let file_name = entry.file_name();
+                let Some(name_str) = file_name.to_str() else {
+                    continue;
+                };
+                if !name_str.ends_with(".md") {
+                    continue;
+                };
+                if let Ok(meta) = entry.metadata() {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    entries_meta.push((format!("{}/{}", subdir, name_str), meta.len(), mtime));
+                }
             }
         }
     }
@@ -1988,7 +1993,35 @@ impl super::Chamber {
                 if let Some(ng) = rebuilt_nucleus {
                     *chamber.cached_nucleus_graph.borrow_mut() = Some(ng);
                 }
+                chamber.cached_nucleus_fingerprint = compute_nucleus_graph_fingerprint(&repo_root);
                 chamber.cached_crate_graph_loading.set(false);
+                chamber.cached_nucleus_graph_loading.set(false);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Forces an asynchronous background rebuild of `CachedNucleusGraph` and updates
+    /// `.hadron/cache/visualizer_graphs.json` whenever `.hadron/nucleus/` files change on disk
+    /// or the user clicks `Refresh` in the `Nucleus Graph` header HUD.
+    pub(crate) fn refresh_nucleus_graph(&self, cx: &mut Context<Self>) {
+        self.cached_nucleus_graph_loading.set(true);
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let repo_for_build = repo_root.clone();
+            let (rebuilt, fp) = cx
+                .background_executor()
+                .spawn(async move {
+                    let built = super::nucleus_graph::CachedNucleusGraph::build_and_save(&repo_for_build);
+                    let fp = compute_nucleus_graph_fingerprint(&repo_for_build);
+                    (built, fp)
+                })
+                .await;
+
+            let _ = this.update(cx, |chamber, cx| {
+                *chamber.cached_nucleus_graph.borrow_mut() = Some(rebuilt);
+                chamber.cached_nucleus_fingerprint = fp;
                 chamber.cached_nucleus_graph_loading.set(false);
                 cx.notify();
             });
@@ -2890,7 +2923,21 @@ mod tests {
         assert_eq!(disk_after_note.nucleus_fingerprint, Some(nucleus_fp_2));
         assert_eq!(disk_after_note.crate_fingerprint, Some(crate_fp_1));
 
+        // Mutating invariants/always.md also invalidates the nucleus fingerprint
+        let inv_dir = root.join(".hadron/nucleus/invariants");
+        std::fs::create_dir_all(&inv_dir).unwrap();
+        std::fs::write(
+            inv_dir.join("always.md"),
+            "- Constraint → `notes/note-b.md`\n",
+        )
+        .unwrap();
+        let nucleus_fp_3 = compute_nucleus_graph_fingerprint(root);
+        assert_ne!(nucleus_fp_2, nucleus_fp_3);
+
         // Mutating a crate source file invalidates only the crate fingerprint and rebuilds only Crate Graph
+        let mut disk_inv = VisualizerGraphsDiskCache::load(root);
+        let (_, rebuilt_ng_inv) = disk_inv.revalidate(root, false, false);
+        assert!(rebuilt_ng_inv.is_some(), "nucleus graph must rebuild when invariants/always.md changes");
         std::fs::write(crate_src.join("extra.rs"), "use crate::sub;\n").unwrap();
         let crate_fp_2 = compute_crate_graph_fingerprint(root);
         assert_ne!(crate_fp_1, crate_fp_2);

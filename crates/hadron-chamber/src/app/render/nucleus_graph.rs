@@ -294,7 +294,7 @@ impl CachedNucleusGraph {
             let init_y = 300.0 + r * angle.sin();
             force_graph.add_node(slug, init_x, init_y);
 
-            if node.incoming_links.is_empty() && node.outgoing_links.is_empty() {
+            if hadron_forge::nucleus_graph::is_orphan_node(node) {
                 orphaned_notes.push(slug.clone());
             }
 
@@ -601,20 +601,36 @@ impl super::Chamber {
             .justify_end()
             .items_center()
             .child(zoom_controls)
-            .when(is_revalidating, |this| {
-                this.child(
-                    div()
-                        .px_2p5()
-                        .py_1()
-                        .rounded_full()
-                        .bg(theme::tab_bar_bg())
-                        .border_1()
-                        .border_color(theme::glass_highlight())
-                        .text_xs()
-                        .text_color(theme::text_muted())
-                        .child("Checking changes…"),
-                )
-            })
+            .child(
+                div()
+                    .id("nucleus-hud-refresh")
+                    .px_2p5()
+                    .py_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(theme::tab_bar_bg())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_xs()
+                    .text_color(if is_revalidating {
+                        theme::text_muted()
+                    } else {
+                        theme::text_secondary()
+                    })
+                    .hover(|s| s.text_color(theme::text()))
+                    .child(if is_revalidating {
+                        "Refreshing…"
+                    } else {
+                        "↻ Refresh"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh_nucleus_graph(cx);
+                        let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                        this.repo_health_report =
+                            Some(hadron_gatekeeper::RepoMonitor::check_repo(&root));
+                        cx.notify();
+                    })),
+            )
             .child(
                 div()
                     .px_2p5()
@@ -1139,6 +1155,8 @@ impl super::Chamber {
                                         let _ = index_orphan_note(&nucleus_dir, slug);
                                     }
                                     *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_root_for_orphans));
+                                    this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_root_for_orphans);
+                                    this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_root_for_orphans));
                                     cx.notify();
                                 })),
                         )
@@ -1162,6 +1180,8 @@ impl super::Chamber {
                                     }
                                     this.visualizer_selected_note = None;
                                     *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_root_for_delete_orphans));
+                                    this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_root_for_delete_orphans);
+                                    this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_root_for_delete_orphans));
                                     cx.notify();
                                 })),
                         ),
@@ -1187,6 +1207,8 @@ impl super::Chamber {
                                 let _ = remove_dead_link_from_note(&nucleus_dir, src, tgt);
                             }
                             *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_root_for_dead));
+                            this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_root_for_dead);
+                            this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_root_for_dead));
                             cx.notify();
                         })),
                 )
@@ -1416,6 +1438,8 @@ impl super::Chamber {
                                                 let nucleus_dir = repo_for_index.join(".hadron/nucleus");
                                                 let _ = index_orphan_note(&nucleus_dir, &slug_for_index);
                                                 *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_for_index));
+                                                this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_for_index);
+                                                this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_for_index));
                                                 cx.notify();
                                             })),
                                     )
@@ -1435,6 +1459,8 @@ impl super::Chamber {
                                                 let _ = delete_orphan_note(&nucleus_dir, &slug_for_delete);
                                                 this.visualizer_selected_note = None;
                                                 *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_for_delete));
+                                                this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_for_delete);
+                                                this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_for_delete));
                                                 cx.notify();
                                             })),
                                     ),
@@ -1499,6 +1525,8 @@ impl super::Chamber {
                                                 let nucleus_dir = repo_unlink.join(".hadron/nucleus");
                                                 let _ = remove_dead_link_from_note(&nucleus_dir, &src_for_unlink, &tgt_for_unlink);
                                                 *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_unlink));
+                                                this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_unlink);
+                                                this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_unlink));
                                                 cx.notify();
                                             })),
                                     )
@@ -1517,6 +1545,8 @@ impl super::Chamber {
                                                 let nucleus_dir = repo_stub.join(".hadron/nucleus");
                                                 let _ = create_stub_note(&nucleus_dir, &tgt_for_stub);
                                                 *this.cached_nucleus_graph.borrow_mut() = Some(CachedNucleusGraph::build_and_save(&repo_stub));
+                                                this.cached_nucleus_fingerprint = super::visualizer::compute_nucleus_graph_fingerprint(&repo_stub);
+                                                this.repo_health_report = Some(hadron_gatekeeper::RepoMonitor::check_repo(&repo_stub));
                                                 cx.notify();
                                             })),
                                     )
@@ -1724,7 +1754,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             notes_dir.join("orphan-note.md"),
-            "---\nname: orphan-note\ndescription: Unlinked orphan\n---\nStandalone.\n",
+            "---\nname: orphan-note\ndescription: Unlinked orphan\n---\nLinks to [[connected-note]] but is unindexed.\n",
         )
         .unwrap();
 

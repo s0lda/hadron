@@ -703,6 +703,7 @@ struct Chamber {
     pub(super) cached_plan_paths: Vec<(std::time::SystemTime, String)>,
     pub(super) cached_active_plan_content: Option<(String, String)>,
     pub(super) cached_nucleus_docs: (Option<String>, Option<String>, Option<String>),
+    pub(super) cached_nucleus_fingerprint: u64,
     pub(super) visualizer_last_tick: Option<std::time::Instant>,
     pub(super) visualizer_hit_nodes: std::rc::Rc<std::cell::RefCell<Vec<(String, f32, f32)>>>,
 }
@@ -1599,9 +1600,9 @@ impl Chamber {
         } else {
             crate::text::custom_skill_names(Some(&repo_root))
         };
-        let (cached_plan_paths, cached_nucleus_docs) =
+        let (cached_plan_paths, cached_nucleus_docs, cached_nucleus_fingerprint) =
             if workspace_mode == WorkspaceMode::Selector || is_wsl {
-                (Vec::new(), (None, None, None))
+                (Vec::new(), (None, None, None), 0)
             } else {
                 let nucleus_dir = repo_root.join(".hadron").join("nucleus");
                 (
@@ -1611,6 +1612,7 @@ impl Chamber {
                         std::fs::read_to_string(nucleus_dir.join("invariants").join("always.md")).ok(),
                         std::fs::read_to_string(nucleus_dir.join("index.md")).ok(),
                     ),
+                    render::visualizer::compute_nucleus_graph_fingerprint(&repo_root),
                 )
             };
         let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = view
@@ -1914,6 +1916,7 @@ impl Chamber {
             cached_plan_paths,
             cached_active_plan_content: None,
             cached_nucleus_docs,
+            cached_nucleus_fingerprint,
             visualizer_last_tick: None,
             visualizer_hit_nodes: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         };

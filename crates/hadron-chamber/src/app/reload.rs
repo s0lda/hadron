@@ -14,6 +14,7 @@ pub(super) struct WorkspaceScan {
     pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
     pub(super) plan_paths: Vec<(std::time::SystemTime, String)>,
     pub(super) nucleus_docs: (Option<String>, Option<String>, Option<String>),
+    pub(super) nucleus_fingerprint: u64,
 }
 
 impl WorkspaceScan {
@@ -62,6 +63,8 @@ impl WorkspaceScan {
             std::fs::read_to_string(nucleus_dir.join("invariants").join("always.md")).ok(),
             std::fs::read_to_string(nucleus_dir.join("index.md")).ok(),
         );
+        let nucleus_fingerprint =
+            crate::app::render::visualizer::compute_nucleus_graph_fingerprint(repo_root);
         Some(Self {
             files,
             git_statuses,
@@ -74,6 +77,7 @@ impl WorkspaceScan {
             remote_tracking,
             plan_paths,
             nucleus_docs,
+            nucleus_fingerprint,
         })
     }
 }
@@ -432,9 +436,15 @@ impl super::Chamber {
                     self.update_active_plan();
                     changed = true;
                 }
-                if scan.nucleus_docs != self.cached_nucleus_docs {
+                if scan.nucleus_docs != self.cached_nucleus_docs
+                    || scan.nucleus_fingerprint != self.cached_nucleus_fingerprint
+                {
                     self.cached_nucleus_docs = scan.nucleus_docs;
-                    self.warm_visualizer_graphs(cx);
+                    self.cached_nucleus_fingerprint = scan.nucleus_fingerprint;
+                    self.refresh_nucleus_graph(cx);
+                    let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                    self.repo_health_report =
+                        Some(hadron_gatekeeper::RepoMonitor::check_repo(&root));
                     changed = true;
                 }
                 if scan.files != self.file_tree_paths {
