@@ -75,12 +75,19 @@ fn render_event_line(
 /// fiction to resume.
 pub fn frame_interrupted_resumption(interrupted_task: &str, new_message: &str) -> String {
     format!(
-        "You were interrupted partway through the task below before you finished it — your \
-         work up to that point is already committed as a WIP snapshot on this branch. A new \
-         message has since arrived. **Do both**: finish the interrupted task, then handle the \
-         new message — the new message ADDS to your work, it does not replace it.\n\n\
-         ## Interrupted task\n{interrupted_task}\n\n\
-         ## New message\n{new_message}"
+        "You were interrupted partway through the task below because a higher-priority \
+         message arrived — your work up to that point is already committed as a WIP \
+         snapshot on this branch. **Handle the new message FIRST**, then ensure the \
+         interrupted task is not lost:\n\
+         - If the new message is a quick question or status check while the interrupted \
+           task still has multi-step work remaining, answer the new message immediately \
+           and re-queue the remaining work by placing `@self <remaining interrupted task>` \
+           at the start of its own line in your reply.\n\
+         - If the new message steers, adjusts, or can be completed together with the \
+           interrupted task right now, **do both** in this turn — the new message ADDS \
+           to your work, it does not replace it.\n\n\
+         ## New message\n{new_message}\n\n\
+         ## Interrupted task\n{interrupted_task}"
     )
 }
 

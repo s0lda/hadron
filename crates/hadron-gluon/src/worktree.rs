@@ -239,6 +239,23 @@ pub fn ensure_with_base(
     assignment: &str,
     base: &str,
 ) -> anyhow::Result<Worktree> {
+    ensure_with_base_and_carry(repo_root, quark, assignment, base, false)
+}
+
+/// Like [`ensure_with_base`], but when `carry_current_branch` is true and the
+/// worktree currently sits on a previous assignment branch with unlanded WIP
+/// commits ahead of `base`, cuts the new assignment branch from the current
+/// `HEAD` (`git checkout -q -b <branch>`) instead of resetting to `base`.
+///
+/// This preserves both the interrupted branch's ref AND its WIP commits on the
+/// resumed turn's branch without running a synchronous `merge_gate` mid-interrupt.
+pub fn ensure_with_base_and_carry(
+    repo_root: &Path,
+    quark: &QuarkId,
+    assignment: &str,
+    base: &str,
+    carry_current_branch: bool,
+) -> anyhow::Result<Worktree> {
     if assignment.trim().is_empty() {
         bail!("refusing to cut a branch for {}: no assignment", quark.as_str());
     }
@@ -321,6 +338,25 @@ pub fn ensure_with_base(
         // The same assignment, whose worktree had been checked out elsewhere (or
         // detached by a fresh `worktree add`). Land back on it — do not re-cut it.
         git(&path, &["checkout", "-q", &branch])?;
+    } else if carry_current_branch
+        && current_branch(&path)
+            .as_deref()
+            .is_some_and(|b| b != base)
+        && commits_ahead(
+            &Worktree {
+                quark: quark.clone(),
+                path: path.clone(),
+                branch: current_branch(&path).unwrap_or_default(),
+            },
+            base,
+        )
+        .unwrap_or(0)
+            > 0
+    {
+        // Interrupted turn carry-forward: branch from the current WIP HEAD so the
+        // resumed turn sees its in-progress edits on the new assignment branch while
+        // the interrupted branch ref remains intact.
+        git(&path, &["checkout", "-q", "-b", &branch])?;
     } else {
         // NOT `reset --hard`: that would move the PREVIOUS branch's pointer to the
         // default branch and orphan its unmerged commits. Branch from the default

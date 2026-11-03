@@ -20,7 +20,7 @@ use crate::reseat;
 use hadron_lattice::secrets::SecretStore;
 use hadron_lattice::term::{self, Source};
 use hadron_lattice::{
-    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Flavor, Team,
+    load_team, orphan_overrides, parse_team, resolve_team, team_config_path, Team,
 };
 
 /// Parsed command line: the field path, poll interval, and optional team path.
@@ -208,17 +208,6 @@ fn apply_reseat(
                 // while switched off must not start answering; and one switched back on
                 // must not inherit a stale disabled flag from the id it replaced.
                 engine.set_enabled(&seat.id, seat.enabled);
-                if seat.flavor == Flavor::Orchestrator {
-                    match registry::build_seat_watched(seat, live_dir, store) {
-                        Ok(chat) => {
-                            engine.seat_chat_lane(&seat.id, chat);
-                        }
-                        Err(e) => term::warn(
-                            Source::Gluon,
-                            &format!("{} — could not seat a chat lane on reseat: {e:#}", seat.id.as_str()),
-                        ),
-                    }
-                }
                 out.quarks.push(seat.clone());
                 term::info(
                     Source::Gluon,
@@ -348,7 +337,7 @@ pub async fn run() {
     // Security note in the encrypted-secrets design doc.
     let secret_store = crate::secrets::KeyringStore::new();
 
-    let (quarks, mode_label, mut seat_rows) =
+    let (quarks, mode_label, seat_rows) =
         seat_quarks(&team, team_path.as_deref(), &live_dir, &secret_store);
     if quarks.is_empty() {
         term::error(Source::Gluon, "team.json had no usable quarks; nothing to run.");
@@ -538,34 +527,10 @@ pub async fn run() {
             engine.set_enabled(&seat.id, false);
         }
     }
-    // Give every orchestrator-flavoured seat a second, chat-only lane (Task 6 Step 4
-    // of the responsive-orchestrator plan) — built through the SAME construction path
-    // as the work lane above, so it gets an identical adapter/config. A build failure
-    // here is non-fatal: the seat still runs, just on today's single-lane behaviour.
-    for seat in &team.quarks {
-        if seat.flavor != Flavor::Orchestrator {
-            continue;
-        }
-        match registry::build_seat_watched(seat, &live_dir, &secret_store) {
-            Ok(chat) => {
-                // `seat_chat_lane` calls `become_chat_lane` itself — it is the only way a
-                // chat lane is ever attached, so telling the instance here as well would
-                // be a second site to keep in step for no coverage gained.
-                engine.seat_chat_lane(&seat.id, chat);
-                if let Some(row) = seat_rows.iter_mut().find(|r| r.id == seat.id.as_str()) {
-                    row.chat_lane = true;
-                }
-            }
-            Err(e) => term::warn(
-                Source::Gluon,
-                &format!("{} — could not seat a chat lane: {e:#}", seat.id.as_str()),
-            ),
-        }
-    }
 
     // The startup seating summary — one table, built from every row `seat_quarks`
-    // (and the chat-lane loop above) collected, instead of the six-odd separate
-    // "seated …" / "is seated but DISABLED" / "chat lane seated" lines this used to be.
+    // collected, instead of the six-odd separate "seated …" / "is seated but DISABLED"
+    // lines this used to be.
     for line in term::seating_table(&seat_rows) {
         term::info(Source::Gluon, &line);
     }
@@ -841,7 +806,7 @@ fn poll_team_file(path: &Path, last_seen: &mut Option<String>) -> Option<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hadron_lattice::QuarkId;
+    use hadron_lattice::{Flavor, QuarkId};
     use tempfile::tempdir;
 
     #[test]

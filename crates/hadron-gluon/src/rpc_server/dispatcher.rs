@@ -1,5 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Notify;
 use crate::actor::bus::ActorBus;
 use hadron_lattice::wire::{JsonRpcRequest, JsonRpcResponse};
 
@@ -7,6 +9,7 @@ pub struct RpcDispatcher {
     actor_bus: ActorBus,
     field_path: Option<PathBuf>,
     wake_tx: Option<Sender<()>>,
+    wake_notify: Option<Arc<Notify>>,
 }
 
 impl RpcDispatcher {
@@ -15,12 +18,18 @@ impl RpcDispatcher {
             actor_bus,
             field_path: None,
             wake_tx: None,
+            wake_notify: None,
         }
     }
 
     pub fn with_field_and_wake(mut self, field_path: PathBuf, wake_tx: Sender<()>) -> Self {
         self.field_path = Some(field_path);
         self.wake_tx = Some(wake_tx);
+        self
+    }
+
+    pub fn with_wake_notify(mut self, wake_notify: Arc<Notify>) -> Self {
+        self.wake_notify = Some(wake_notify);
         self
     }
 
@@ -57,6 +66,9 @@ impl RpcDispatcher {
                 if let Some(ref tx) = self.wake_tx {
                     let _ = tx.try_send(());
                 }
+                if let Some(ref notify) = self.wake_notify {
+                    notify.notify_one();
+                }
                 JsonRpcResponse::success(
                     &request.id,
                     serde_json::json!({
@@ -81,6 +93,9 @@ impl RpcDispatcher {
 
                 if let Some(ref tx) = self.wake_tx {
                     let _ = tx.try_send(());
+                }
+                if let Some(ref notify) = self.wake_notify {
+                    notify.notify_one();
                 }
 
                 match send_res {

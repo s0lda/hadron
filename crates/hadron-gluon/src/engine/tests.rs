@@ -7274,6 +7274,162 @@ async fn human_message_to_quark_blocked_by_target_checkout_excites_with_new_task
     );
 }
 
+#[tokio::test]
+async fn interrupted_turn_carries_wip_onto_resumed_branch_without_running_superseded_merge_gate() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct WipCarryQuark {
+        id: QuarkId,
+        cwd: Arc<Mutex<Option<PathBuf>>>,
+        cancelled: Arc<AtomicBool>,
+        cancel_notify: Arc<tokio::sync::Notify>,
+        excite_count: Arc<AtomicUsize>,
+        gate_calls: Arc<Mutex<Vec<&'static str>>>,
+        gate_calls_at_resume: Arc<AtomicUsize>,
+        resumed_had_wip_file: Arc<AtomicBool>,
+        resumed_diff_had_wip: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::quark::Quark for WipCarryQuark {
+        fn id(&self) -> QuarkId {
+            self.id.clone()
+        }
+        fn flavor(&self) -> Flavor {
+            Flavor::Orchestrator
+        }
+        fn energy(&self) -> EnergyState {
+            EnergyState::Available
+        }
+        fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+            let cancelled = self.cancelled.clone();
+            let notify = self.cancel_notify.clone();
+            slot.set(Some(Arc::new(move || {
+                cancelled.store(true, Ordering::SeqCst);
+                notify.notify_waiters();
+                true
+            })));
+        }
+        async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+            let n = self.excite_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                std::fs::write(turn.cwd.join("wip.txt"), "half-finished work\n")?;
+                *self.cwd.lock().unwrap() = Some(turn.cwd.clone());
+                self.cancelled.store(false, Ordering::SeqCst);
+                tokio::select! {
+                    _ = self.cancel_notify.notified() => {
+                        return Ok(TurnOutcome {
+                            message: None,
+                            cancelled: true,
+                            ..Default::default()
+                        });
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                        return Ok(TurnOutcome {
+                            message: Some("finished uninterrupted".into()),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            // Resumed turn (n == 2): record how many times merge_gate has run so far
+            // (must be 0 — superseded merge gate was skipped on interrupt!) and whether
+            // the WIP file + git_diff carried forward onto the new assignment branch.
+            self.gate_calls_at_resume
+                .store(self.gate_calls.lock().unwrap().len(), Ordering::SeqCst);
+            self.resumed_had_wip_file
+                .store(turn.cwd.join("wip.txt").exists(), Ordering::SeqCst);
+            self.resumed_diff_had_wip
+                .store(turn.git_diff.contains("wip.txt"), Ordering::SeqCst);
+            std::fs::write(turn.cwd.join("final.txt"), "completed work\n")?;
+            Ok(TurnOutcome {
+                message: Some("answered urgent question and finished task".into()),
+                ..Default::default()
+            })
+        }
+    }
+
+    let repo = git_init_repo();
+    let root = repo.path().to_path_buf();
+    std::fs::create_dir_all(root.join(".hadron")).unwrap();
+    let field = root.join(".hadron").join("field.jsonl");
+    seed_mode(&field, Some("orch"), Mode::Bypass);
+    append_event(
+        &field,
+        &Event::new(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "@orch implement feature A".into(),
+            },
+        ),
+    )
+    .unwrap();
+
+    let cwd = Arc::new(Mutex::new(None));
+    let gate_calls = Arc::new(Mutex::new(Vec::new()));
+    let gate_calls_at_resume = Arc::new(AtomicUsize::new(999));
+    let resumed_had_wip_file = Arc::new(AtomicBool::new(false));
+    let resumed_diff_had_wip = Arc::new(AtomicBool::new(false));
+
+    let mut engine = Engine::new(
+        field.clone(),
+        vec![Box::new(WipCarryQuark {
+            id: QuarkId::new("orch"),
+            cwd: cwd.clone(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            cancel_notify: Arc::new(tokio::sync::Notify::new()),
+            excite_count: Arc::new(AtomicUsize::new(0)),
+            gate_calls: gate_calls.clone(),
+            gate_calls_at_resume: gate_calls_at_resume.clone(),
+            resumed_had_wip_file: resumed_had_wip_file.clone(),
+            resumed_diff_had_wip: resumed_diff_had_wip.clone(),
+        })],
+        10,
+    )
+    .with_git(root.clone())
+    .with_merge_gate(Arc::new(OrderRecordingRunner(gate_calls.clone())));
+
+    let wake_notifier = engine.wake_notifier();
+    let mid_flight = {
+        let field = field.clone();
+        let cwd = cwd.clone();
+        tokio::spawn(async move {
+            while cwd.lock().unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            seed_unaddressed_mention(&field, "orch", "urgent question mid-turn");
+            wake_notifier.notify_one();
+        })
+    };
+
+    tokio::time::timeout(Duration::from_secs(5), engine.run_until_quiesce())
+        .await
+        .expect("interrupted turn should wake and resume immediately")
+        .unwrap();
+    mid_flight.await.unwrap();
+
+    assert_eq!(
+        gate_calls_at_resume.load(Ordering::SeqCst),
+        0,
+        "merge_gate must NOT run synchronously on the interrupted WIP branch before the resumed turn starts"
+    );
+    assert!(
+        resumed_had_wip_file.load(Ordering::SeqCst),
+        "resumed turn's branch must carry the interrupted turn's wip.txt in the working tree"
+    );
+    assert!(
+        resumed_diff_had_wip.load(Ordering::SeqCst),
+        "resumed turn's Projection.git_diff must include wip.txt from the carried-forward WIP commit"
+    );
+    assert_eq!(
+        gate_calls.lock().unwrap().clone(),
+        vec!["sync", "tests", "land"],
+        "merge_gate must run once (sync + tests + land) after the resumed turn completes"
+    );
+}
+
+
 
 
 

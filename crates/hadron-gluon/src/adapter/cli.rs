@@ -407,6 +407,10 @@ pub struct CliQuark<R: CliRunner> {
     live_dir: Option<PathBuf>,
     /// Where to persist the latest prompt cost breakdown (`<hadron-dir>/prompt-cost`).
     prompt_cost_dir: Option<PathBuf>,
+    /// Shared cancel slot populated for the duration of `excite` so the dispatch
+    /// loop can interrupt an in-flight CLI subprocess in `<1ms` without waiting
+    /// for `CANCEL_DEADLINE` or resetting `resident`.
+    cancel_slot: Option<crate::quark::CancelSlot>,
 }
 
 impl<R: CliRunner> CliQuark<R> {
@@ -427,6 +431,7 @@ impl<R: CliRunner> CliQuark<R> {
             sandbox: hadron_gatekeeper::SandboxMode::default(),
             live_dir: None,
             prompt_cost_dir: None,
+            cancel_slot: None,
         }
     }
 
@@ -575,6 +580,15 @@ impl<R: CliRunner> CliQuark<R> {
                 }
             })
         });
+        struct AbortOnDrop(Option<tokio::task::JoinHandle<()>>);
+        impl Drop for AbortOnDrop {
+            fn drop(&mut self) {
+                if let Some(h) = self.0.take() {
+                    h.abort();
+                }
+            }
+        }
+        let _heartbeat_guard = AbortOnDrop(heartbeat_task);
         let mut on_line = |line: &str| -> bool {
             let changed = acc.on_line(line);
             let status_is_error = acc.status() == "error message" || acc.status() == "error";
@@ -639,9 +653,6 @@ impl<R: CliRunner> CliQuark<R> {
             true
         };
         let run_result = self.runner.run_streaming(inv, &mut on_line).await;
-        if let Some(h) = heartbeat_task {
-            h.abort();
-        }
         if let Some(dir) = &self.live_dir {
             crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
         }
@@ -745,14 +756,48 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     fn energy_limit(&self) -> Option<u32> {
         self.energy_limit
     }
+    fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+        self.cancel_slot = Some(slot);
+    }
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let cwd = turn.cwd.clone();
+
+        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cancelled_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Some(slot) = &self.cancel_slot {
+            let notify = cancel_notify.clone();
+            let flag = cancelled_flag.clone();
+            slot.set(Some(std::sync::Arc::new(move || {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                notify.notify_waiters();
+                true
+            })));
+        }
+        struct ClearCancelSlot(Option<crate::quark::CancelSlot>);
+        impl Drop for ClearCancelSlot {
+            fn drop(&mut self) {
+                if let Some(slot) = &self.0 {
+                    slot.set(None);
+                }
+            }
+        }
+        let _cancel_guard = ClearCancelSlot(self.cancel_slot.clone());
 
         let max_attempts = 3;
         let mut last_err = None;
 
         for attempt in 0..max_attempts {
+            if cancelled_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some(dir) = &self.live_dir {
+                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                }
+                return Ok(TurnOutcome {
+                    message: None,
+                    cancelled: true,
+                    ..Default::default()
+                });
+            }
             if attempt > 0 {
                 // On a retry, reset resident state so we don't try --continue on a dead/corrupted session
                 self.resident = false;
@@ -764,7 +809,19 @@ impl<R: CliRunner> Quark for CliQuark<R> {
                     );
                     crate::adapter::telemetry::TurnTelemetrySink::publish_activity(dir, &mut retry_act);
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64))).await;
+                tokio::select! {
+                    _ = cancel_notify.notified() => {
+                        if let Some(dir) = &self.live_dir {
+                            crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                        }
+                        return Ok(TurnOutcome {
+                            message: None,
+                            cancelled: true,
+                            ..Default::default()
+                        });
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64))) => {}
+                }
             }
 
             // A resumed conversation already holds everything we sent before, so re-sending
@@ -811,12 +868,45 @@ impl<R: CliRunner> Quark for CliQuark<R> {
             }
 
             let invocation = self.invocation(prompt, mode, cwd.clone());
-            let res = if let Some(stream) = self.spec.stream.clone() {
-                self.run_streaming(invocation, stream).await
-            } else {
-                let result = self.runner.run(invocation).await;
-                result.map(|r| reply_to_outcome(&r))
+            let run_opt = {
+                let run_fut = async {
+                    if let Some(stream) = self.spec.stream.clone() {
+                        self.run_streaming(invocation, stream).await
+                    } else {
+                        let result = self.runner.run(invocation).await;
+                        result.map(|r| reply_to_outcome(&r))
+                    }
+                };
+                tokio::select! {
+                    biased;
+                    _ = cancel_notify.notified() => None,
+                    res = run_fut => Some(res),
+                }
             };
+
+            let Some(res) = run_opt else {
+                // Graceful cancel: dropping `run_fut` drops `ProcessRunner::run`'s
+                // `ChildProcessGuard`, killing the subprocess group in <1ms while
+                // preserving `self.resident` so the resumed turn uses `--continue`.
+                if let Some(dir) = &self.live_dir {
+                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                }
+                return Ok(TurnOutcome {
+                    message: None,
+                    cancelled: true,
+                    ..Default::default()
+                });
+            };
+            if cancelled_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Some(dir) = &self.live_dir {
+                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                }
+                return Ok(TurnOutcome {
+                    message: None,
+                    cancelled: true,
+                    ..Default::default()
+                });
+            }
 
             match res {
                 Ok(outcome) => {
@@ -1766,5 +1856,92 @@ mod tests {
             err.to_string().contains("LoopWatchdog auto-diagnostic"),
             "expected LoopWatchdog abort, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn cli_quark_fills_cancel_slot_and_interrupts_in_flight_turn_preserving_resident() {
+        use crate::adapter::runner::CliResult;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct BlockingFakeRunner {
+            started: Arc<AtomicBool>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl CliRunner for BlockingFakeRunner {
+            async fn run(&self, _inv: CliInvocation) -> anyhow::Result<CliResult> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.store(true, Ordering::SeqCst);
+                if n == 1 {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                }
+                Ok(CliResult {
+                    stdout: format!("completed call {n}"),
+                    exit: 0,
+                    usage: None,
+                })
+            }
+            async fn run_streaming(
+                &self,
+                inv: CliInvocation,
+                _on_line: &mut (dyn for<'a> FnMut(&'a str) -> bool + Send),
+            ) -> anyhow::Result<CliResult> {
+                self.run(inv).await
+            }
+        }
+
+        let started = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut spec = CliSpec::agy();
+        spec.stream = None;
+        let mut quark = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Orchestrator,
+            "gemini-3.6-flash",
+            spec,
+            BlockingFakeRunner {
+                started: started.clone(),
+                calls: calls.clone(),
+            },
+        );
+        let slot = crate::quark::CancelSlot::default();
+        quark.attach_cancel_slot(slot.clone());
+        assert!(!slot.is_filled(), "slot is empty when no turn is in flight");
+
+        // Turn 1 completes normally and marks the quark resident.
+        let out1 = quark.excite(projection("turn 1")).await.unwrap();
+        assert!(!out1.cancelled);
+        assert!(quark.resident, "turn 1 must mark CliQuark resident");
+        assert!(!slot.is_filled(), "slot must be cleared after turn 1 returns");
+
+        // Turn 2 blocks in-flight; CancelSlot interrupts it in <1ms while keeping resident == true.
+        started.store(false, Ordering::SeqCst);
+        let slot_for_cancel = slot.clone();
+        let started_for_cancel = started.clone();
+        let canceller = tokio::spawn(async move {
+            while !started_for_cancel.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            assert!(slot_for_cancel.is_filled(), "CliQuark must fill CancelSlot while in flight");
+            assert!(slot_for_cancel.request_cancel(), "request_cancel must return true");
+        });
+
+        let t0 = std::time::Instant::now();
+        let out2 = quark.excite(projection("turn 2")).await.unwrap();
+        canceller.await.unwrap();
+        assert!(out2.cancelled, "cancelled turn must report outcome.cancelled == true");
+        assert!(out2.message.is_none(), "cancelled turn must emit no message");
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(200),
+            "CancelSlot must interrupt CliQuark immediately without waiting 30s (took {:?})",
+            t0.elapsed()
+        );
+        assert!(
+            quark.resident,
+            "graceful cancel via CancelSlot must preserve CliQuark.resident so resumed turn uses --continue"
+        );
+        assert!(!slot.is_filled(), "CancelSlot must be cleared after cancelled turn returns");
     }
 }

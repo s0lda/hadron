@@ -424,6 +424,7 @@ impl super::Engine {
                     quark: SharedQuark,
                     driver: Option<Driver>,
                     branch_assignment: Option<ulid::Ulid>,
+                    resuming_interrupted: bool,
                 }
                 let mut ready_candidates: Vec<ReadyCandidate> = Vec::new();
 
@@ -433,6 +434,7 @@ impl super::Engine {
                     // `driver_for` a second time) always agree on the same driver.
                     let mut driver =
                         self.driver_for(&events, &target, fallback_task.as_ref().map(|t| t.task.as_str()));
+                    let resuming_interrupted = interrupted_task.contains_key(&target);
                     // A message arrived mid-turn ADDS work, it does not replace it
                     // (Task 3 of `.hadron/docs/plans/2026-08-02-fonts-tools-
                     // orchestrator.md`): if this quark still owes an interrupted task,
@@ -727,8 +729,15 @@ impl super::Engine {
                         // Gate a superseded assignment branch: if this quark's worktree is sitting
                         // on a branch from a PREVIOUS assignment that has unlanded commits, gate and
                         // land that previous branch before cutting the new assignment branch.
+                        //
+                        // Exception: when resuming an interrupted turn (`resuming_interrupted`),
+                        // the previous branch holds half-finished WIP commits from the turn we just
+                        // interrupted. Running `merge_gate` on a half-finished branch would block
+                        // the interrupting message for minutes and likely fail tests; instead,
+                        // `provision_one` carries the WIP branch commits forward onto the new
+                        // assignment branch and gates once when the resumed work completes.
                         let wt_dir = crate::worktree::trees_dir(&root).join(target.as_str());
-                        if wt_dir.exists() {
+                        if !resuming_interrupted && wt_dir.exists() {
                             if let Some(old_branch) = crate::worktree::current_branch(&wt_dir) {
                                 let new_branch = crate::worktree::branch_name(&target, &driver.assignment.to_string());
                                 if old_branch != new_branch {
@@ -829,6 +838,7 @@ impl super::Engine {
                         quark,
                         driver,
                         branch_assignment,
+                        resuming_interrupted,
                     });
                 }
 
@@ -851,7 +861,8 @@ impl super::Engine {
                         let provision_one = |root: PathBuf,
                                              field_path: PathBuf,
                                              target: QuarkId,
-                                             assignment: ulid::Ulid|
+                                             assignment: ulid::Ulid,
+                                             carry_current_branch: bool|
                          -> anyhow::Result<ProvisionedTree> {
                             let _ = hadron_lattice::live::write(
                                 &field_path,
@@ -860,11 +871,12 @@ impl super::Engine {
                                 "provisioning worktree…",
                             );
                             let base = crate::worktree::default_branch(&root);
-                            let wt = crate::worktree::ensure_with_base(
+                            let wt = crate::worktree::ensure_with_base_and_carry(
                                 &root,
                                 &target,
                                 &assignment.to_string(),
                                 &base,
+                                carry_current_branch,
                             )?;
                             let snap = crate::snapshot::create(
                                 &wt.path,
@@ -917,8 +929,9 @@ impl super::Engine {
                             let root_c = root.clone();
                             let field_c = self.field_path.clone();
                             let target_c = cand.target.clone();
+                            let carry = cand.resuming_interrupted;
                             let res = tokio::task::spawn_blocking(move || {
-                                provision_one(root_c, field_c, target_c, assignment)
+                                provision_one(root_c, field_c, target_c, assignment, carry)
                             })
                             .await
                             .unwrap_or_else(|e| {
@@ -943,6 +956,7 @@ impl super::Engine {
                                 let root_c = root.clone();
                                 let field_c = self.field_path.clone();
                                 let target_c = cand.target.clone();
+                                let carry = cand.resuming_interrupted;
                                 let assignment = cand
                                     .branch_assignment
                                     .unwrap_or_else(|| {
@@ -952,7 +966,7 @@ impl super::Engine {
                                             .assignment
                                     });
                                 handles.push(tokio::task::spawn_blocking(move || {
-                                    provision_one(root_c, field_c, target_c, assignment)
+                                    provision_one(root_c, field_c, target_c, assignment, carry)
                                 }));
                             }
                             for (cand, handle) in ready_candidates.into_iter().zip(handles) {
@@ -1014,6 +1028,7 @@ impl super::Engine {
                         quark,
                         driver,
                         branch_assignment: _,
+                        resuming_interrupted: _,
                     } = cand;
                     let mut tree: Option<TurnTree> = None;
                     let mut git_diff = String::new();
@@ -1254,6 +1269,7 @@ impl super::Engine {
             let step = tokio::select! {
                 Some(joined) = turns.join_next(), if !turns.is_empty() => StepEvent::Turn(joined),
                 Some(gated) = gates.join_next(), if !gates.is_empty() => StepEvent::Gate(gated),
+                _ = self.wake_notify.notified() => StepEvent::Tick,
                 _ = tokio::time::sleep(FIELD_POLL) => StepEvent::Tick,
             };
 

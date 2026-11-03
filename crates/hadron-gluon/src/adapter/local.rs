@@ -625,6 +625,9 @@ pub struct LocalQuark {
     /// Where this quark's per-section prompt-size breakdown is persisted (see
     /// `hadron_lattice::prompt_cost`). Same absence rule as `live_dir`.
     prompt_cost_dir: Option<PathBuf>,
+    /// Shared cancel slot populated for the duration of `excite` so the dispatch
+    /// loop can interrupt an in-flight HTTP turn in `<1ms`.
+    cancel_slot: Option<crate::quark::CancelSlot>,
 }
 
 impl LocalQuark {
@@ -640,6 +643,7 @@ impl LocalQuark {
             deny_skills: Vec::new(),
             live_dir: None,
             prompt_cost_dir: None,
+            cancel_slot: None,
         }
     }
 
@@ -698,8 +702,32 @@ impl Quark for LocalQuark {
     fn energy_limit(&self) -> Option<u32> {
         self.energy_limit
     }
+    fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
+        self.cancel_slot = Some(slot);
+    }
 
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
+        let cancel_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cancelled_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Some(slot) = &self.cancel_slot {
+            let notify = cancel_notify.clone();
+            let flag = cancelled_flag.clone();
+            slot.set(Some(std::sync::Arc::new(move || {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                notify.notify_waiters();
+                true
+            })));
+        }
+        struct ClearCancelSlot(Option<crate::quark::CancelSlot>);
+        impl Drop for ClearCancelSlot {
+            fn drop(&mut self) {
+                if let Some(slot) = &self.0 {
+                    slot.set(None);
+                }
+            }
+        }
+        let _cancel_guard = ClearCancelSlot(self.cancel_slot.clone());
+
         let system_prompt = crate::adapter::prompt::build_cache_stable_prefix(&turn);
         let mut user_prompt = crate::adapter::prompt::build_dynamic_suffix(&turn, &self.id);
         let root = hadron_forge::file::Root::new(turn.cwd.clone());
@@ -721,113 +749,142 @@ impl Quark for LocalQuark {
         let mut spend = hadron_lattice::TokenSpend::default();
         let mut loop_watchdog = crate::watchdog::LoopWatchdog::default();
 
-        for round in 0..MAX_TOOL_ROUNDS {
-            let mut draft = String::new();
-            let mut thought = String::new();
-            let mut last_publish: Option<Instant> = None;
-            let (text, calls, usage) =
-                stream_chat(&self.target, &self.model, &messages, tools.as_ref(), |doing, delta| {
-                    // Two buffers, because they are two different things: the draft is
-                    // the reply the chat will show, the thought is only ever the Live
-                    // card's "thinking" line. Mirrors `adapter::acp::session`'s split.
-                    let buf = if doing == Doing::Speaking { &mut draft } else { &mut thought };
-                    buf.push_str(delta);
-                    let Some(dir) = &dir else { return };
-                    let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
-                    if due {
-                        last_publish = Some(Instant::now());
-                        let mut activity = if doing == Doing::Speaking {
-                            Activity::speaking(quark_id.clone(), &draft)
-                        } else {
-                            Activity::new(quark_id.clone(), Doing::Thinking, &thought)
-                        };
-                        crate::adapter::telemetry::TurnTelemetrySink::publish_activity(
-                            dir,
-                            &mut activity,
-                        );
+        let run_rounds = async {
+            for round in 0..MAX_TOOL_ROUNDS {
+                let mut draft = String::new();
+                let mut thought = String::new();
+                let mut last_publish: Option<Instant> = None;
+                let (text, calls, usage) =
+                    stream_chat(&self.target, &self.model, &messages, tools.as_ref(), |doing, delta| {
+                        // Two buffers, because they are two different things: the draft is
+                        // the reply the chat will show, the thought is only ever the Live
+                        // card's "thinking" line. Mirrors `adapter::acp::session`'s split.
+                        let buf = if doing == Doing::Speaking { &mut draft } else { &mut thought };
+                        buf.push_str(delta);
+                        let Some(dir) = &dir else { return };
+                        let due = last_publish.is_none_or(|t| t.elapsed() >= PUBLISH_THROTTLE);
+                        if due {
+                            last_publish = Some(Instant::now());
+                            let mut activity = if doing == Doing::Speaking {
+                                Activity::speaking(quark_id.clone(), &draft)
+                            } else {
+                                Activity::new(quark_id.clone(), Doing::Thinking, &thought)
+                            };
+                            crate::adapter::telemetry::TurnTelemetrySink::publish_activity(
+                                dir,
+                                &mut activity,
+                            );
+                        }
+                    })
+                    .await?;
+                accumulate_spend(&mut spend, &usage.spend);
+
+                if calls.is_empty() {
+                    if let Some(dir) = &self.live_dir {
+                        crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
                     }
-                })
-                .await?;
-            accumulate_spend(&mut spend, &usage.spend);
-
-            if calls.is_empty() {
-                if let Some(dir) = &self.live_dir {
-                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                    return Ok(TurnOutcome {
+                        message: Some(text),
+                        usage: hadron_lattice::Usage { spend, ..Default::default() },
+                        ..Default::default()
+                    });
                 }
-                return Ok(TurnOutcome {
-                    message: Some(text),
-                    usage: hadron_lattice::Usage { spend, ..Default::default() },
-                    ..Default::default()
-                });
-            }
 
-            let round_sig = calls
-                .iter()
-                .map(|c| format!("{}:{}", c.function.name, c.function.arguments))
-                .collect::<Vec<_>>()
-                .join(";");
-            if let Some(diag) = loop_watchdog.observe(&round_sig) {
-                if let Some(dir) = &self.live_dir {
-                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
-                }
-                return Ok(TurnOutcome {
-                    message: Some(diag),
-                    usage: hadron_lattice::Usage { spend, ..Default::default() },
-                    ..Default::default()
-                });
-            }
-
-            messages.push(json!({
-                "role": "assistant",
-                "content": text,
-                "tool_calls": calls.iter().map(|c| json!({
-                    "id": c.id, "type": "function",
-                    "function": { "name": c.function.name, "arguments": c.echoed_arguments(self.target.vendor) }
-                })).collect::<Vec<_>>(),
-            }));
-            let call_futs = calls.iter().map(|call| {
-                let root = &root;
-                let quark_id = quark_id.clone();
-                let live_dir = self.live_dir.clone();
-                let call_name = call.function.name.clone();
-                let call_args = call.arguments_json();
-                let call_id = call.id.clone();
-                async move {
-                    if let Some(dir) = &live_dir {
-                        let mut activity = Activity::new(
-                            quark_id,
-                            Doing::Working,
-                            &format!("round {}: {}", round + 1, call_name),
-                        );
-                        crate::adapter::telemetry::TurnTelemetrySink::publish_activity(
-                            dir,
-                            &mut activity,
-                        );
+                let round_sig = calls
+                    .iter()
+                    .map(|c| format!("{}:{}", c.function.name, c.function.arguments))
+                    .collect::<Vec<_>>()
+                    .join(";");
+                if let Some(diag) = loop_watchdog.observe(&round_sig) {
+                    if let Some(dir) = &self.live_dir {
+                        crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
                     }
-                    let result =
-                        crate::adapter::local_tools::execute(root, mode, &call_name, &call_args);
-                    (call_id, truncate_tool_result(&result))
+                    return Ok(TurnOutcome {
+                        message: Some(diag),
+                        usage: hadron_lattice::Usage { spend, ..Default::default() },
+                        ..Default::default()
+                    });
                 }
-            });
-            let batch_results = crate::adapter::acp::dispatch_batched_tool_calls(call_futs).await;
-            for (call_id, content) in batch_results {
+
                 messages.push(json!({
-                    "role": "tool", "tool_call_id": call_id, "content": content,
+                    "role": "assistant",
+                    "content": text,
+                    "tool_calls": calls.iter().map(|c| json!({
+                        "id": c.id, "type": "function",
+                        "function": { "name": c.function.name, "arguments": c.echoed_arguments(self.target.vendor) }
+                    })).collect::<Vec<_>>(),
                 }));
+                let call_futs = calls.iter().map(|call| {
+                    let root = &root;
+                    let quark_id = quark_id.clone();
+                    let live_dir = self.live_dir.clone();
+                    let call_name = call.function.name.clone();
+                    let call_args = call.arguments_json();
+                    let call_id = call.id.clone();
+                    async move {
+                        if let Some(dir) = &live_dir {
+                            let mut activity = Activity::new(
+                                quark_id,
+                                Doing::Working,
+                                &format!("round {}: {}", round + 1, call_name),
+                            );
+                            crate::adapter::telemetry::TurnTelemetrySink::publish_activity(
+                                dir,
+                                &mut activity,
+                            );
+                        }
+                        let result =
+                            crate::adapter::local_tools::execute(root, mode, &call_name, &call_args);
+                        (call_id, truncate_tool_result(&result))
+                    }
+                });
+                let batch_results = crate::adapter::acp::dispatch_batched_tool_calls(call_futs).await;
+                for (call_id, content) in batch_results {
+                    messages.push(json!({
+                        "role": "tool", "tool_call_id": call_id, "content": content,
+                    }));
+                }
+            }
+
+            if let Some(dir) = &self.live_dir {
+                crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+            }
+            Ok(TurnOutcome {
+                message: Some(format!(
+                    "I ran {MAX_TOOL_ROUNDS} tool rounds without reaching an answer and stopped. \
+                     The work so far is on disk; ask me to continue."
+                )),
+                usage: hadron_lattice::Usage { spend, ..Default::default() },
+                ..Default::default()
+            })
+        };
+
+        tokio::select! {
+            biased;
+            _ = cancel_notify.notified() => {
+                if let Some(dir) = &self.live_dir {
+                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                }
+                Ok(TurnOutcome {
+                    message: None,
+                    cancelled: true,
+                    ..Default::default()
+                })
+            }
+            res = run_rounds => {
+                if cancelled_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    if let Some(dir) = &self.live_dir {
+                        crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                    }
+                    return Ok(TurnOutcome {
+                        message: None,
+                        cancelled: true,
+                        ..Default::default()
+                    });
+                }
+                res
             }
         }
-
-        if let Some(dir) = &self.live_dir {
-            crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
-        }
-        Ok(TurnOutcome {
-            message: Some(format!(
-                "I ran {MAX_TOOL_ROUNDS} tool rounds without reaching an answer and stopped. \
-                 The work so far is on disk; ask me to continue."
-            )),
-            usage: hadron_lattice::Usage { spend, ..Default::default() },
-            ..Default::default()
-        })
     }
 }
 

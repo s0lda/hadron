@@ -61,6 +61,7 @@ impl Engine {
         let field_path = self.field_path().to_path_buf();
         let bridge_shutdown = shutdown.clone();
         let bridge_change_tx = change_tx.clone();
+        let bridge_wake_notify = self.wake_notifier();
         let bridge = tokio::task::spawn_blocking(move || {
             // If the watcher can't be created (e.g. dir missing), drop the
             // sender and let the daemon fall back to pure safety-polling.
@@ -71,6 +72,7 @@ impl Engine {
             while !*bridge_shutdown.borrow() {
                 if watcher.wait(Duration::from_millis(200)) {
                     let _ = bridge_change_tx.try_send(());
+                    bridge_wake_notify.notify_one();
                 }
             }
         });
@@ -85,7 +87,8 @@ impl Engine {
         }
         let dispatcher = std::sync::Arc::new(
             crate::rpc_server::RpcDispatcher::new(bus)
-                .with_field_and_wake(self.field_path().to_path_buf(), change_tx.clone()),
+                .with_field_and_wake(self.field_path().to_path_buf(), change_tx.clone())
+                .with_wake_notify(self.wake_notifier()),
         );
         let rpc_server_task = match crate::rpc_server::RpcServer::bind_and_serve(&hadron_dir, dispatcher, shutdown.clone()).await {
             Ok((addr, handle)) => {

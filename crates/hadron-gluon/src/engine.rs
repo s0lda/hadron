@@ -542,6 +542,10 @@ pub struct Engine {
     pub max_concurrent_gates: usize,
     pub gate_batch_size: usize,
     pub fast_path_docs_only: bool,
+    /// Wakes `run_until_quiesce`'s in-flight `select!` loop immediately when a
+    /// new message arrives (via `daemon/wake` RPC or `FieldWatcher`), avoiding
+    /// the up-to-150ms `FIELD_POLL` sleep before an interrupt is noticed.
+    wake_notify: Arc<tokio::sync::Notify>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -648,7 +652,20 @@ impl Engine {
             max_concurrent_gates: 1,
             gate_batch_size: 1,
             fast_path_docs_only: false,
+            wake_notify: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Return a shared handle to the in-flight wake notifier so the RPC server
+    /// and `FieldWatcher` can wake `run_until_quiesce` in `<1ms` while turns
+    /// are active.
+    pub fn wake_notifier(&self) -> Arc<tokio::sync::Notify> {
+        self.wake_notify.clone()
+    }
+
+    /// Trigger an immediate wake of `run_until_quiesce`.
+    pub fn notify_wake(&self) {
+        self.wake_notify.notify_one();
     }
 
     /// Access the engine's speculative pre-testing shadow gate cache.
