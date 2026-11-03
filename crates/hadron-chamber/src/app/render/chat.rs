@@ -107,15 +107,19 @@ pub(super) fn prompt_anatomy_fractions(
     ]
 }
 
+pub(super) fn prompt_anatomy_colors() -> [gpui::Hsla; 5] {
+    [
+        theme::info().into(),
+        theme::success().into(),
+        theme::accent(),
+        theme::warning().into(),
+        theme::error().into(),
+    ]
+}
+
 impl super::Chamber {
     fn render_prompt_anatomy_circle(fractions: [(usize, f32); 5]) -> impl IntoElement {
-        let colors = [
-            theme::info(),
-            theme::success(),
-            theme::accent(),
-            theme::warning(),
-            theme::error(),
-        ];
+        let colors = prompt_anatomy_colors();
         gpui::canvas(
             |_, _, _| {},
             move |bounds, _, window, _cx| {
@@ -227,27 +231,16 @@ impl super::Chamber {
             Some(id) => format!("Prompt Context Anatomy (@{id}):"),
             None => "Prompt Context Anatomy:".to_string(),
         };
-        let tooltip_text = format!(
-            "{header_line}\n\
-             • Rules/Invariants: {:.1} KB ({:.0}%)\n\
-             • Nucleus Memory: {:.1} KB ({:.0}%)\n\
-             • Active Skill: {:.1} KB ({:.0}%)\n\
-             • Task/Directive: {:.1} KB ({:.0}%)\n\
-             • Transcript/Tools: {:.1} KB ({:.0}%)\n\
-             Total: {:.1} KB (~{} tokens)",
-            rules as f32 / 1024.0,
-            rules_pct,
-            nucleus as f32 / 1024.0,
-            nucleus_pct,
-            skill as f32 / 1024.0,
-            skill_pct,
-            task as f32 / 1024.0,
-            task_pct,
-            transcript as f32 / 1024.0,
-            transcript_pct,
-            total_kb,
-            est_tokens
-        );
+
+        let colors = prompt_anatomy_colors();
+        let items = [
+            ("Rules/Invariants", rules, rules_pct, colors[0]),
+            ("Nucleus Memory", nucleus, nucleus_pct, colors[1]),
+            ("Active Skill", skill, skill_pct, colors[2]),
+            ("Task/Directive", task, task_pct, colors[3]),
+            ("Transcript/Tools", transcript, transcript_pct, colors[4]),
+        ];
+        let footer_line = format!("Total: {:.1} KB (~{} tokens)", total_kb, est_tokens);
 
         h_flex()
             .id("prompt-anatomy-hud")
@@ -261,7 +254,45 @@ impl super::Chamber {
             .border_1()
             .border_color(theme::glass_highlight())
             .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tooltip_text.clone()).build(window, cx)
+                let header = header_line.clone();
+                let footer = footer_line.clone();
+                let items_clone = items;
+                gpui_component::tooltip::Tooltip::element(move |_window, _cx| {
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme::text())
+                                .child(header),
+                        )
+                        .children(items_clone.iter().map(|(label, bytes, pct, color)| {
+                            h_flex()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .size(px(7.0))
+                                        .rounded_full()
+                                        .bg(*color)
+                                        .flex_none(),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_secondary())
+                                        .child(format!("{label}: {:.1} KB ({:.0}%)", *bytes as f32 / 1024.0, pct)),
+                                )
+                        }))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(footer),
+                        )
+                })
+                .build(window, cx)
             })
             .child(Self::render_prompt_anatomy_circle(fractions))
             .child(
@@ -2725,6 +2756,12 @@ mod milestone_3_tests {
         assert!((fractions[3].1 - 0.10).abs() < 1e-5);
         assert_eq!(fractions[4].0, 3_000);
         assert!((fractions[4].1 - 0.30).abs() < 1e-5);
+    }
+
+    #[test]
+    fn prompt_anatomy_colors_returns_five_colors() {
+        let colors = super::prompt_anatomy_colors();
+        assert_eq!(colors.len(), 5);
     }
 }
 

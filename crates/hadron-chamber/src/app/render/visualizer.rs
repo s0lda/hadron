@@ -827,9 +827,8 @@ impl super::Chamber {
                 .justify_between()
                 .items_center()
                 .p_3()
-                .rounded_lg()
                 .bg(theme::term_bg())
-                .border_1()
+                .border_t_1()
                 .border_color(theme::glass_highlight())
                 .child(
                     h_flex()
