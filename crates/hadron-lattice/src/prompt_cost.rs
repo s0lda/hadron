@@ -58,10 +58,8 @@ pub fn save(dir: &Path, quark: &QuarkId, breakdown: &PromptBreakdown) -> std::io
 
     let marker = latest_marker_file(dir);
     let marker_tmp = dir.join("latest.tmp");
-    if std::fs::write(&marker_tmp, quark.as_str()).is_ok() {
-        let _ = std::fs::rename(&marker_tmp, &marker);
-    }
-    Ok(())
+    std::fs::write(&marker_tmp, quark.as_str())?;
+    std::fs::rename(&marker_tmp, &marker)
 }
 
 /// The breakdown last persisted for this quark. `None` if it has never run a
@@ -229,7 +227,7 @@ mod tests {
         save(&dir, &old_id, &PromptBreakdown { task: 111, ..Default::default() }).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
         save(&dir, &new_id, &PromptBreakdown { task: 888, ..Default::default() }).unwrap();
-        let _ = std::fs::remove_file(latest_marker_file(&dir));
+        std::fs::remove_file(latest_marker_file(&dir)).unwrap();
 
         let roster_ids = vec!["acp-claude-2".to_string(), "cli-agy".to_string()];
         let (picked_id, picked_breakdown) = load_latest(&dir, &roster_ids).unwrap();
