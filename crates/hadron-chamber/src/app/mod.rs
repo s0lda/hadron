@@ -78,7 +78,8 @@ use identity::{
 
 mod tabs;
 use tabs::{
-    ChatTab, GitSubtab, InfoTab, MissionSubtab, Rail, RightRailTab, RosterTab, VisualizerMode,
+    BranchScope, ChatTab, GitSubtab, InfoTab, MissionSubtab, Rail, RightRailTab, RosterTab,
+    VisualizerMode,
 };
 
 mod providers;
@@ -323,6 +324,9 @@ struct Chamber {
     /// (like `working_diff`) rather than every render — each is its own git subprocess.
     git_branch_fingerprint: Option<String>,
     git_branches: Option<Vec<crate::vcs::BranchInfo>>,
+    git_remote_branches: Option<Vec<crate::vcs::BranchInfo>>,
+    git_branch_scope: BranchScope,
+    git_fetching_remotes: bool,
     git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
     git_log_graph: Option<String>,
     git_scroll: ScrollHandle,
@@ -1431,7 +1435,9 @@ impl Chamber {
                                     chamber.prefs.repo_monitor_interval_secs.max(10),
                                 )
                         }));
-                let prev_fp = if chamber.git_branches.is_some() {
+                let prev_fp = if chamber.git_branches.is_some()
+                    && chamber.git_remote_branches.is_some()
+                {
                     chamber.git_branch_fingerprint.clone()
                 } else {
                     None
@@ -1449,6 +1455,7 @@ impl Chamber {
                     need_health,
                     prev_fp,
                     chamber.file_tree_paths.is_empty(),
+                    chamber.last_plan_path.clone(),
                 ))
             }) {
                 Ok(Some(s)) => s,
@@ -1460,7 +1467,7 @@ impl Chamber {
             let do_workspace_scan = !is_wsl_path
                 || state.9
                 || tick_count.is_multiple_of(5)
-                || state.6 == RightRailTab::Git;
+                || matches!(state.6, RightRailTab::Git | RightRailTab::Mission);
             tick_count = tick_count.wrapping_add(1);
             if do_workspace_scan && state.7 {
                 last_health_scan = Some(std::time::Instant::now());
@@ -1478,9 +1485,10 @@ impl Chamber {
                         &state.5,
                         do_workspace_scan,
                         state.6 == RightRailTab::Git,
-                        state.6 == RightRailTab::Git,
+                        matches!(state.6, RightRailTab::Git | RightRailTab::Mission),
                         state.7,
                         state.8.as_deref(),
+                        state.10.as_deref(),
                     )
                 })
                 .await;
@@ -1682,6 +1690,9 @@ impl Chamber {
             changes_scroll: ScrollHandle::new(),
             git_branch_fingerprint: None,
             git_branches: None,
+            git_remote_branches: None,
+            git_branch_scope: BranchScope::All,
+            git_fetching_remotes: false,
             git_worktrees: None,
             git_log_graph: None,
             git_scroll: ScrollHandle::new(),

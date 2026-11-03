@@ -73,6 +73,7 @@ impl Chamber {
             }
         }
 
+        crate::vcs::clear_unmerged_commit_cache();
         let graph = TaskGraph::parse_from_markdown(content);
         let waves = match graph.compute_waves() {
             Ok(w) => w,

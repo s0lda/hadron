@@ -85,6 +85,8 @@ impl super::Chamber {
                                             this.post_chat_message(Actor::Gluon, msg, cx);
                                             let repo = crate::vcs::repo_root_of(&this.path).to_path_buf();
                                             this.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
+                                            this.git_remote_branches =
+                                                Some(crate::vcs::list_remote_branches(&repo, "main"));
                                             this.git_worktrees = Some(crate::vcs::list_worktrees(&repo));
                                             this.git_log_graph = crate::vcs::commit_graph(&repo);
                                             this.rebuild_graph_rows();
@@ -314,67 +316,342 @@ impl super::Chamber {
 
     // ── Branches ───────────────────────────────────────────────────────────────
 
+    /// Return the ordered list of branch entries visible under the active [`BranchScope`]
+    /// so cursor navigation (`j`/`k` and `Enter`) and row rendering share one index space.
+    pub(in crate::app) fn visible_branches(&self) -> Vec<&crate::vcs::BranchInfo> {
+        let local = self.git_branches.as_deref().unwrap_or(&[]);
+        let remote = self.git_remote_branches.as_deref().unwrap_or(&[]);
+        match self.git_branch_scope {
+            BranchScope::All => local.iter().chain(remote.iter()).collect(),
+            BranchScope::Local => local.iter().collect(),
+            BranchScope::Remote => remote.iter().collect(),
+        }
+    }
+
+    fn render_branch_row(
+        &self,
+        branch: &crate::vcs::BranchInfo,
+        is_remote: bool,
+        cursor_ix: usize,
+        mono_font: &gpui::SharedString,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let color = if branch.merged { MERGED_COLOR } else { UNMERGED_COLOR };
+        let is_selected = self.git_selected_branch.as_deref() == Some(branch.name.as_str());
+        let name = branch.name.clone();
+        let is_cursor = self.git_cursor_branch == Some(cursor_ix);
+        let row = h_flex()
+            .id(("branch-row", cursor_ix))
+            .w_full()
+            .gap_2()
+            .items_center()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_surface_raised()))
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .when(is_cursor, |d| {
+                d.bg(theme::bg_surface_raised())
+                    .border_color(theme::accent())
+            })
+            .when(is_selected && !is_cursor, |d| d.bg(theme::bg_surface_raised()))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.git_focus, cx);
+                this.git_cursor_branch = Some(cursor_ix);
+                this.select_branch(name.clone());
+                cx.notify();
+            }))
+            .child(Self::commit_token(&branch.head, color, mono_font))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .when(branch.is_current, |d| d.text_color(theme::accent()))
+                    .when(is_remote, |d| d.text_color(theme::text()))
+                    .child(branch.name.clone()),
+            )
+            .when(branch.is_current, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_sm()
+                        .bg(theme::accent_soft())
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::accent())
+                        .child("HEAD"),
+                )
+            })
+            .when(is_remote, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_sm()
+                        .bg(theme::bg_surface())
+                        .border_1()
+                        .border_color(theme::glass_highlight())
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child("remote"),
+                )
+            });
+
+        // The diff panel is an accordion under the row that was clicked.
+        // Appending it after the whole list instead put it thousands of
+        // pixels below the fold with 126 branches — the click looked dead.
+        let mut entry = v_flex().w_full().child(row);
+        if is_selected {
+            entry = entry.child(self.branch_diff_panel(&branch.name, cx));
+        }
+        entry.into_any_element()
+    }
+
     fn git_branches_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mono_font = cx.theme().mono_font_family.clone();
-        let rows: gpui::AnyElement = match &self.git_branches {
-            None => Self::muted("Loading branches...").into_any_element(),
-            Some(branches) if branches.is_empty() => {
-                Self::muted("No local branches.").into_any_element()
-            }
-            Some(branches) => {
-                let mut list = v_flex().w_full();
-                for (ix, branch) in branches.iter().enumerate() {
-                    let color = if branch.merged { MERGED_COLOR } else { UNMERGED_COLOR };
-                    let is_selected =
-                        self.git_selected_branch.as_deref() == Some(branch.name.as_str());
-                    let name = branch.name.clone();
-                    let is_cursor = self.git_cursor_branch == Some(ix);
-                    let row = h_flex()
-                        .id(("branch-row", ix))
-                        .w_full()
-                        .gap_2()
-                        .items_center()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::bg_surface_raised()))
-                        .border_1()
-                        .border_color(gpui::transparent_black())
-                        .when(is_cursor, |d| {
-                            d.bg(theme::bg_surface_raised())
-                                .border_color(theme::accent())
-                        })
-                        .when(is_selected && !is_cursor, |d| d.bg(theme::bg_surface_raised()))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            window.focus(&this.git_focus, cx);
-                            this.git_cursor_branch = Some(ix);
-                            this.select_branch(name.clone());
-                            cx.notify();
-                        }))
-                        .child(Self::commit_token(&branch.head, color, &mono_font))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .when(branch.is_current, |d| d.text_color(theme::accent()))
-                                .child(branch.name.clone()),
-                        );
-                    // The diff panel is an accordion under the row that was clicked.
-                    // Appending it after the whole list instead put it thousands of
-                    // pixels below the fold with 126 branches — the click looked dead.
-                    let mut entry = v_flex().w_full().child(row);
-                    if is_selected {
-                        entry = entry.child(self.branch_diff_panel(&branch.name, cx));
-                    }
-                    list = list.child(entry);
+        let local_count = self.git_branches.as_ref().map(|b| b.len()).unwrap_or(0);
+        let remote_count = self.git_remote_branches.as_ref().map(|b| b.len()).unwrap_or(0);
+        let total_count = local_count + remote_count;
+        let selected_scope = self.git_branch_scope;
+        let fetching = self.git_fetching_remotes;
+
+        let scope_pills = h_flex()
+            .id("git-branch-scope-pills")
+            .items_center()
+            .gap_1()
+            .p_0p5()
+            .rounded_full()
+            .bg(theme::tab_bar_bg())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .children(BranchScope::ALL.map(|scope| {
+                let is_sel = scope == selected_scope;
+                let ix = scope.index();
+                let count = match scope {
+                    BranchScope::All => total_count,
+                    BranchScope::Local => local_count,
+                    BranchScope::Remote => remote_count,
+                };
+                let label = format!("{} ({count})", scope.label());
+                div()
+                    .id(("branch-scope-pill", ix))
+                    .px_2p5()
+                    .py_0p5()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .text_xs()
+                    .when(is_sel, |s| {
+                        s.bg(theme::glass_highlight())
+                            .text_color(theme::accent())
+                            .font_weight(gpui::FontWeight::BOLD)
+                    })
+                    .when(!is_sel, |s| {
+                        s.text_color(theme::text_muted())
+                            .hover(|h| h.text_color(theme::text()))
+                    })
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.git_branch_scope = BranchScope::from_index(ix);
+                        this.git_cursor_branch = None;
+                        cx.notify();
+                    }))
+            }));
+
+        let fetch_btn = div()
+            .id("git-branches-fetch-btn")
+            .flex_none()
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(if fetching {
+                theme::accent()
+            } else {
+                theme::text_muted()
+            })
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+            .child(if fetching { "Fetching…" } else { "↻ Fetch" })
+            .on_click(cx.listener(|this, _, _, cx| {
+                if this.git_fetching_remotes {
+                    return;
                 }
-                list.into_any_element()
+                this.git_fetching_remotes = true;
+                cx.notify();
+                let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                cx.spawn(async move |this, cx| {
+                    let (fetch_res, fp, branches, remote_branches, worktrees, graph, remote_info) = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let fetch_res = crate::vcs::fetch_remotes(&root);
+                            let fp = crate::vcs::branch_fingerprint(&root);
+                            let branches = crate::vcs::list_branches(&root, "main");
+                            let remote_branches = crate::vcs::list_remote_branches(&root, "main");
+                            let worktrees = crate::vcs::list_worktrees(&root);
+                            let graph = crate::vcs::commit_graph(&root);
+                            let remote_info = crate::vcs::get_remote_tracking_info(&root);
+                            (fetch_res, fp, branches, remote_branches, worktrees, graph, remote_info)
+                        })
+                        .await;
+                    let _ = this.update(cx, |chamber, cx| {
+                        chamber.git_fetching_remotes = false;
+                        chamber.git_branch_fingerprint = Some(fp);
+                        chamber.git_branches = Some(branches);
+                        chamber.git_remote_branches = Some(remote_branches);
+                        chamber.git_worktrees = Some(worktrees);
+                        chamber.git_log_graph = graph;
+                        chamber.git_remote_info = Some(remote_info);
+                        chamber.rebuild_graph_rows();
+                        match fetch_res {
+                            Ok(msg) => {
+                                chamber.toast_manager.push(ToastKind::Success, msg, None);
+                            }
+                            Err(err) => {
+                                chamber.toast_manager.push(
+                                    ToastKind::Warning,
+                                    format!("Fetch failed: {err}"),
+                                    None,
+                                );
+                            }
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }));
+
+        let toolbar = h_flex()
+            .w_full()
+            .justify_between()
+            .items_center()
+            .gap_2()
+            .pb_2()
+            .child(scope_pills)
+            .child(fetch_btn);
+
+        let rows: gpui::AnyElement = if self.git_branches.is_none() && self.git_remote_branches.is_none() {
+            Self::muted("Loading branches...").into_any_element()
+        } else {
+            let local = self.git_branches.as_deref().unwrap_or(&[]);
+            let remote = self.git_remote_branches.as_deref().unwrap_or(&[]);
+            match selected_scope {
+                BranchScope::Local => {
+                    if local.is_empty() {
+                        Self::muted("No local branches.").into_any_element()
+                    } else {
+                        let mut list = v_flex().w_full();
+                        for (ix, branch) in local.iter().enumerate() {
+                            list = list.child(self.render_branch_row(
+                                branch,
+                                false,
+                                ix,
+                                &mono_font,
+                                cx,
+                            ));
+                        }
+                        list.into_any_element()
+                    }
+                }
+                BranchScope::Remote => {
+                    if remote.is_empty() {
+                        Self::muted("No remote-tracking branches found.").into_any_element()
+                    } else {
+                        let mut list = v_flex().w_full();
+                        for (ix, branch) in remote.iter().enumerate() {
+                            list = list.child(self.render_branch_row(
+                                branch,
+                                true,
+                                ix,
+                                &mono_font,
+                                cx,
+                            ));
+                        }
+                        list.into_any_element()
+                    }
+                }
+                BranchScope::All => {
+                    if local.is_empty() && remote.is_empty() {
+                        Self::muted("No local or remote branches.").into_any_element()
+                    } else {
+                        let mut list = v_flex().w_full().gap_2();
+                        let mut local_sec = v_flex().w_full();
+                        local_sec = local_sec.child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme::text_muted())
+                                .child(format!("LOCAL BRANCHES ({})", local.len())),
+                        );
+                        if local.is_empty() {
+                            local_sec = local_sec.child(
+                                div().px_2().py_1().child(Self::muted("No local branches.")),
+                            );
+                        } else {
+                            for (ix, branch) in local.iter().enumerate() {
+                                local_sec = local_sec.child(self.render_branch_row(
+                                    branch,
+                                    false,
+                                    ix,
+                                    &mono_font,
+                                    cx,
+                                ));
+                            }
+                        }
+                        list = list.child(local_sec);
+
+                        let mut remote_sec = v_flex().w_full();
+                        remote_sec = remote_sec.child(
+                            div()
+                                .px_2()
+                                .py_0p5()
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .text_color(theme::text_muted())
+                                .child(format!("REMOTE BRANCHES ({})", remote.len())),
+                        );
+                        if remote.is_empty() {
+                            remote_sec = remote_sec.child(
+                                div()
+                                    .px_2()
+                                    .py_1()
+                                    .child(Self::muted("No remote-tracking branches.")),
+                            );
+                        } else {
+                            let offset = local.len();
+                            for (ix, branch) in remote.iter().enumerate() {
+                                remote_sec = remote_sec.child(self.render_branch_row(
+                                    branch,
+                                    true,
+                                    offset + ix,
+                                    &mono_font,
+                                    cx,
+                                ));
+                            }
+                        }
+                        list = list.child(remote_sec);
+                        list.into_any_element()
+                    }
+                }
             }
         };
 
-        rows
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(toolbar)
+            .child(rows)
     }
 
     /// Compute (or toggle off) the diff of a branch against `main`. Clicking the
@@ -795,8 +1072,10 @@ impl super::Chamber {
     pub(super) fn branch_merged(&self, branch: Option<&str>) -> Option<bool> {
         let name = branch?;
         self.git_branches
-            .as_ref()?
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
+            .chain(self.git_remote_branches.as_deref().unwrap_or(&[]).iter())
             .find(|b| b.name == name)
             .map(|b| b.merged)
     }

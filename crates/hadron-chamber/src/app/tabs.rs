@@ -263,6 +263,44 @@ impl RightRailTab {
     }
 }
 
+/// The filter scope inside [`GitSubtab::Branches`]: both local and remote branches,
+/// local only (`refs/heads/*`), or remote-tracking only (`refs/remotes/*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum BranchScope {
+    #[default]
+    All,
+    Local,
+    Remote,
+}
+
+impl BranchScope {
+    pub(super) const ALL: [BranchScope; 3] = [
+        BranchScope::All,
+        BranchScope::Local,
+        BranchScope::Remote,
+    ];
+
+    pub(super) fn index(self) -> usize {
+        match self {
+            BranchScope::All => 0,
+            BranchScope::Local => 1,
+            BranchScope::Remote => 2,
+        }
+    }
+
+    pub(super) fn from_index(ix: usize) -> Self {
+        Self::ALL.get(ix).copied().unwrap_or(BranchScope::All)
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            BranchScope::All => "All",
+            BranchScope::Local => "Local",
+            BranchScope::Remote => "Remote",
+        }
+    }
+}
+
 /// The filter tabs for the roster rail: active quarks in this repo vs the entire catalogue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum RosterTab {
@@ -356,5 +394,21 @@ mod tests {
         assert_eq!(VisualizerMode::Swarm3D.label(), "Swarm 3D");
         assert_eq!(VisualizerMode::CratesAndModules.label(), "Dependencies");
         assert_eq!(VisualizerMode::NucleusGraph.label(), "Nucleus Graph");
+    }
+
+    #[test]
+    fn test_branch_scope_indexing_and_defaults() {
+        assert_eq!(BranchScope::default(), BranchScope::All);
+        assert_eq!(BranchScope::ALL.len(), 3);
+        assert_eq!(BranchScope::All.index(), 0);
+        assert_eq!(BranchScope::Local.index(), 1);
+        assert_eq!(BranchScope::Remote.index(), 2);
+        assert_eq!(BranchScope::from_index(0), BranchScope::All);
+        assert_eq!(BranchScope::from_index(1), BranchScope::Local);
+        assert_eq!(BranchScope::from_index(2), BranchScope::Remote);
+        assert_eq!(BranchScope::from_index(99), BranchScope::All);
+        assert_eq!(BranchScope::All.label(), "All");
+        assert_eq!(BranchScope::Local.label(), "Local");
+        assert_eq!(BranchScope::Remote.label(), "Remote");
     }
 }

@@ -89,11 +89,26 @@ pub fn commit_diff(repo_root: &Path, commit: &str) -> Option<Vec<FileDiff>> {
     Some(parse_diff(&String::from_utf8_lossy(&out.stdout)))
 }
 
+type MergeCacheKey = (std::path::PathBuf, String, String);
+static MERGED_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<MergeCacheKey, (bool, std::time::Instant)>>,
+> = std::sync::OnceLock::new();
+
+/// Clear cached `false` (unmerged) entries from [`is_commit_merged`] so newly landed
+/// commits are re-checked immediately when branch refs or plan DAG caches update,
+/// while preserving already-merged (`true`) entries.
+pub fn clear_unmerged_commit_cache() {
+    if let Some(cache) = MERGED_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            guard.retain(|_, (merged, _)| *merged);
+        }
+    }
+}
+
 /// Checks if a commit hash is merged into / reachable from `target_branch` (e.g. "main").
 pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> bool {
     use std::collections::HashMap;
-    use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
     let clean_commit = commit.trim().trim_matches(|c: char| !c.is_ascii_alphanumeric());
@@ -101,8 +116,6 @@ pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> 
         return false;
     }
 
-    type CacheKey = (PathBuf, String, String);
-    static MERGED_CACHE: OnceLock<Mutex<HashMap<CacheKey, (bool, Instant)>>> = OnceLock::new();
     let cache = MERGED_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (
         repo_root.to_path_buf(),
@@ -389,11 +402,16 @@ pub fn parse_branches(
         .collect()
 }
 
-/// Raw ref fingerprint for branch heads to detect changes cheaply.
+/// Raw ref fingerprint for local and remote branch heads to detect changes cheaply.
 pub fn branch_fingerprint(repo_root: &Path) -> String {
     run_git(
         repo_root,
-        &["for-each-ref", "--format=%(refname:short) %(objectname:short)", "refs/heads/"],
+        &[
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname:short)",
+            "refs/heads/",
+            "refs/remotes/",
+        ],
     )
 }
 
@@ -416,6 +434,74 @@ pub fn list_branches(repo_root: &Path, target: &str) -> Vec<BranchInfo> {
     let merged: std::collections::HashSet<String> =
         merged_raw.lines().map(|s| s.trim().to_string()).collect();
     parse_branches(&refs, &current, &merged)
+}
+
+/// Parse `git for-each-ref --format='%(refname:short) %(objectname:short) %(symref)' refs/remotes/`
+/// output against a precomputed set of remote branch names already merged into `target`.
+/// Symbolic refs (such as `origin/HEAD`, which `%(refname:short)` formats as `origin` with a
+/// non-empty `%(symref)`) are skipped so only concrete remote-tracking branches are returned.
+pub fn parse_remote_branches(
+    raw: &str,
+    merged: &std::collections::HashSet<String>,
+) -> Vec<BranchInfo> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let name = parts.next()?.trim();
+            if name.is_empty() || !name.contains('/') || name.ends_with("/HEAD") {
+                return None;
+            }
+            let head = parts.next().unwrap_or("").trim().to_string();
+            let symref = parts.next().unwrap_or("").trim();
+            if !symref.is_empty() {
+                return None;
+            }
+            Some(BranchInfo {
+                is_current: false,
+                merged: merged.contains(name),
+                name: name.to_string(),
+                head,
+            })
+        })
+        .collect()
+}
+
+/// Every remote-tracking branch (`refs/remotes/*`), with `merged` set against `target` (e.g. `"main"`).
+pub fn list_remote_branches(repo_root: &Path, target: &str) -> Vec<BranchInfo> {
+    let refs = run_git(
+        repo_root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname:short) %(symref)",
+            "refs/remotes/",
+        ],
+    );
+    let merged_raw = run_git(
+        repo_root,
+        &["branch", "-r", "--merged", target, "--format=%(refname:short)"],
+    );
+    let merged: std::collections::HashSet<String> =
+        merged_raw.lines().map(|s| s.trim().to_string()).collect();
+    parse_remote_branches(&refs, &merged)
+}
+
+/// Fetch and prune remote-tracking branches (`git fetch --all --prune`).
+pub fn fetch_remotes(repo_root: &Path) -> Result<String, String> {
+    let out = hadron_lattice::wsl::git_command(repo_root)
+        .args(["fetch", "--all", "--prune"])
+        .output()
+        .map_err(|e| format!("Failed to invoke git fetch: {e}"))?;
+    if !out.status.success() {
+        let stderr = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&out.stderr))
+            .trim()
+            .to_string();
+        return Err(if stderr.is_empty() {
+            "git fetch --all --prune exited with non-zero status".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok("Fetched and pruned remote-tracking branches.".to_string())
 }
 
 /// One `git worktree list --porcelain` entry — a checkout of this repo living
@@ -2095,6 +2181,48 @@ quark/acp-agy/01K dead000";
         assert_eq!(branches[2], BranchInfo {
             name: "quark/acp-agy/01K".into(), head: "dead000".into(), is_current: false, merged: true,
         });
+    }
+
+    #[test]
+    fn parse_remote_branches_skips_symrefs_and_flags_merged() {
+        let raw = "\
+origin c32c1a49 refs/remotes/origin/main
+origin/HEAD c32c1a49 refs/remotes/origin/main
+origin/main c32c1a49 
+origin/feat/remote-view 99aabbcc 
+upstream/release 11223344 ";
+        let merged: std::collections::HashSet<String> =
+            ["origin".to_string(), "origin/main".to_string(), "upstream/release".to_string()]
+                .into_iter()
+                .collect();
+        let remotes = parse_remote_branches(raw, &merged);
+
+        assert_eq!(remotes.len(), 3);
+        assert_eq!(remotes[0], BranchInfo {
+            name: "origin/main".into(), head: "c32c1a49".into(), is_current: false, merged: true,
+        });
+        assert_eq!(remotes[1], BranchInfo {
+            name: "origin/feat/remote-view".into(), head: "99aabbcc".into(), is_current: false, merged: false,
+        });
+        assert_eq!(remotes[2], BranchInfo {
+            name: "upstream/release".into(), head: "11223344".into(), is_current: false, merged: true,
+        });
+    }
+
+    #[test]
+    fn clear_unmerged_commit_cache_drops_false_and_keeps_true() {
+        let cache = MERGED_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let k_merged = (PathBuf::from("/tmp/repo-test"), "aaa1111".to_string(), "main".to_string());
+        let k_unmerged = (PathBuf::from("/tmp/repo-test"), "bbb2222".to_string(), "main".to_string());
+        {
+            let mut guard = cache.lock().unwrap();
+            guard.insert(k_merged.clone(), (true, std::time::Instant::now()));
+            guard.insert(k_unmerged.clone(), (false, std::time::Instant::now()));
+        }
+        clear_unmerged_commit_cache();
+        let guard = cache.lock().unwrap();
+        assert_eq!(guard.get(&k_merged).map(|(m, _)| *m), Some(true));
+        assert!(!guard.contains_key(&k_unmerged));
     }
 
     #[test]

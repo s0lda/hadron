@@ -48,20 +48,23 @@ impl super::Chamber {
                         if this.right_rail_tab == RightRailTab::Git {
                             let root = crate::vcs::repo_root_of(&this.path).to_path_buf();
                             cx.spawn(async move |this, cx| {
-                                let (fp, branches, worktrees, graph, diff) = cx
+                                let (fp, branches, remote_branches, worktrees, graph, diff) = cx
                                     .background_executor()
                                     .spawn(async move {
                                         let fp = crate::vcs::branch_fingerprint(&root);
                                         let branches = crate::vcs::list_branches(&root, "main");
+                                        let remote_branches =
+                                            crate::vcs::list_remote_branches(&root, "main");
                                         let worktrees = crate::vcs::list_worktrees(&root);
                                         let graph = crate::vcs::commit_graph(&root);
                                         let diff = crate::vcs::working_diff(&root);
-                                        (fp, branches, worktrees, graph, diff)
+                                        (fp, branches, remote_branches, worktrees, graph, diff)
                                     })
                                     .await;
                                 let _ = this.update(cx, |chamber, cx| {
                                     chamber.git_branch_fingerprint = Some(fp);
                                     chamber.git_branches = Some(branches);
+                                    chamber.git_remote_branches = Some(remote_branches);
                                     chamber.git_worktrees = Some(worktrees);
                                     chamber.git_log_graph = graph;
                                     chamber.working_diff = diff;
@@ -70,6 +73,8 @@ impl super::Chamber {
                                 });
                             })
                             .detach();
+                        } else if this.right_rail_tab == RightRailTab::Mission {
+                            this.refresh_mission_plan(cx);
                         }
                         cx.notify();
                     }))
@@ -1030,6 +1035,9 @@ impl super::Chamber {
                             .child(label)
                             .on_click(cx.listener(move |this, _, _window, cx| {
                                 this.mission_subtab = MissionSubtab::from_index(ix);
+                                if this.mission_subtab == MissionSubtab::Plan {
+                                    this.refresh_mission_plan(cx);
+                                }
                                 cx.notify();
                             }))
                     }));
@@ -1105,6 +1113,7 @@ impl super::Chamber {
                         let title_row = h_flex()
                             .justify_between()
                             .items_center()
+                            .gap_2()
                             .w_full()
                             .child(
                                 div()
@@ -1114,29 +1123,55 @@ impl super::Chamber {
                                     .child("Implementation Plan"),
                             )
                             .child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .bg(theme::bg_base())
-                                    .border_1()
-                                    .border_color(if landed_count == total && total > 0 {
-                                        theme::success().opacity(0.45).into()
-                                    } else if branch_count > 0 {
-                                        theme::info().opacity(0.45).into()
-                                    } else {
-                                        theme::glass_highlight()
-                                    })
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(if landed_count == total && total > 0 {
-                                        theme::success()
-                                    } else if branch_count > 0 {
-                                        theme::info()
-                                    } else {
-                                        theme::accent()
-                                    })
-                                    .child(progress_badge_text),
+                                h_flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_full()
+                                            .bg(theme::bg_base())
+                                            .border_1()
+                                            .border_color(if landed_count == total && total > 0 {
+                                                theme::success().opacity(0.45).into()
+                                            } else if branch_count > 0 {
+                                                theme::info().opacity(0.45).into()
+                                            } else {
+                                                theme::glass_highlight()
+                                            })
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(if landed_count == total && total > 0 {
+                                                theme::success()
+                                            } else if branch_count > 0 {
+                                                theme::info()
+                                            } else {
+                                                theme::accent()
+                                            })
+                                            .child(progress_badge_text),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("mission-plan-refresh-btn")
+                                            .px_1p5()
+                                            .py_0p5()
+                                            .rounded_md()
+                                            .bg(theme::bg_base())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .cursor_pointer()
+                                            .hover(|s| {
+                                                s.bg(theme::bg_elevated())
+                                                    .text_color(theme::text())
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.refresh_mission_plan(cx);
+                                            }))
+                                            .child("↻"),
+                                    ),
                             );
 
                         let path_row = div()

@@ -2247,6 +2247,8 @@ impl Chamber {
                         self.post_chat_message(Actor::Gluon, msg, cx);
                         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
                         self.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
+                        self.git_remote_branches =
+                            Some(crate::vcs::list_remote_branches(&repo, "main"));
                         self.git_worktrees = Some(crate::vcs::list_worktrees(&repo));
                         self.git_log_graph = crate::vcs::commit_graph(&repo);
                         self.rebuild_graph_rows();
@@ -2896,7 +2898,7 @@ impl Chamber {
         }
         match self.git_subtab {
             GitSubtab::Branches => {
-                let len = self.git_branches.as_ref().map(|b| b.len()).unwrap_or(0);
+                let len = self.visible_branches().len();
                 if len == 0 {
                     self.git_cursor_branch = None;
                     return;
@@ -2948,8 +2950,11 @@ impl Chamber {
         match self.git_subtab {
             GitSubtab::Branches => {
                 if let Some(ix) = self.git_cursor_branch {
-                    if let Some(branch) = self.git_branches.as_ref().and_then(|b| b.get(ix)) {
-                        let name = branch.name.clone();
+                    if let Some(name) = self
+                        .visible_branches()
+                        .get(ix)
+                        .map(|branch| branch.name.clone())
+                    {
                         self.select_branch(name);
                         cx.notify();
                     }

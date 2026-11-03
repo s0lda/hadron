@@ -8,11 +8,13 @@ pub(super) struct WorkspaceScan {
     pub(super) working_diff: Option<Vec<crate::vcs::FileDiff>>,
     pub(super) git_branch_fingerprint: Option<String>,
     pub(super) git_branches: Option<Vec<crate::vcs::BranchInfo>>,
+    pub(super) git_remote_branches: Option<Vec<crate::vcs::BranchInfo>>,
     pub(super) git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
     pub(super) git_log_graph: Option<String>,
     pub(super) repo_health: Option<hadron_gatekeeper::RepoHealthReport>,
     pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
     pub(super) plan_paths: Vec<(std::time::SystemTime, String)>,
+    pub(super) active_plan_content: Option<(String, String)>,
     pub(super) nucleus_docs: (Option<String>, Option<String>, Option<String>),
     pub(super) nucleus_fingerprint: u64,
 }
@@ -25,6 +27,7 @@ impl WorkspaceScan {
         scan_git: bool,
         scan_health: bool,
         prev_branch_fingerprint: Option<&str>,
+        active_plan_hint: Option<&str>,
     ) -> Option<Self> {
         let files = crate::sys::list_workspace_files(repo_root, file_tree_expanded);
         let git_statuses = crate::vcs::get_git_statuses(repo_root);
@@ -33,19 +36,22 @@ impl WorkspaceScan {
         } else {
             None
         };
-        let (git_branch_fingerprint, git_branches, git_worktrees, git_log_graph) = if scan_git {
-            let fp = crate::vcs::branch_fingerprint(repo_root);
-            if prev_branch_fingerprint != Some(fp.as_str()) {
-                let branches = Some(crate::vcs::list_branches(repo_root, "main"));
-                let worktrees = Some(crate::vcs::list_worktrees(repo_root));
-                let graph = crate::vcs::commit_graph(repo_root);
-                (Some(fp), branches, worktrees, graph)
+        let (git_branch_fingerprint, git_branches, git_remote_branches, git_worktrees, git_log_graph) =
+            if scan_git {
+                let fp = crate::vcs::branch_fingerprint(repo_root);
+                if prev_branch_fingerprint != Some(fp.as_str()) {
+                    let branches = Some(crate::vcs::list_branches(repo_root, "main"));
+                    let remote_branches =
+                        Some(crate::vcs::list_remote_branches(repo_root, "main"));
+                    let worktrees = Some(crate::vcs::list_worktrees(repo_root));
+                    let graph = crate::vcs::commit_graph(repo_root);
+                    (Some(fp), branches, remote_branches, worktrees, graph)
+                } else {
+                    (Some(fp), None, None, None, None)
+                }
             } else {
-                (Some(fp), None, None, None)
-            }
-        } else {
-            (None, None, None, None)
-        };
+                (None, None, None, None, None)
+            };
         let repo_health = if scan_health {
             Some(hadron_gatekeeper::RepoMonitor::check_repo(repo_root))
         } else {
@@ -57,6 +63,12 @@ impl WorkspaceScan {
             None
         };
         let plan_paths = scan_all_plan_paths(repo_root);
+        let target_plan_rel = active_plan_hint
+            .map(str::to_string)
+            .or_else(|| newest_plan_from_list_with_mtime(&plan_paths).map(|(_, p)| p));
+        let active_plan_content = target_plan_rel.and_then(|rel| {
+            crate::sys::read_workspace_file(repo_root, &rel).map(|body| (rel, body))
+        });
         let nucleus_dir = repo_root.join(".hadron").join("nucleus");
         let nucleus_docs = (
             std::fs::read_to_string(nucleus_dir.join("features.md")).ok(),
@@ -71,11 +83,13 @@ impl WorkspaceScan {
             working_diff,
             git_branch_fingerprint,
             git_branches,
+            git_remote_branches,
             git_worktrees,
             git_log_graph,
             repo_health,
             remote_tracking,
             plan_paths,
+            active_plan_content,
             nucleus_docs,
             nucleus_fingerprint,
         })
@@ -112,6 +126,7 @@ impl FieldPoll {
         scan_git: bool,
         scan_health: bool,
         prev_branch_fingerprint: Option<&str>,
+        active_plan_hint: Option<&str>,
     ) -> Self {
         let events = io::read_events(path)
             .ok()
@@ -149,6 +164,7 @@ impl FieldPoll {
                 scan_git,
                 scan_health,
                 prev_branch_fingerprint,
+                active_plan_hint,
             )
         } else {
             None
@@ -429,10 +445,20 @@ impl super::Chamber {
             // `git` subprocesses plus a `stat` per tracked file, and on the render
             // thread that blocked mouse/keyboard dispatch for the whole scan.
             if let Some(scan) = poll.scan {
-                if scan.plan_paths != self.cached_plan_paths {
-                    self.cached_plan_paths = scan.plan_paths;
-                    self.cached_active_plan_content = None;
-                    self.manual_plan_override_at_message_len = None;
+                let plan_paths_changed = scan.plan_paths != self.cached_plan_paths;
+                let plan_content_changed = scan.active_plan_content.is_some()
+                    && scan.active_plan_content != self.cached_active_plan_content;
+                if plan_paths_changed || plan_content_changed {
+                    if plan_paths_changed {
+                        self.cached_plan_paths = scan.plan_paths;
+                        self.manual_plan_override_at_message_len = None;
+                    }
+                    if let Some(plan_content) = scan.active_plan_content {
+                        self.cached_active_plan_content = Some(plan_content);
+                    } else if plan_paths_changed {
+                        self.cached_active_plan_content = None;
+                    }
+                    *self.cached_plan_dag.borrow_mut() = None;
                     self.update_active_plan();
                     changed = true;
                 }
@@ -470,11 +496,20 @@ impl super::Chamber {
 
                 if scan.git_branch_fingerprint.is_some()
                     && (scan.git_branch_fingerprint != self.git_branch_fingerprint
-                        || self.git_branches.is_none())
+                        || self.git_branches.is_none()
+                        || self.git_remote_branches.is_none())
                 {
+                    let fp_changed = scan.git_branch_fingerprint != self.git_branch_fingerprint;
                     self.git_branch_fingerprint = scan.git_branch_fingerprint;
+                    if fp_changed {
+                        crate::vcs::clear_unmerged_commit_cache();
+                        *self.cached_plan_dag.borrow_mut() = None;
+                    }
                     if let Some(branches) = scan.git_branches {
                         self.git_branches = Some(branches);
+                    }
+                    if let Some(remote_branches) = scan.git_remote_branches {
+                        self.git_remote_branches = Some(remote_branches);
                     }
                     if let Some(worktrees) = scan.git_worktrees {
                         self.git_worktrees = Some(worktrees);
@@ -575,6 +610,40 @@ impl super::Chamber {
                 cx.notify();
             }
         }
+    }
+
+    pub(super) fn refresh_mission_plan(&mut self, cx: &mut Context<Self>) {
+        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let active_hint = self.last_plan_path.clone();
+        cx.spawn(async move |this, cx| {
+            let (fp, plan_paths, active_content) = cx
+                .background_executor()
+                .spawn(async move {
+                    let fp = crate::vcs::branch_fingerprint(&root);
+                    let plan_paths = scan_all_plan_paths(&root);
+                    let target = active_hint
+                        .or_else(|| newest_plan_from_list_with_mtime(&plan_paths).map(|(_, p)| p));
+                    let active_content = target.and_then(|rel| {
+                        crate::sys::read_workspace_file(&root, &rel).map(|body| (rel, body))
+                    });
+                    (fp, plan_paths, active_content)
+                })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                crate::vcs::clear_unmerged_commit_cache();
+                chamber.git_branch_fingerprint = Some(fp);
+                chamber.cached_plan_paths = plan_paths;
+                if let Some(content) = active_content {
+                    chamber.cached_active_plan_content = Some(content);
+                } else {
+                    chamber.cached_active_plan_content = None;
+                }
+                *chamber.cached_plan_dag.borrow_mut() = None;
+                chamber.update_active_plan();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -737,12 +806,7 @@ fn find_plan_mention_in_text_with_plans(
 pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, String)> {
     let mut candidates: Vec<(std::time::SystemTime, String)> = Vec::new();
 
-    let check_dirs = [
-        repo.join(".hadron").join("docs").join("plans"),
-        repo.join("docs").join("plans"),
-    ];
-
-    for dir in &check_dirs {
+    let mut collect_plan_dir = |dir: &Path| {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -751,7 +815,10 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
                     if file_name.starts_with('.') {
                         continue;
                     }
-                    let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    let mtime = entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                     if let Ok(rel) = path.strip_prefix(repo) {
                         candidates.push((mtime, rel.to_string_lossy().to_string()));
                     }
@@ -759,12 +826,18 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
                     if let Ok(sub_entries) = std::fs::read_dir(&path) {
                         for sub_entry in sub_entries.flatten() {
                             let sub_path = sub_entry.path();
-                            if sub_path.is_file() && sub_path.extension().and_then(|e| e.to_str()) == Some("md") {
-                                let sub_file_name = sub_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                            if sub_path.is_file()
+                                && sub_path.extension().and_then(|e| e.to_str()) == Some("md")
+                            {
+                                let sub_file_name =
+                                    sub_path.file_name().and_then(|f| f.to_str()).unwrap_or("");
                                 if sub_file_name.starts_with('.') {
                                     continue;
                                 }
-                                let mtime = sub_entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                                let mtime = sub_entry
+                                    .metadata()
+                                    .and_then(|m| m.modified())
+                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                                 if let Ok(rel) = sub_path.strip_prefix(repo) {
                                     candidates.push((mtime, rel.to_string_lossy().to_string()));
                                 }
@@ -774,6 +847,15 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
                 }
             }
         }
+    };
+
+    let check_dirs = [
+        repo.join(".hadron").join("docs").join("plans"),
+        repo.join("docs").join("plans"),
+    ];
+
+    for dir in &check_dirs {
+        collect_plan_dir(dir);
     }
 
     let trees_dir = repo.join(".hadron").join("trees");
@@ -786,21 +868,7 @@ pub(crate) fn scan_all_plan_paths(repo: &Path) -> Vec<(std::time::SystemTime, St
                     tree_path.join("docs").join("plans"),
                 ];
                 for dir in &tree_plan_dirs {
-                    if let Ok(entries) = std::fs::read_dir(dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
-                                let file_name = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-                                if file_name.starts_with('.') {
-                                    continue;
-                                }
-                                let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                                if let Ok(rel) = path.strip_prefix(repo) {
-                                    candidates.push((mtime, rel.to_string_lossy().to_string()));
-                                }
-                            }
-                        }
-                    }
+                    collect_plan_dir(dir);
                 }
             }
         }
