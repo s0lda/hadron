@@ -111,7 +111,7 @@ pub(super) fn prompt_anatomy_colors() -> [gpui::Hsla; 5] {
     [
         theme::info().into(),
         theme::success().into(),
-        theme::accent(),
+        theme::accent().into(),
         theme::warning().into(),
         theme::error().into(),
     ]
@@ -265,7 +265,7 @@ impl super::Chamber {
                                 .text_xs()
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .text_color(theme::text())
-                                .child(header),
+                                .child(header.clone()),
                         )
                         .children(items_clone.iter().map(|(label, bytes, pct, color)| {
                             h_flex()
@@ -289,7 +289,7 @@ impl super::Chamber {
                             div()
                                 .text_xs()
                                 .text_color(theme::text_muted())
-                                .child(footer),
+                                .child(footer.clone()),
                         )
                 })
                 .build(window, cx)
