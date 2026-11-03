@@ -35,6 +35,42 @@ impl ContextGovernor {
             || l.starts_with("Assertion failed")
     }
 
+    /// Returns true only when `raw` looks like an unstructured compiler/test/command
+    /// stdout/stderr dump rather than structured markdown prose, slash-command help,
+    /// or quark conversational/brainstorm responses.
+    pub fn is_raw_tool_dump(raw: &str) -> bool {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with('#')
+            || trimmed.starts_with("**")
+            || trimmed.starts_with('@')
+            || trimmed.starts_with("- `/")
+            || trimmed.starts_with('/')
+        {
+            return false;
+        }
+        let mut tool_signal_lines = 0usize;
+        let mut markdown_lines = 0usize;
+        for line in raw.lines() {
+            let l = line.trim();
+            if l.starts_with('#') || l.starts_with("- **") || l.starts_with("| ") {
+                markdown_lines += 1;
+            }
+            if l.starts_with("Compiling ")
+                || l.starts_with("Checking ")
+                || l.starts_with("Finished ")
+                || l.starts_with("Running ")
+                || l.starts_with("error[")
+                || l.starts_with("error:")
+                || l.starts_with("warning:")
+                || l.contains("panicked at")
+                || (l.starts_with("test ") && (l.ends_with(" ... ok") || l.ends_with(" ... FAILED")))
+            {
+                tool_signal_lines += 1;
+            }
+        }
+        tool_signal_lines >= 3 && markdown_lines == 0
+    }
+
     /// Compacts raw tool stdout/stderr according to governor budget limits.
     pub fn compact_tool_output(raw: &str, config: &GovernorConfig) -> String {
         if raw.len() <= config.max_tool_bytes {
@@ -122,5 +158,17 @@ mod tests {
         assert!(compacted.contains("ContextGovernor: omitted"));
         assert!(compacted.contains("error[E0308]: mismatched types"));
         assert!(compacted.contains("panicked at src/main.rs:12"));
+    }
+
+    #[test]
+    fn test_is_raw_tool_dump_distinguishes_compiler_output_from_markdown_and_commands() {
+        let compiler_dump = "Compiling foo v0.1.0\nChecking bar v0.2.0\nerror[E0308]: mismatched types\nFinished dev profile";
+        assert!(ContextGovernor::is_raw_tool_dump(compiler_dump));
+
+        let commands_help = "/clear — archive the field\n/commands — list all commands\n/team-brainstorm — brainstorm with the team";
+        assert!(!ContextGovernor::is_raw_tool_dump(commands_help));
+
+        let brainstorm = "@orchestrator\n### 1. Root Cause Analysis\n- **Done**: verified";
+        assert!(!ContextGovernor::is_raw_tool_dump(brainstorm));
     }
 }

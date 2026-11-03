@@ -187,9 +187,10 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
         p.field_window.remove(0);
     }
 
-    // Still over budget: drop the working diff and reference sections
-    // (`nucleus_index`, `nucleus_digest`, tool catalogue, active skill)
-    // before shedding the last 2 field messages or excess `invariants`.
+    // Still over budget: drop the working diff and bulk reference sections
+    // (`nucleus_digest`, tool catalogue, and excess `invariants`) first so that
+    // the most recent field messages, `active_skill`, and ranked `nucleus_index`
+    // lessons survive within tight command-line budgets (such as Windows 24 KiB).
     p.git_diff = String::new();
     p.field_window.insert(
         0,
@@ -204,22 +205,8 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
         return out;
     }
 
-    if !p.nucleus_index.is_empty() {
-        p.nucleus_index.clear();
-        out = render(&p);
-        if out.len() <= max_bytes {
-            return out;
-        }
-    }
     if !p.nucleus_digest.is_empty() {
         p.nucleus_digest.clear();
-        out = render(&p);
-        if out.len() <= max_bytes {
-            return out;
-        }
-    }
-    while p.field_window.len() > 1 {
-        p.field_window.remove(1);
         out = render(&p);
         if out.len() <= max_bytes {
             return out;
@@ -232,8 +219,35 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
             return out;
         }
     }
+    let inv_soft_cap = max_bytes / 3;
+    if p.invariants.len() > inv_soft_cap && inv_soft_cap > 0 {
+        let mut cut = inv_soft_cap;
+        while cut > 0 && !p.invariants.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        p.invariants.truncate(cut);
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+
+    if !p.nucleus_index.is_empty() {
+        p.nucleus_index.clear();
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
     if p.active_skill.is_some() {
         p.active_skill = None;
+        out = render(&p);
+        if out.len() <= max_bytes {
+            return out;
+        }
+    }
+    while p.field_window.len() > 1 {
+        p.field_window.remove(1);
         out = render(&p);
         if out.len() <= max_bytes {
             return out;
@@ -511,6 +525,8 @@ impl<R: CliRunner> CliQuark<R> {
         let quark_id = self.id.clone();
         let turn_started = chrono::Utc::now();
         let mut acc = StreamAccumulator::new(stream.format).with_work_dir(inv.cwd.clone());
+        let mut loop_watchdog = crate::watchdog::LoopWatchdog::default();
+        let mut watchdog_diag: Option<String> = None;
         let mut last_publish: Option<Instant> = None;
         let mut last_heartbeat: Option<Instant> = None;
         let in_error_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -537,6 +553,12 @@ impl<R: CliRunner> CliQuark<R> {
             );
             if acc.error_step_count() >= 3 {
                 return false;
+            }
+            if let Some(sig) = crate::watchdog::LoopWatchdog::extract_stream_tool_signature(line) {
+                if let Some(diag) = loop_watchdog.observe(&sig) {
+                    watchdog_diag = Some(diag);
+                    return false;
+                }
             }
             let Some(dir) = &dir else { return true };
             if !changed {
@@ -596,6 +618,9 @@ impl<R: CliRunner> CliQuark<R> {
         let in_error = acc.in_error_state();
         let latest_err_msg = acc.latest_error_message();
         let res = acc.finish_result();
+        if let Some(diag) = watchdog_diag {
+            anyhow::bail!("{diag}");
+        }
         if error_step_exhausted || (in_error && res.message.is_none()) {
             let err_msg = latest_err_msg
                 .unwrap_or_else(|| "quark stream entered error state".to_string());
@@ -823,6 +848,7 @@ mod tests {
             mode,
             active_skill: None,
             named_specifically: true,
+            from_human_directly: false,
             has_forge_tools: false,
         }
     }
@@ -1639,6 +1665,74 @@ mod tests {
         assert!(
             err.to_string().contains("quark stream failed with error steps"),
             "streaming execution must abort immediately when consecutive error steps >= 3, got: {err}"
+        );
+    }
+
+    #[test]
+    fn fit_prompt_to_budget_preserves_nucleus_index_and_recent_field_when_invariants_is_large() {
+        let mut p = projection_mode("fix bug", Mode::Bypass);
+        p.invariants = format!("# The Standard Model\n{}", "rule ".repeat(3500)); // ~17.5 KiB
+        p.nucleus_digest = "feature map ".repeat(300); // ~3.6 KiB
+        p.nucleus_index =
+            "## How we get things wrong\n- [bug-canary](notes/bug-canary.md) — critical lesson\n"
+                .to_string();
+        p.nucleus_index_path = PathBuf::from("/repo/.hadron/nucleus/index.md");
+        p.field_window = vec![
+            Event::new(Actor::Human, None, Kind::Message { body: "OLDER-MSG".into() }),
+            Event::new(Actor::Human, None, Kind::Message { body: "RECENT-MSG-1".into() }),
+            Event::new(Actor::Human, None, Kind::Message { body: "RECENT-MSG-2".into() }),
+        ];
+
+        let fitted = fit_prompt_to_budget(&p, &QuarkId::new("agy"), 24 * 1024);
+        assert!(fitted.len() <= 24 * 1024);
+        assert!(
+            fitted.contains("bug-canary"),
+            "ranked nucleus_index must survive Windows 24 KiB budget when invariants is ~17.5 KiB"
+        );
+        assert!(
+            fitted.contains("RECENT-MSG-2"),
+            "most recent field message must survive Windows 24 KiB budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_quark_streaming_aborts_on_loop_watchdog_repeated_tool_calls() {
+        let repeated_tool = r#"{"event":"step_update","step_update":{"state":"ACTIVE","tool_name":"run_command","tool_input":{"CommandLine":"cargo check"}}}"#;
+        let stream_lines = vec![
+            vec![
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+            ],
+            vec![
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+            ],
+            vec![
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+                repeated_tool.to_string(),
+            ],
+        ];
+        let runner = FakeRunner::with_stream_lines(stream_lines);
+        let mut spec = CliSpec::agy();
+        spec.stream = Some(agy_stream_spec());
+        let mut quark = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Worker,
+            "gemini-3.6-flash",
+            spec,
+            runner,
+        );
+
+        let err = quark.excite(projection("do task")).await.unwrap_err();
+        assert!(
+            err.to_string().contains("LoopWatchdog auto-diagnostic"),
+            "expected LoopWatchdog abort, got: {err}"
         );
     }
 }

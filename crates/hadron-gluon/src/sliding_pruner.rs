@@ -142,6 +142,15 @@ impl SlidingContextPruner {
                 if did_fold {
                     *body = folded;
                     folded_any = true;
+                } else if hadron_lattice::ContextGovernor::is_raw_tool_dump(body) {
+                    let compacted = hadron_lattice::ContextGovernor::compact_tool_output(
+                        body,
+                        &hadron_lattice::GovernorConfig::default(),
+                    );
+                    if compacted.len() < body.len() {
+                        *body = compacted;
+                        folded_any = true;
+                    }
                 }
             }
         }
@@ -292,6 +301,7 @@ mod tests {
             mode: hadron_lattice::Mode::default(),
             active_skill: None,
             named_specifically: true,
+            from_human_directly: false,
             has_forge_tools: false,
         };
         let changed = SlidingContextPruner::prune_projection(&mut proj, &SlidingPrunerConfig::default());

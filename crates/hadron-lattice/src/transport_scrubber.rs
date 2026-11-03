@@ -37,19 +37,27 @@ impl TransportScrubber {
     fn mask_prefix_pattern(text: &str, prefix: &str, expected_len: usize) -> String {
         let mut out = String::new();
         let mut cursor = 0;
+        let min_token_len = expected_len.min(20).max(prefix.len() + 8);
 
         while let Some(pos) = text[cursor..].find(prefix) {
             let abs_pos = cursor + pos;
             out.push_str(&text[cursor..abs_pos]);
 
+            let at_word_boundary =
+                abs_pos == 0 || !text.as_bytes()[abs_pos - 1].is_ascii_alphanumeric();
+
             let start = abs_pos;
             let mut end = start + prefix.len();
-            while end < text.len() && text.as_bytes()[end].is_ascii_alphanumeric() || (end < text.len() && (text.as_bytes()[end] == b'_' || text.as_bytes()[end] == b'-')) {
+            while end < text.len()
+                && (text.as_bytes()[end].is_ascii_alphanumeric()
+                    || text.as_bytes()[end] == b'_'
+                    || text.as_bytes()[end] == b'-')
+            {
                 end += 1;
             }
 
             let token = &text[start..end];
-            if token.len() >= prefix.len() + 8 || token.len() >= expected_len {
+            if at_word_boundary && token.len() >= min_token_len {
                 out.push_str("[REDACTED_SECRET]");
             } else {
                 out.push_str(token);
@@ -119,5 +127,13 @@ mod tests {
         assert_eq!(json["api_token"], "[REDACTED_KEY_VALUE]");
         assert!(!json["nested"]["message"].as_str().unwrap().contains("sk-abcdef"));
         assert!(json["nested"]["message"].as_str().unwrap().contains("[REDACTED_SECRET]"));
+    }
+
+    #[test]
+    fn test_scrub_string_does_not_redact_hyphenated_prose_words() {
+        let prose = "Interactive Task-Dependency-Visualizer and disk-backed-storage with risk-mitigation-plan";
+        let scrubbed = TransportScrubber::scrub_string(prose);
+        assert_eq!(scrubbed, prose);
+        assert!(!scrubbed.contains("[REDACTED_SECRET]"));
     }
 }

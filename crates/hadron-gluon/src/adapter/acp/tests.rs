@@ -600,6 +600,7 @@ fn projection() -> Projection {
         mode: Mode::Ask,
         active_skill: None,
         named_specifically: true,
+        from_human_directly: false,
         has_forge_tools: true,
     }
 }
@@ -1683,6 +1684,7 @@ fn prepare_acp_turn_prompt_strips_static_prefix_on_resumed_session_and_prunes_ov
         mode: Mode::Bypass,
         active_skill: None,
         named_specifically: true,
+        from_human_directly: false,
         has_forge_tools: true,
     };
 

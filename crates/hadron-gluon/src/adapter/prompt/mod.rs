@@ -409,8 +409,17 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
         }
     }
 
-    // Broadcast Status
-    if is_worker(projection, self_id) && !projection.named_specifically {
+    // Broadcast or Direct Conversational Status
+    let conversational_human = projection.from_human_directly
+        && hadron_lattice::is_conversational_human_turn(&projection.task);
+    if is_worker(projection, self_id) && conversational_human {
+        p.push_str(
+            "# Direct Conversational Message\n\
+             The human sent a casual conversational greeting or acknowledgement (not a task). \
+             Reply warmly and concisely directly to the human — do NOT prepend `@orchestrator` \
+             and do NOT format a task report.\n\n",
+        );
+    } else if is_worker(projection, self_id) && !projection.named_specifically {
         p.push_str(
             "# This is a broadcast, not an assignment\n\
              You were reached via `@team` or an unaddressed message, not named specifically by \

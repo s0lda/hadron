@@ -237,19 +237,35 @@ impl super::Engine {
                 }
             });
 
-        let dispatched_by_orchestrator = if !self.is_orchestrator(target) {
+        let (dispatched_by_orchestrator, conversational_human_origin) = if !self.is_orchestrator(target) {
             if let Some(assign_id) = assignment {
-                read_events(&self.field_path).ok().is_some_and(|evs| {
-                    evs.iter().any(|e| {
+                if let Ok(evs) = read_events(&self.field_path) {
+                    let by_orch = evs.iter().any(|e| {
                         e.id == assign_id
                             && matches!(&e.from, Actor::Quark(s) if self.is_orchestrator(s))
-                    })
-                })
+                    });
+                    let conv_human = evs.iter().any(|e| {
+                        e.id == assign_id
+                            && e.from == Actor::Human
+                            && match &e.kind {
+                                Kind::Message { body } => {
+                                    hadron_lattice::is_conversational_human_turn(body)
+                                }
+                                Kind::Assign { task, .. } => {
+                                    hadron_lattice::is_conversational_human_turn(task)
+                                }
+                                _ => false,
+                            }
+                    });
+                    (by_orch, conv_human)
+                } else {
+                    (false, false)
+                }
             } else {
-                false
+                (false, false)
             }
         } else {
-            false
+            (false, false)
         };
 
         // THE ONE TOTALLER. No adapter computes this; they report components and
@@ -322,15 +338,26 @@ impl super::Engine {
             // If a worker turn was dispatched by `@orchestrator` and the worker's reply
             // omitted an explicit `@mention`, route `to` back to `@orchestrator` so
             // orchestration never stalls silently.
-            let body = crate::router::neutralize_dispatched_mentions(
+            let mut body = crate::router::neutralize_dispatched_mentions(
                 &raw_body,
                 &self.roster,
                 Some(target),
                 &preons,
                 already_dispatched,
             );
+            let suppress_orch_on_casual = conversational_human_origin
+                && pre_committed_edit
+                    .as_ref()
+                    .and_then(|o| o.as_ref())
+                    .is_none()
+                && !body.contains("**Done**:");
+            if suppress_orch_on_casual {
+                body = self.strip_leading_orchestrator_mention(&body);
+            }
             let addressees = parse_all_addressees(&body, &self.roster, Some(target), &preons);
-            let to = if addressees.len() == 1 {
+            let to = if suppress_orch_on_casual {
+                None
+            } else if addressees.len() == 1 {
                 Some(addressees[0].clone())
             } else if addressees.is_empty() && dispatched_by_orchestrator {
                 self.orchestrator_id()
@@ -673,5 +700,40 @@ impl super::Engine {
         // neutral notice, so it carries the same amber the other "you must act"
         // reroutes do.
         .with_severity(hadron_lattice::Severity::Warning))
+    }
+
+    /// Strip a leading `@orchestrator` (or orchestrator id / display name) mention
+    /// from a casual conversational worker reply so a direct human greeting like
+    /// `"@team goodnight"` does not show `"@orchestrator Goodnight!"` or excite
+    /// the orchestrator seat unnecessarily.
+    pub(super) fn strip_leading_orchestrator_mention(&self, body: &str) -> String {
+        let trimmed = body.trim_start();
+        let Some(after_at) = trimmed.strip_prefix('@') else {
+            return body.to_string();
+        };
+        let end = after_at
+            .find(|c: char| c.is_whitespace() || c == ':' || c == ',')
+            .unwrap_or(after_at.len());
+        let token = &after_at[..end];
+        let orch_card = self
+            .roster
+            .iter()
+            .find(|c| c.flavor == hadron_lattice::Flavor::Orchestrator);
+        let is_orch_mention = token.eq_ignore_ascii_case(crate::router::ORCHESTRATOR_ALIAS)
+            || orch_card.is_some_and(|c| {
+                c.id.as_str().eq_ignore_ascii_case(token)
+                    || c.display_name
+                        .as_deref()
+                        .is_some_and(|dn| dn.eq_ignore_ascii_case(token))
+            });
+        if !is_orch_mention {
+            return body.to_string();
+        }
+        let rest = after_at[end..].trim_start_matches([':', ',', ' ', '\t', '\r', '\n']);
+        if rest.is_empty() {
+            body.to_string()
+        } else {
+            rest.to_string()
+        }
     }
 }

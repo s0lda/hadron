@@ -719,6 +719,7 @@ impl Quark for LocalQuark {
             json!({ "role": "user", "content": user_prompt }),
         ];
         let mut spend = hadron_lattice::TokenSpend::default();
+        let mut loop_watchdog = crate::watchdog::LoopWatchdog::default();
 
         for round in 0..MAX_TOOL_ROUNDS {
             let mut draft = String::new();
@@ -755,6 +756,22 @@ impl Quark for LocalQuark {
                 }
                 return Ok(TurnOutcome {
                     message: Some(text),
+                    usage: hadron_lattice::Usage { spend, ..Default::default() },
+                    ..Default::default()
+                });
+            }
+
+            let round_sig = calls
+                .iter()
+                .map(|c| format!("{}:{}", c.function.name, c.function.arguments))
+                .collect::<Vec<_>>()
+                .join(";");
+            if let Some(diag) = loop_watchdog.observe(&round_sig) {
+                if let Some(dir) = &self.live_dir {
+                    crate::adapter::telemetry::TurnTelemetrySink::clear_live(dir, &self.id);
+                }
+                return Ok(TurnOutcome {
+                    message: Some(diag),
                     usage: hadron_lattice::Usage { spend, ..Default::default() },
                     ..Default::default()
                 });
@@ -1414,6 +1431,7 @@ mod tests {
             mode: hadron_lattice::Mode::Bypass,
             active_skill: None,
             named_specifically: true,
+            from_human_directly: false,
             has_forge_tools: false,
         }
     }

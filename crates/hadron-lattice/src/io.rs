@@ -32,10 +32,6 @@ fn append_lock() -> &'static Mutex<()> {
 pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
     let mut ev = event.clone();
     if let crate::Kind::Message { ref mut body } = ev.kind {
-        *body = crate::context_governor::ContextGovernor::compact_tool_output(
-            body,
-            &crate::context_governor::GovernorConfig::default(),
-        );
         *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
     }
     let mut line = serde_json::to_string(&ev)?;
@@ -55,10 +51,6 @@ pub fn append_events(path: &Path, events: &[Event]) -> std::io::Result<()> {
     for event in events {
         let mut ev = event.clone();
         if let crate::Kind::Message { ref mut body } = ev.kind {
-            *body = crate::context_governor::ContextGovernor::compact_tool_output(
-                body,
-                &crate::context_governor::GovernorConfig::default(),
-            );
             *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
         }
         let line = serde_json::to_string(&ev)?;
@@ -372,5 +364,38 @@ mod tests {
 
         let events = read_events(&path).unwrap();
         assert_eq!(events.len(), 200);
+    }
+
+    #[test]
+    fn append_event_preserves_long_commands_and_brainstorm_messages_verbatim() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        let mut body = String::from("### `/commands` & `/team-brainstorm` Output\n\n");
+        for i in 1..=80 {
+            body.push_str(&format!(
+                "- `/command-{i}` — Interactive Task-DAG Drag-and-Drop Visualizer and Task-Dependency feature #{i}\n"
+            ));
+        }
+        assert!(body.len() > 4096);
+
+        let ev = Event::new(
+            Actor::Gluon,
+            None,
+            Kind::Message {
+                body: body.clone(),
+            },
+        );
+        append_event(&path, &ev).unwrap();
+
+        let events = read_events(&path).unwrap();
+        assert_eq!(events.len(), 1);
+        if let Kind::Message { body: read_body } = &events[0].kind {
+            assert!(!read_body.contains("ContextGovernor: omitted"));
+            assert!(!read_body.contains("[REDACTED_SECRET]"));
+            assert_eq!(read_body, &body);
+        } else {
+            panic!("expected Kind::Message");
+        }
     }
 }

@@ -83,3 +83,6 @@ pub use schedules::*;
 
 pub mod ledger;
 pub use ledger::*;
+
+pub mod clipboard;
+pub use clipboard::*;

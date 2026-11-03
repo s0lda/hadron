@@ -580,6 +580,11 @@ impl super::Engine {
             .find(|c| &c.id == target)
             .map(|c| c.has_forge_tools)
             .unwrap_or(false);
+        let from_human_directly = driver.is_some_and(|d| {
+            events
+                .iter()
+                .any(|e| e.id == d.assignment && e.from == Actor::Human)
+        });
 
         Projection {
             nucleus_index,
@@ -607,6 +612,7 @@ impl super::Engine {
             mode: turn_mode,
             active_skill,
             named_specifically,
+            from_human_directly,
             has_forge_tools,
         }
     }

@@ -36,6 +36,7 @@ fn projection(task: &str) -> Projection {
         mode: hadron_lattice::Mode::default(),
         active_skill: None,
         named_specifically: true,
+        from_human_directly: false,
         has_forge_tools: false,
     }
 }
@@ -1112,6 +1113,35 @@ fn without_static_prefix_strips_cached_reference_sections_and_preserves_task() {
     assert!(stripped.nucleus_index_path.as_os_str().is_empty());
     assert_eq!(stripped.task, "Delta task");
 }
+
+#[test]
+fn direct_conversational_human_turn_emits_no_orchestrator_tag_instruction() {
+    let mut proj = projection("@team goodnight");
+    proj.roster.push(QuarkCard {
+        id: QuarkId::new("orch"),
+        display_name: None,
+        flavor: Flavor::Orchestrator,
+        energy: EnergyState::Available,
+        provider: String::new(),
+        model: String::new(),
+        commands: Default::default(),
+        energy_limit: None,
+        deny_skills: vec![],
+        has_forge_tools: false,
+    });
+    proj.named_specifically = false;
+    proj.from_human_directly = true;
+    let suffix = build_dynamic_suffix(&proj, &QuarkId::new("agy"));
+    assert!(
+        suffix.contains("# Direct Conversational Message"),
+        "expected Direct Conversational Message section, got:\n{suffix}"
+    );
+    assert!(
+        suffix.contains("do NOT prepend `@orchestrator`"),
+        "expected explicit instruction not to prepend @orchestrator"
+    );
+}
+
 
 
 

@@ -119,6 +119,88 @@ pub struct Projection {
     /// directive instead of a work directive.
     #[serde(default)]
     pub named_specifically: bool,
+    /// Whether the triggering assignment was authored directly by `Actor::Human`
+    /// (rather than delegated by `@orchestrator` or a peer quark).
+    #[serde(default)]
+    pub from_human_directly: bool,
+}
+
+/// Returns `true` when a human-authored message is a casual greeting, sign-off,
+/// or acknowledgement (e.g. `"goodnight"`, `"@team goodnight"`, `"@agy thanks!"`)
+/// rather than a technical task, slash command, or multi-quark synthesis prompt.
+pub fn is_conversational_human_turn(task: &str) -> bool {
+    let trimmed = task.trim();
+    if trimmed.is_empty() || trimmed.len() > 160 || trimmed.lines().count() > 2 {
+        return false;
+    }
+    if trimmed.contains("```") || trimmed.contains("docs/plans/") {
+        return false;
+    }
+    // Strip leading @mention tokens.
+    let mut rest = trimmed;
+    while let Some(after_at) = rest.strip_prefix('@') {
+        let end = after_at
+            .find(|c: char| c.is_whitespace() || c == ',' || c == ':')
+            .unwrap_or(after_at.len());
+        rest = after_at[end..].trim_start_matches([',', ':', ' ', '\t']);
+    }
+    if rest.is_empty() || rest.starts_with('/') {
+        return false;
+    }
+    let lower = rest.to_ascii_lowercase();
+    if lower.starts_with("let's brainstorm")
+        || lower.starts_with("let's debate")
+        || lower.contains("execute task")
+    {
+        return false;
+    }
+    let cleaned: String = lower
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c.is_ascii_whitespace() { c } else { ' ' })
+        .collect();
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    if words.is_empty() || words.len() > 12 {
+        return false;
+    }
+    const TASK_VERBS: &[&str] = &[
+        "fix", "implement", "build", "add", "remove", "delete", "create", "update", "refactor",
+        "test", "debug", "check", "investigate", "audit", "plan", "write", "run", "deploy",
+        "merge", "commit", "review", "explain", "why", "how", "where", "what",
+    ];
+    if words.iter().any(|w| TASK_VERBS.contains(w)) {
+        return false;
+    }
+    const CONVERSATIONAL_PHRASES: &[&str] = &[
+        "goodnight",
+        "good night",
+        "gn",
+        "good morning",
+        "gm",
+        "good evening",
+        "good afternoon",
+        "hello",
+        "hi",
+        "hey",
+        "thanks",
+        "thank you",
+        "thx",
+        "ty",
+        "cheers",
+        "bye",
+        "goodbye",
+        "see you",
+        "see ya",
+        "cya",
+        "sleep well",
+        "have a good night",
+        "great job",
+        "nice work",
+        "well done",
+    ];
+    let normalized = words.join(" ");
+    CONVERSATIONAL_PHRASES
+        .iter()
+        .any(|p| normalized == *p || normalized.starts_with(&format!("{p} ")) || normalized.ends_with(&format!(" {p}")))
 }
 
 /// What an adapter returns after a turn. File mutations are NOT reported here —
@@ -205,12 +287,24 @@ mod tests {
             mode: Mode::Bypass,
             active_skill: None,
             named_specifically: true,
+            from_human_directly: false,
             has_forge_tools: false,
         };
         assert_eq!(proj.cwd, std::path::Path::new("/tmp/wt"));
         assert_eq!(proj.roster.len(), 1);
         assert_eq!(proj.field_window.len(), 1);
         assert_eq!(proj.mode, Mode::Bypass);
+    }
+
+    #[test]
+    fn conversational_human_turn_detection() {
+        assert!(is_conversational_human_turn("goodnight"));
+        assert!(is_conversational_human_turn("@team goodnight!"));
+        assert!(is_conversational_human_turn("@Antigravity thanks for all the help!"));
+        assert!(is_conversational_human_turn("Good morning team"));
+        assert!(!is_conversational_human_turn("@team Let's brainstorm: new UI features"));
+        assert!(!is_conversational_human_turn("@Antigravity fix the login bug"));
+        assert!(!is_conversational_human_turn("/clear"));
     }
 
     #[test]

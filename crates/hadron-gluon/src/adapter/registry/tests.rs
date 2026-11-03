@@ -437,6 +437,7 @@ async fn build_seat_watched_wires_a_streaming_cli_seat_and_leaves_a_plain_one_al
         mode: hadron_lattice::Mode::default(),
         active_skill: None,
         named_specifically: true,
+        from_human_directly: false,
         has_forge_tools: false,
     };
     let outcome = q.excite(t).await.expect("streaming CLI turn");
@@ -538,6 +539,7 @@ fn http_turn() -> hadron_lattice::Projection {
         mode: hadron_lattice::Mode::default(),
         active_skill: None,
         named_specifically: true,
+        from_human_directly: false,
         has_forge_tools: false,
     }
 }
