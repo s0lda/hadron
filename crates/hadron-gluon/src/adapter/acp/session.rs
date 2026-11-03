@@ -333,11 +333,14 @@ fn first_line_truncated(s: &str) -> String {
 /// so `parse_all_addressees` line-start mention routing succeeds, while
 /// preserving continuous streaming text without inserting spurious mid-sentence
 /// or mid-word newlines.
+#[cfg(test)]
 pub(super) fn append_message_chunk(transcript: &mut String, chunk: &str) {
-    if !transcript.is_empty() && chunk.starts_with('@') && !transcript.ends_with('\n') {
-        transcript.push('\n');
-    }
-    transcript.push_str(chunk);
+    let mut needs_step_break = false;
+    crate::adapter::telemetry::append_message_chunk_with_step_break(
+        transcript,
+        chunk,
+        &mut needs_step_break,
+    );
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -635,10 +638,10 @@ impl super::AcpQuark {
         let mut spawn_env = crate::worktree::shared_build_env_for_quark(&cwd, quark.as_str());
         spawn_env.extend(env.iter().cloned());
         let agent_source = acp_stdio_descriptor_sandboxed(&target, &spawn_env, &cwd, sandbox);
-        // The reply accumulator and the context watermark are written by the
-        // notification handler (which the SDK drives on the connection) and read by
-        // the turn pump. Hence the Arcs.
-        let transcript = Arc::new(Mutex::new(String::new()));
+        // The reply accumulator (`(text, needs_step_break)`) and the context watermark
+        // are written by the notification handler (which the SDK drives on the
+        // connection) and read by the turn pump. Hence the Arcs.
+        let transcript = Arc::new(Mutex::new((String::new(), false)));
         let context = Arc::new(Mutex::new(None::<(u64, u64)>));
         let quota = Arc::new(Mutex::new(seed_quota(quota_dir.as_deref(), &quark)));
         let pump_transcript = Arc::clone(&transcript);
@@ -691,8 +694,13 @@ impl super::AcpQuark {
                                                 // so the clone is taken and dropped first.
                                                 let draft = {
                                                     let mut t_lock = transcript.lock().unwrap();
-                                                    append_message_chunk(&mut t_lock, &t.text);
-                                                    t_lock.clone()
+                                                    let (ref mut buf, ref mut step_break) = *t_lock;
+                                                    crate::adapter::telemetry::append_message_chunk_with_step_break(
+                                                        buf,
+                                                        &t.text,
+                                                        step_break,
+                                                    );
+                                                    crate::adapter::telemetry::deduplicate_turn_message(buf)
                                                 };
                                                 if let Some(feed) = &live {
                                                     feed.publish_draft(&draft);
@@ -721,6 +729,12 @@ impl super::AcpQuark {
                                         // is published for the chamber to render live and
                                         // never written to the field.
                                         SessionUpdate::AgentThoughtChunk(chunk) => {
+                                            {
+                                                let mut t_lock = transcript.lock().unwrap();
+                                                if !t_lock.0.is_empty() {
+                                                    t_lock.1 = true;
+                                                }
+                                            }
                                             if let (Some(feed), ContentBlock::Text(t)) =
                                                 (&live, chunk.content)
                                             {
@@ -734,6 +748,12 @@ impl super::AcpQuark {
                                         // reading — "what is it DOING" — so it is never
                                         // throttled away.
                                         SessionUpdate::ToolCall(call) => {
+                                            {
+                                                let mut t_lock = transcript.lock().unwrap();
+                                                if !t_lock.0.is_empty() {
+                                                    t_lock.1 = true;
+                                                }
+                                            }
                                             if let Some(feed) = &live {
                                                 feed.publish(Doing::Working, &tool_call_detail(&call));
                                             }
@@ -742,6 +762,12 @@ impl super::AcpQuark {
                                         // shell command's stdout, a diff summary — is richer
                                         // than the static title `ToolCall` published at start.
                                         SessionUpdate::ToolCallUpdate(update) => {
+                                            {
+                                                let mut t_lock = transcript.lock().unwrap();
+                                                if !t_lock.0.is_empty() {
+                                                    t_lock.1 = true;
+                                                }
+                                            }
                                             if let (Some(feed), Some(detail)) =
                                                 (&live, tool_call_update_detail(&update))
                                             {
@@ -749,6 +775,12 @@ impl super::AcpQuark {
                                             }
                                         }
                                         SessionUpdate::Plan(plan) => {
+                                            {
+                                                let mut t_lock = transcript.lock().unwrap();
+                                                if !t_lock.0.is_empty() {
+                                                    t_lock.1 = true;
+                                                }
+                                            }
                                             if let Some(feed) = &live {
                                                 let step = plan
                                                     .entries
@@ -982,7 +1014,11 @@ impl super::AcpQuark {
                                 // was never meant for.
                                 while cancels_rx.try_recv().is_ok() {}
 
-                                pump_transcript.lock().unwrap().clear();
+                                {
+                                    let mut t_lock = pump_transcript.lock().unwrap();
+                                    t_lock.0.clear();
+                                    t_lock.1 = false;
+                                }
                                 *pump_context.lock().unwrap() = None;
                                 pump_in_turn.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -1022,7 +1058,7 @@ impl super::AcpQuark {
 
                                 let reply = match sent {
                                     Ok(resp) => Ok(TurnReply {
-                                        text: pump_transcript.lock().unwrap().clone(),
+                                        text: pump_transcript.lock().unwrap().0.clone(),
                                         usage: resp.usage.clone(),
                                         context: *pump_context.lock().unwrap(),
                                         quota: pump_quota.lock().unwrap().clone(),
@@ -1189,12 +1225,14 @@ impl super::AcpQuark {
 /// fact (see the comment on `cancelled` below), so the message stays exactly what was
 /// said. See `.hadron/nucleus/notes/a-graceful-cancel-discarded-partial-text.md`.
 pub(super) fn message_for_stop(text: &str, stop: &StopReason) -> Option<String> {
+    let cleaned = crate::adapter::telemetry::deduplicate_turn_message(text);
+    let trimmed = cleaned.trim();
     match stop {
-        StopReason::Cancelled | StopReason::EndTurn if text.is_empty() => None,
-        StopReason::Cancelled | StopReason::EndTurn => Some(text.to_string()),
+        StopReason::Cancelled | StopReason::EndTurn if trimmed.is_empty() => None,
+        StopReason::Cancelled | StopReason::EndTurn => Some(trimmed.to_string()),
         other => {
             let note = format!("[acp: stopped on {other:?}]");
-            Some(if text.is_empty() { note } else { format!("{text}\n\n{note}") })
+            Some(if trimmed.is_empty() { note } else { format!("{trimmed}\n\n{note}") })
         }
     }
 }

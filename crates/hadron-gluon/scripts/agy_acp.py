@@ -284,12 +284,27 @@ async def handle_prompt(msg_id, session_id, prompt):
                 text_accumulated = []
                 thought_accumulated = []
                 llm_steps = 1
+                last_text_step_index = None
                 async for chunk in response.chunks:
                     if isinstance(chunk, Text):
-                        text_accumulated.append(chunk.text)
+                        step_idx = getattr(chunk, "step_index", None)
+                        chunk_text = chunk.text
+                        if (
+                            last_text_step_index is not None
+                            and step_idx is not None
+                            and step_idx != last_text_step_index
+                            and text_accumulated
+                            and not text_accumulated[-1].endswith("\n")
+                            and chunk_text
+                            and not chunk_text.startswith("\n")
+                        ):
+                            chunk_text = "\n" + chunk_text
+                        if step_idx is not None:
+                            last_text_step_index = step_idx
+                        text_accumulated.append(chunk_text)
                         send_session_update(session_id, {
                             "sessionUpdate": "agent_message_chunk",
-                            "content": {"type": "text", "text": chunk.text}
+                            "content": {"type": "text", "text": chunk_text}
                         })
                     elif isinstance(chunk, Thought):
                         thought_accumulated.append(chunk.text)

@@ -1276,7 +1276,11 @@ impl super::Engine {
             match step {
                 StepEvent::Tick => continue,
                 StepEvent::Turn(joined) => match joined {
-                    Ok((target, lane, tree, assignment, Ok(outcome))) => {
+                    Ok((target, lane, tree, assignment, Ok(mut outcome))) => {
+                        outcome.message = outcome
+                            .message
+                            .map(|m| crate::adapter::telemetry::deduplicate_turn_message(&m))
+                            .filter(|m| !m.trim().is_empty());
                         heartbeat_tracker.unregister(&target);
                         abort_handles.remove(&(target.clone(), lane));
                         cancel_requested.remove(&(target.clone(), lane));

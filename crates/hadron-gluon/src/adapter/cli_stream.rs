@@ -120,8 +120,11 @@ impl StreamAccumulator {
                 if let Some(p) = text_delta_path.as_deref() {
                     if let Some(d) = path_as_str(&value, p) {
                         if !d.is_empty() {
-                            self.draft.push_str(d);
-                            self.last_change_was_status = false;
+                            crate::adapter::telemetry::append_message_chunk_with_step_break(
+                                &mut self.draft,
+                                d,
+                                &mut self.last_change_was_status,
+                            );
                             changed = true;
                         }
                     }
@@ -194,8 +197,11 @@ impl StreamAccumulator {
                 }
                 if let Some(delta) = path_as_str(value, "step_update.text_delta") {
                     if !delta.is_empty() {
-                        self.draft.push_str(delta);
-                        self.last_change_was_status = false;
+                        crate::adapter::telemetry::append_message_chunk_with_step_break(
+                            &mut self.draft,
+                            delta,
+                            &mut self.last_change_was_status,
+                        );
                         return true;
                     }
                 }
@@ -293,7 +299,11 @@ impl StreamAccumulator {
     /// Consume the accumulator into a full [`StreamResult`] carrying message, spend,
     /// model, and optional context window telemetry.
     pub fn finish_result(self) -> StreamResult {
-        let message = self.final_text.or_else(|| (!self.draft.is_empty()).then_some(self.draft));
+        let message = self
+            .final_text
+            .or_else(|| (!self.draft.is_empty()).then_some(self.draft))
+            .map(|m| crate::adapter::telemetry::deduplicate_turn_message(&m))
+            .filter(|m| !m.is_empty());
         let work_dir = self.work_dir.as_deref();
         let context_used = self.context_used.or_else(|| {
             self.conversation_id

@@ -177,7 +177,7 @@ impl super::Engine {
     pub(super) async fn finish_turn_with_gate(
         &self,
         target: &QuarkId,
-        outcome: TurnOutcome,
+        mut outcome: TurnOutcome,
         tree: Option<&TurnTree>,
         // The message this turn was dispatched to answer. Stamped onto everything the
         // turn emits, so a reader can ask "is the human still waiting?" and get a fact
@@ -187,6 +187,10 @@ impl super::Engine {
         pre_gate: Option<(super::merge::PreGateOutcome, super::merge::GateHeartbeat)>,
         already_dispatched: &std::collections::HashSet<QuarkId>,
     ) -> anyhow::Result<()> {
+        outcome.message = outcome
+            .message
+            .map(|m| crate::adapter::telemetry::deduplicate_turn_message(&m))
+            .filter(|m| !m.trim().is_empty());
         // ONE id for everything this turn emits. The reply and the energy report are
         // separate events, and turns run in parallel — so without this a reader trying
         // to say "this reply cost X" has only ADJACENCY to join on, and adjacency is
