@@ -218,6 +218,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "radar", detail: "Run human intent drift radar against in-flight git diff (e.g. /radar or /radar @Quark)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "baseline", detail: "Snapshot pre-turn baseline test health (Rule 5)", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "scout", detail: "Spawn ephemeral read-only sub-worker for zero-footprint codebase search", arity: Arity::Body, arg: ArgSource::None, listed: true },
+    Command { name: "clip", detail: "Manage shared inter-quark artifact clipboard: /clip [list|put <key> <value>|get <key>|clear]", arity: Arity::Line, arg: ArgSource::None, listed: true },
 ];
 
 /// A short kebab-case id for a lesson line: the first few words, lowercased,

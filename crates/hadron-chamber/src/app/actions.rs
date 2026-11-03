@@ -2474,6 +2474,76 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
+            "clip" => {
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+                let trimmed = args.trim();
+                let mut parts = trimmed.splitn(3, char::is_whitespace);
+                let sub = parts.next().unwrap_or("list");
+                let body = match sub {
+                    "" | "list" => match hadron_lattice::clipboard::list_clips(&repo_root) {
+                        Ok(clips) if clips.is_empty() => {
+                            "Shared clipboard is empty (`.hadron/clipboard/clips.json`). Use `/clip put <key> <value>` to store a clip.".to_string()
+                        }
+                        Ok(clips) => {
+                            let mut lines = vec![
+                                "### Shared Inter-Quark Clipboard (`.hadron/clipboard/clips.json`)".to_string(),
+                                "".to_string(),
+                                "| Key | Author | Size | Updated |".to_string(),
+                                "|---|---|---|---|".to_string(),
+                            ];
+                            for c in clips {
+                                lines.push(format!(
+                                    "| `{}` | `{}` | {} B | `{}` |",
+                                    c.key,
+                                    c.author,
+                                    c.content.len(),
+                                    c.updated_at
+                                ));
+                            }
+                            lines.join("\n")
+                        }
+                        Err(e) => format!("Failed to read shared clipboard: {e}"),
+                    },
+                    "put" => {
+                        let key = parts.next().unwrap_or("").trim();
+                        let val = parts.next().unwrap_or("").trim();
+                        if key.is_empty() || val.is_empty() {
+                            "Usage: `/clip put <key> <value>`".to_string()
+                        } else {
+                            match hadron_lattice::clipboard::put_clip(&repo_root, key, val, "human") {
+                                Ok(entry) => format!(
+                                    "Stored clip `{}` ({} B) in `.hadron/clipboard/clips.json`.",
+                                    entry.key,
+                                    entry.content.len()
+                                ),
+                                Err(e) => format!("Failed to store clip `{key}`: {e}"),
+                            }
+                        }
+                    }
+                    "get" => {
+                        let key = parts.next().unwrap_or("").trim();
+                        if key.is_empty() {
+                            "Usage: `/clip get <key>`".to_string()
+                        } else {
+                            match hadron_lattice::clipboard::get_clip(&repo_root, key) {
+                                Ok(Some(entry)) => format!(
+                                    "**Clip `{}`** (by `{}`, updated `{}`):\n\n```\n{}\n```",
+                                    entry.key, entry.author, entry.updated_at, entry.content
+                                ),
+                                Ok(None) => format!("Clip `{key}` not found."),
+                                Err(e) => format!("Failed to read clip `{key}`: {e}"),
+                            }
+                        }
+                    }
+                    "clear" => match hadron_lattice::clipboard::clear_clips(&repo_root) {
+                        Ok(n) => format!("Cleared {n} clip(s) from `.hadron/clipboard/clips.json`."),
+                        Err(e) => format!("Failed to clear clipboard: {e}"),
+                    },
+                    _ => "Usage: `/clip [list | put <key> <value> | get <key> | clear]`".to_string(),
+                };
+                self.post_chat_message(Actor::Gluon, body, cx);
+                true
+            }
             _ => {
                 // If it contains a slash, it's probably a path. 
                 // Return false to let it pass through as a normal message.

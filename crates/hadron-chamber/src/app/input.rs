@@ -1044,6 +1044,7 @@ mod tests {
             "preview-rebase",
             "steer",
             "scout",
+            "clip",
         ];
         for cmd in crate::text::COMMANDS {
             assert!(
