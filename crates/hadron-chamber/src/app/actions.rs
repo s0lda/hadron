@@ -383,6 +383,7 @@ pub(super) fn perform_clear_field(
     session_id: &str,
     default_mode: hadron_lattice::Mode,
     roster: &[crate::model::RosterRow],
+    keep_context_plan: Option<String>,
 ) -> Result<Vec<Event>, std::io::Error> {
     std::fs::create_dir_all(session_dir)?;
 
@@ -402,7 +403,7 @@ pub(super) fn perform_clear_field(
     std::fs::copy(field_path, &archive_path)?;
     std::fs::write(field_path, "")?;
 
-    let mut post_events = Vec::with_capacity(2 + roster.len());
+    let mut post_events = Vec::with_capacity(3 + roster.len());
 
     // Record post-clear command event into the fresh field.
     post_events.push(Event::new(
@@ -415,21 +416,20 @@ pub(super) fn perform_clear_field(
         },
     ));
 
-    // Re-arm the human's standing permission mode. The effective mode
-    // is folded from the field's `ModeSet` events, and the truncation
-    // above just deleted every one of them — so without this a `/clear`
-    // silently dropped the swarm back to `Mode::Ask` however the human
-    // had it set, every single session. Seeded FIRST, so it is the base
-    // the reboots below land on.
+    if let Some(plan_name) = keep_context_plan {
+        post_events.push(Event::new(
+            Actor::Gluon,
+            None,
+            Kind::Message {
+                body: format!("Mission context preserved for active plan: {}", plan_name),
+            },
+        ));
+    }
+
     if let Some(seed) = crate::model::default_mode_seed(default_mode) {
         post_events.push(seed);
     }
 
-    // The archived agents still hold their pre-clear resident ACP
-    // sessions. Restart every resident quark so it re-boots into the
-    // fresh (empty) field instead of carrying stale context (see
-    // `post_clear_reboots` for the rule). The daemon's service_reboots
-    // ignores any id not currently seated.
     post_events.extend(crate::model::post_clear_reboots(roster));
 
     if let Err(e) = io::append_events(field_path, &post_events) {
@@ -475,33 +475,50 @@ impl Chamber {
                 true
             }
             "clear" => {
+                let trimmed_flag = args.trim();
+                if trimmed_flag == "--soft" {
+                    // Soft clear: reset in-memory chat view projection without resetting worktrees or archiving
+                    self.view.messages.clear();
+                    self.resync_lists_to_projection();
+                    cx.notify();
+                    return true;
+                }
+
+                let keep_context = trimmed_flag == "--keep-context";
+                let plan_info = if keep_context {
+                    self.last_plan_path
+                        .as_ref()
+                        .map(|p| std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy().to_string())
+                        .or_else(|| Some("active plan".to_string()))
+                } else {
+                    self.last_plan_path = None;
+                    *self.cached_plan_dag.borrow_mut() = None;
+                    None
+                };
+
                 let session_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
                 let session_dir = self.sessions_dir().join(&session_id);
+                let default_mode = self.prefs.default_mode;
+                let roster = self.view.roster.clone();
+                let field_path = self.path.clone();
+                let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+
                 match perform_clear_field(
-                    &self.path,
+                    &field_path,
                     &session_dir,
                     &session_id,
-                    self.prefs.default_mode,
-                    &self.view.roster,
+                    default_mode,
+                    &roster,
+                    plan_info,
                 ) {
                     Err(e) => {
                         eprintln!("chamber: failed to clear session: {e}");
                     }
                     Ok(events) => {
                         self.sync_view(&events);
-                        // `/clear` is a KNOWN wholesale swap, not a guess `sync_view`'s
-                        // append-heuristic should make: force the unconditional resync the
-                        // `A Field Swap Resets Every List Cache` invariant requires, rather
-                        // than trust `is_pure_append` (a short/empty pre-clear field can look
-                        // like pure growth to that heuristic).
                         self.resync_lists_to_projection();
                         cx.notify();
 
-                        let field_path = self.path.clone();
-                        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                        // Detach any quark worktrees from their pre-clear assignment branches and
-                        // archive+prune those branches in the background so the UI clears
-                        // immediately without waiting for per-worktree git subprocesses.
                         cx.background_executor()
                             .spawn(async move {
                                 crate::rpc_client::notify_daemon_wake(&field_path);
@@ -509,8 +526,6 @@ impl Chamber {
                             })
                             .detach();
 
-                        // The just-archived field is now part of history: fold it into the
-                        // wider Stats windows and offer it in the Sessions submenu asynchronously.
                         self.reload_archives_in_background(cx);
                     }
                 }
@@ -4658,6 +4673,7 @@ mod tests {
             "20261009_120000",
             hadron_lattice::Mode::Bypass,
             &roster,
+            None,
         )
         .expect("perform_clear_field must succeed");
 

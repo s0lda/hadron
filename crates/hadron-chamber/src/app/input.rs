@@ -830,12 +830,12 @@ mod tests {
     /// original parser had, kept.
     #[test]
     fn zero_arg_commands_chain_ahead_of_a_message() {
-        let (cmds, body) = split_leading_commands("/toggle-roster /clear ping the team");
+        let (cmds, body) = split_leading_commands("/toggle-roster /toggle-inspector ping the team");
         assert_eq!(
             cmds,
             vec![
                 ("toggle-roster".to_string(), String::new()),
-                ("clear".to_string(), String::new()),
+                ("toggle-inspector".to_string(), String::new()),
             ]
         );
         assert_eq!(body.as_deref(), Some("ping the team"));
