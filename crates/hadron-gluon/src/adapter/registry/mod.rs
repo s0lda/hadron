@@ -809,7 +809,7 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
     let sandbox = spec.sandbox;
     let quark: Box<dyn Quark> = match spec.kind {
         QuarkKind::Cli(cli_spec) => {
-            let watch = live_dir.filter(|_| cli_spec.stream.is_some());
+            let has_stream = cli_spec.stream.is_some();
             let mut q = CliQuark::new(spec.id, spec.flavor, spec.model, cli_spec, ProcessRunner)
                 .with_effort(spec.effort)
                 .with_sandbox(sandbox)
@@ -818,8 +818,12 @@ fn build_watched(spec: QuarkSpec, live_dir: Option<&std::path::Path>) -> anyhow:
                 .with_env(env)
                 .with_energy_limit(energy_limit)
                 .with_deny_skills(deny_skills);
-            if let Some(dir) = watch {
-                q = q.watching(dir.to_path_buf());
+            if let Some(dir) = live_dir {
+                if has_stream {
+                    q = q.watching(dir.to_path_buf());
+                } else if let Some(cost_dir) = dir.parent().map(|p| p.join("prompt-cost")) {
+                    q = q.with_prompt_cost_dir(cost_dir);
+                }
             }
             Box::new(q)
         }

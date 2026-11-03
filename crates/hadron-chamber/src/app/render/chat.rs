@@ -79,111 +79,198 @@ pub(super) fn parse_skill_block_notice(body: &str) -> Option<SkillBlockNotice> {
     None
 }
 
+/// Computes `(bytes, usage_fraction_0_to_1)` for each of the 5 prompt anatomy categories:
+/// `[Rules/Invariants, Nucleus Memory, Active Skill, Task/Directive, Transcript/Tools]`.
+/// Fractions reflect actual byte usage (`bytes / total_bytes`) rather than equal 1/5th slices.
+pub(super) fn prompt_anatomy_fractions(
+    breakdown: &hadron_lattice::prompt_cost::PromptBreakdown,
+) -> [(usize, f32); 5] {
+    let rules = breakdown.standard_model + breakdown.invariants;
+    let nucleus = breakdown.nucleus_digest + breakdown.nucleus_index;
+    let skill = breakdown.active_skill;
+    let task = breakdown.task;
+    let transcript = breakdown.field_window;
+    let total = rules + nucleus + skill + task + transcript;
+    let frac = |bytes: usize| -> f32 {
+        if total > 0 {
+            bytes as f32 / total as f32
+        } else {
+            0.0
+        }
+    };
+    [
+        (rules, frac(rules)),
+        (nucleus, frac(nucleus)),
+        (skill, frac(skill)),
+        (task, frac(task)),
+        (transcript, frac(transcript)),
+    ]
+}
+
 impl super::Chamber {
+    fn render_prompt_anatomy_circle(fractions: [(usize, f32); 5]) -> impl IntoElement {
+        let colors = [
+            theme::info(),
+            theme::success(),
+            theme::accent(),
+            theme::warning(),
+            theme::error(),
+        ];
+        gpui::canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _cx| {
+                let w = f32::from(bounds.size.width);
+                let h = f32::from(bounds.size.height);
+                let cx_px = f32::from(bounds.origin.x) + w * 0.5;
+                let cy_px = f32::from(bounds.origin.y) + h * 0.5;
+                let radius = (w.min(h) * 0.5 - 2.0).max(4.0);
+                let stroke_w = px(3.0);
+
+                // Subtle full-circle background track ring
+                let mut track = gpui::PathBuilder::stroke(stroke_w);
+                let track_steps = 36usize;
+                for k in 0..=track_steps {
+                    let theta = (k as f32 / track_steps as f32) * std::f32::consts::TAU;
+                    let pt = gpui::point(
+                        px(cx_px + radius * theta.cos()),
+                        px(cy_px + radius * theta.sin()),
+                    );
+                    if k == 0 {
+                        track.move_to(pt);
+                    } else {
+                        track.line_to(pt);
+                    }
+                }
+                if let Ok(path) = track.build() {
+                    window.paint_path(path, theme::bg_elevated());
+                }
+
+                // Proportional arc segments starting at 12 o'clock (-PI / 2)
+                let mut start_angle = -std::f32::consts::FRAC_PI_2;
+                for (ix, (bytes, frac)) in fractions.iter().copied().enumerate() {
+                    if bytes == 0 || frac <= 0.0 {
+                        continue;
+                    }
+                    let sweep = frac * std::f32::consts::TAU;
+                    let steps = ((sweep / std::f32::consts::TAU * 40.0).ceil() as usize).clamp(2, 40);
+                    let mut arc = gpui::PathBuilder::stroke(stroke_w);
+                    for k in 0..=steps {
+                        let theta = start_angle + sweep * (k as f32 / steps as f32);
+                        let pt = gpui::point(
+                            px(cx_px + radius * theta.cos()),
+                            px(cy_px + radius * theta.sin()),
+                        );
+                        if k == 0 {
+                            arc.move_to(pt);
+                        } else {
+                            arc.line_to(pt);
+                        }
+                    }
+                    if let Ok(path) = arc.build() {
+                        window.paint_path(path, colors[ix]);
+                    }
+                    start_angle += sweep;
+                }
+            },
+        )
+        .size(px(18.0))
+        .flex_none()
+    }
+
     pub(super) fn render_prompt_anatomy_hud(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(&self.path);
-        let breakdown = self
-            .view
-            .roster
-            .iter()
-            .find_map(|r| hadron_lattice::prompt_cost::load(&cost_dir, &hadron_lattice::QuarkId::new(&r.id)))
-            .unwrap_or_else(|| hadron_lattice::prompt_cost::PromptBreakdown {
-                standard_model: 4_000,
-                invariants: 16_000,
-                nucleus_digest: 2_000,
-                nucleus_index: 8_000,
-                active_skill: 3_000,
-                task: 2_000,
-                field_window: 25_000,
+        let (quark_id, breakdown) = self
+            .last_prompt_cost
+            .clone()
+            .or_else(|| {
+                if crate::wsl::is_wsl_unc_path(&self.path) {
+                    return None;
+                }
+                let cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(&self.path);
+                let roster_ids: Vec<String> =
+                    self.view.roster.iter().map(|r| r.id.clone()).collect();
+                hadron_lattice::prompt_cost::load_latest(&cost_dir, &roster_ids)
+            })
+            .map(|(id, b)| (Some(id), b))
+            .unwrap_or_else(|| {
+                (
+                    None,
+                    hadron_lattice::prompt_cost::PromptBreakdown {
+                        standard_model: 4_000,
+                        invariants: 16_000,
+                        nucleus_digest: 2_000,
+                        nucleus_index: 8_000,
+                        active_skill: 3_000,
+                        task: 2_000,
+                        field_window: 25_000,
+                    },
+                )
             });
 
-        let rules = breakdown.standard_model + breakdown.invariants;
-        let nucleus = breakdown.nucleus_digest + breakdown.nucleus_index;
-        let skill = breakdown.active_skill;
-        let task = breakdown.task;
-        let transcript = breakdown.field_window;
+        let fractions = prompt_anatomy_fractions(&breakdown);
+        let (rules, rules_frac) = fractions[0];
+        let (nucleus, nucleus_frac) = fractions[1];
+        let (skill, skill_frac) = fractions[2];
+        let (task, task_frac) = fractions[3];
+        let (transcript, transcript_frac) = fractions[4];
 
         let total_bytes = rules + nucleus + skill + task + transcript;
         let est_tokens = total_bytes / 4;
         let total_kb = total_bytes as f32 / 1024.0;
 
-        let rules_pct = if total_bytes > 0 { (rules as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
-        let nucleus_pct = if total_bytes > 0 { (nucleus as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
-        let skill_pct = if total_bytes > 0 { (skill as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
-        let task_pct = if total_bytes > 0 { (task as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
-        let transcript_pct = if total_bytes > 0 { (transcript as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
+        let rules_pct = rules_frac * 100.0;
+        let nucleus_pct = nucleus_frac * 100.0;
+        let skill_pct = skill_frac * 100.0;
+        let task_pct = task_frac * 100.0;
+        let transcript_pct = transcript_frac * 100.0;
 
+        let header_line = match quark_id.as_deref() {
+            Some(id) => format!("Prompt Context Anatomy (@{id}):"),
+            None => "Prompt Context Anatomy:".to_string(),
+        };
         let tooltip_text = format!(
-            "Prompt Context Anatomy:\n\
+            "{header_line}\n\
              • Rules/Invariants: {:.1} KB ({:.0}%)\n\
              • Nucleus Memory: {:.1} KB ({:.0}%)\n\
              • Active Skill: {:.1} KB ({:.0}%)\n\
              • Task/Directive: {:.1} KB ({:.0}%)\n\
              • Transcript/Tools: {:.1} KB ({:.0}%)\n\
              Total: {:.1} KB (~{} tokens)",
-            rules as f32 / 1024.0, rules_pct,
-            nucleus as f32 / 1024.0, nucleus_pct,
-            skill as f32 / 1024.0, skill_pct,
-            task as f32 / 1024.0, task_pct,
-            transcript as f32 / 1024.0, transcript_pct,
-            total_kb, est_tokens
+            rules as f32 / 1024.0,
+            rules_pct,
+            nucleus as f32 / 1024.0,
+            nucleus_pct,
+            skill as f32 / 1024.0,
+            skill_pct,
+            task as f32 / 1024.0,
+            task_pct,
+            transcript as f32 / 1024.0,
+            transcript_pct,
+            total_kb,
+            est_tokens
         );
 
-        v_flex()
+        h_flex()
             .id("prompt-anatomy-hud")
-            .w_full()
-            .gap_1()
-            .px_3()
-            .py_1p5()
-            .rounded_md()
-            .bg(theme::bg_surface())
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .px_2p5()
+            .py_1()
+            .rounded_full()
+            .bg(theme::tab_bar_bg())
             .border_1()
             .border_color(theme::glass_highlight())
-            .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tooltip_text.clone()).build(window, cx))
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip_text.clone()).build(window, cx)
+            })
+            .child(Self::render_prompt_anatomy_circle(fractions))
             .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(theme::text())
-                                    .child("Prompt Budget & Anatomy"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .text_color(theme::text_muted())
-                                    .child(format!("{:.1} KB (~{} tokens)", total_kb, est_tokens)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_color(theme::accent())
-                            .child(format!("Rules {:.0}% · Nucleus {:.0}% · Field {:.0}%", rules_pct, nucleus_pct, transcript_pct)),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_0p5()
-                    .h(px(4.0))
-                    .rounded_full()
-                    .overflow_hidden()
-                    .bg(theme::bg_base())
-                    .child(div().flex_1().h_full().bg(theme::info()))
-                    .child(div().flex_1().h_full().bg(theme::success()))
-                    .child(div().flex_1().h_full().bg(theme::accent()))
-                    .child(div().flex_1().h_full().bg(theme::warning()))
-                    .child(div().flex_1().h_full().bg(theme::error())),
+                div()
+                    .text_xs()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_color(theme::text_muted())
+                    .whitespace_nowrap()
+                    .child(format!("{:.1} KB (~{} tok)", total_kb, est_tokens)),
             )
     }
 
@@ -553,22 +640,16 @@ impl super::Chamber {
             }));
 
         let prompt_anatomy_hud = self.render_prompt_anatomy_hud(cx);
-        let header = v_flex()
+        let header = h_flex()
             .flex_none()
-            .child(
-                h_flex()
-                    .flex_none()
-                    .items_center()
-                    .px_3()
-                    .py_2()
-                    .child(tabs),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .pb_1()
-                    .child(prompt_anatomy_hud),
-            );
+            .w_full()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .child(tabs)
+            .child(prompt_anatomy_hud);
 
         // The scrolling viewport: the selected view stacks to its natural height
         // and scrolls *within* the card, instead of growing the card and pushing
@@ -2620,6 +2701,30 @@ mod milestone_3_tests {
         );
 
         assert_eq!(parse_skill_block_notice("regular chat message"), None);
+    }
+
+    #[test]
+    fn prompt_anatomy_fractions_scales_by_actual_usage_not_equal_fifths() {
+        let breakdown = hadron_lattice::prompt_cost::PromptBreakdown {
+            standard_model: 1_000,
+            invariants: 3_000,     // rules = 4,000 (40%)
+            nucleus_digest: 1_000,
+            nucleus_index: 1_000,  // nucleus = 2,000 (20%)
+            active_skill: 0,       // skill = 0 (0%)
+            task: 1_000,           // task = 1,000 (10%)
+            field_window: 3_000,   // transcript = 3,000 (30%)
+        };
+        let fractions = super::prompt_anatomy_fractions(&breakdown);
+        assert_eq!(fractions[0].0, 4_000);
+        assert!((fractions[0].1 - 0.40).abs() < 1e-5);
+        assert_eq!(fractions[1].0, 2_000);
+        assert!((fractions[1].1 - 0.20).abs() < 1e-5);
+        assert_eq!(fractions[2].0, 0);
+        assert_eq!(fractions[2].1, 0.0);
+        assert_eq!(fractions[3].0, 1_000);
+        assert!((fractions[3].1 - 0.10).abs() < 1e-5);
+        assert_eq!(fractions[4].0, 3_000);
+        assert!((fractions[4].1 - 0.30).abs() < 1e-5);
     }
 }
 

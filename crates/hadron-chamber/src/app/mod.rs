@@ -682,6 +682,8 @@ struct Chamber {
     /// activity does — the Tasks tab reads `live::gates` at render time and nothing
     /// else would notice it changed (nucleus `live-activity-needs-notify-repaint`).
     pub(super) last_gate_activities: Vec<hadron_lattice::live::Activity>,
+    pub(super) last_prompt_cost:
+        Option<(String, hadron_lattice::prompt_cost::PromptBreakdown)>,
     /// Last wall-clock second for which a live turn timer repaint was emitted while at
     /// least one quark/task/gate was active (`None` when the swarm is idle).
     pub(super) last_live_timer_sec: Option<i64>,
@@ -1639,6 +1641,13 @@ impl Chamber {
         let delegations = delegation::parse_delegations(&events, &alias_map);
         let audio_manager = audio::AudioTelemetryManager::new(prefs.audio.clone());
         let rpc_endpoint = crate::rpc_client::active_endpoint(&path);
+        let last_prompt_cost = if workspace_mode == WorkspaceMode::Selector || is_wsl {
+            None
+        } else {
+            let roster_ids: Vec<String> = view.roster.iter().map(|r| r.id.clone()).collect();
+            let cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(&path);
+            hadron_lattice::prompt_cost::load_latest(&cost_dir, &roster_ids)
+        };
 
         let mut chamber = Chamber {
             view,
@@ -1902,6 +1911,7 @@ impl Chamber {
             terminal_grid_scroll: ScrollHandle::new(),
             last_live_activities: std::collections::HashMap::new(),
             last_gate_activities: Vec::new(),
+            last_prompt_cost,
             last_live_timer_sec: None,
             last_gluon_running: true,
             rpc_endpoint,

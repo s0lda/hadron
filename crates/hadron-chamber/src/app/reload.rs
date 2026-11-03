@@ -108,6 +108,8 @@ pub(super) struct FieldPoll {
     pub(super) scan: Option<WorkspaceScan>,
     pub(super) live_activities: Vec<(String, Option<hadron_lattice::live::Activity>)>,
     pub(super) gate_activities: Vec<hadron_lattice::live::Activity>,
+    pub(super) latest_prompt_cost:
+        Option<(String, hadron_lattice::prompt_cost::PromptBreakdown)>,
     pub(super) gluon_now_running: bool,
     pub(super) rpc_endpoint: Option<hadron_lattice::wire::RpcEndpointMetadata>,
 }
@@ -184,6 +186,9 @@ impl FieldPoll {
 
         let gates_dir = hadron_lattice::live::gates_dir(path);
         let gate_activities = hadron_lattice::live::gates(&gates_dir, now);
+        let prompt_cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(path);
+        let latest_prompt_cost =
+            hadron_lattice::prompt_cost::load_latest(&prompt_cost_dir, roster_ids);
         let gluon_now_running = super::Chamber::probe_gluon_running(path);
         let rpc_endpoint = crate::rpc_client::active_endpoint(path);
 
@@ -198,6 +203,7 @@ impl FieldPoll {
             scan,
             live_activities,
             gate_activities,
+            latest_prompt_cost,
             gluon_now_running,
             rpc_endpoint,
         }
@@ -552,6 +558,10 @@ impl super::Chamber {
             // detection to repaint when a gate starts, keeps running, or finishes.
             if poll.gate_activities != self.last_gate_activities {
                 self.last_gate_activities = poll.gate_activities;
+                changed = true;
+            }
+            if poll.latest_prompt_cost != self.last_prompt_cost {
+                self.last_prompt_cost = poll.latest_prompt_cost;
                 changed = true;
             }
 

@@ -133,11 +133,19 @@ pub fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
 }
 
 pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_bytes: usize) -> String {
+    fit_projection_to_budget(projection, self_id, max_bytes).1
+}
+
+pub fn fit_projection_to_budget(
+    projection: &Projection,
+    self_id: &QuarkId,
+    max_bytes: usize,
+) -> (Projection, String) {
     let render = |p: &Projection| crate::adapter::prompt::build(p, self_id);
 
     let prompt = render(projection);
     if prompt.len() <= max_bytes {
-        return prompt;
+        return (projection.clone(), prompt);
     }
 
     let mut p = projection.clone();
@@ -167,6 +175,7 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
             let mut lo = 1usize;
             let mut hi = max_drop;
             let mut best = min_window_out;
+            let mut best_p = p.clone();
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
                 p.field_window.clear();
@@ -176,12 +185,13 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
                 let candidate = render(&p);
                 if candidate.len() <= max_bytes {
                     best = candidate;
+                    best_p = p.clone();
                     hi = mid;
                 } else {
                     lo = mid + 1;
                 }
             }
-            return best;
+            return (best_p, best);
         }
         // Keep the last 2 field events in `p.field_window` (without marker yet; added below).
         p.field_window.remove(0);
@@ -202,21 +212,21 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     );
     let mut out = render(&p);
     if out.len() <= max_bytes {
-        return out;
+        return (p, out);
     }
 
     if !p.nucleus_digest.is_empty() {
         p.nucleus_digest.clear();
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
     if p.has_forge_tools {
         p.has_forge_tools = false;
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
     let inv_soft_cap = max_bytes / 3;
@@ -228,7 +238,7 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
         p.invariants.truncate(cut);
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
 
@@ -236,21 +246,21 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
         p.nucleus_index.clear();
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
     if p.active_skill.is_some() {
         p.active_skill = None;
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
     while p.field_window.len() > 1 {
         p.field_window.remove(1);
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
     if !p.invariants.is_empty() {
@@ -266,13 +276,13 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
             p.invariants.truncate(cut);
             out = render(&p);
             if out.len() <= max_bytes {
-                return out;
+                return (p, out);
             }
         }
         p.invariants.clear();
         out = render(&p);
         if out.len() <= max_bytes {
-            return out;
+            return (p, out);
         }
     }
 
@@ -282,7 +292,14 @@ pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_byte
     while cut > 0 && !out.is_char_boundary(cut) {
         cut -= 1;
     }
-    format!("{}\n{TRUNCATION_MARKER}", &out[..cut])
+    if cut < p.task.len() {
+        let mut task_cut = cut;
+        while task_cut > 0 && !p.task.is_char_boundary(task_cut) {
+            task_cut -= 1;
+        }
+        p.task.truncate(task_cut);
+    }
+    (p, format!("{}\n{TRUNCATION_MARKER}", &out[..cut]))
 }
 
 /// Returns true if an error string from a CLI subprocess execution represents
@@ -311,21 +328,30 @@ pub fn fit_prompt_with_sliding_pruner(
     max_bytes: usize,
     config: &crate::sliding_pruner::SlidingPrunerConfig,
 ) -> String {
+    fit_projection_with_sliding_pruner(projection, self_id, max_bytes, config).1
+}
+
+pub fn fit_projection_with_sliding_pruner(
+    projection: &Projection,
+    self_id: &QuarkId,
+    max_bytes: usize,
+    config: &crate::sliding_pruner::SlidingPrunerConfig,
+) -> (Projection, String) {
     let render = |p: &Projection| crate::adapter::prompt::build(p, self_id);
     let prompt = render(projection);
     if prompt.len() <= max_bytes {
-        return prompt;
+        return (projection.clone(), prompt);
     }
 
     let mut p = projection.clone();
     if crate::sliding_pruner::SlidingContextPruner::prune_projection(&mut p, config) {
         let compacted_prompt = render(&p);
         if compacted_prompt.len() <= max_bytes {
-            return compacted_prompt;
+            return (p, compacted_prompt);
         }
     }
 
-    fit_prompt_to_budget(&p, self_id, max_bytes)
+    fit_projection_to_budget(&p, self_id, max_bytes)
 }
 
 /// Strip the transcript from a projection bound for a resident conversation.
@@ -420,6 +446,11 @@ impl<R: CliRunner> CliQuark<R> {
     pub fn watching(mut self, dir: PathBuf) -> Self {
         self.prompt_cost_dir = dir.parent().map(|p| p.join("prompt-cost"));
         self.live_dir = Some(dir);
+        self
+    }
+
+    pub fn with_prompt_cost_dir(mut self, dir: PathBuf) -> Self {
+        self.prompt_cost_dir = Some(dir);
         self
     }
 
@@ -756,27 +787,28 @@ impl<R: CliRunner> Quark for CliQuark<R> {
                 }
             }
 
-            if attempt == 0 {
-                if let Some(dir) = &self.prompt_cost_dir {
-                    let breakdown = crate::adapter::prompt::measure(&prepared_turn, &self.id);
-                    let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
-                }
-            }
-
             // The argv guard only applies when the spec says the prompt rides as one
             // argv element with no stdin fallback (`execve` on Linux rejects an over-long one
             // with E2BIG; `CreateProcessW` on Windows returns error 206 before the CLI ever starts).
             // Otherwise fit the prompt through `SlidingContextPruner` first when oversized.
-            let prompt = if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
-                fit_prompt(&prepared_turn, &self.id)
-            } else {
-                fit_prompt_with_sliding_pruner(
-                    &prepared_turn,
-                    &self.id,
-                    SAFE_ARG_BYTES,
-                    &crate::sliding_pruner::SlidingPrunerConfig::default(),
-                )
-            };
+            let (fitted_turn, prompt) =
+                if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
+                    fit_projection_to_budget(&prepared_turn, &self.id, SAFE_ARG_BYTES)
+                } else {
+                    fit_projection_with_sliding_pruner(
+                        &prepared_turn,
+                        &self.id,
+                        SAFE_ARG_BYTES,
+                        &crate::sliding_pruner::SlidingPrunerConfig::default(),
+                    )
+                };
+
+            if attempt == 0 {
+                if let Some(dir) = &self.prompt_cost_dir {
+                    let breakdown = crate::adapter::prompt::measure(&fitted_turn, &self.id);
+                    let _ = hadron_lattice::prompt_cost::save(dir, &self.id, &breakdown);
+                }
+            }
 
             let invocation = self.invocation(prompt, mode, cwd.clone());
             let res = if let Some(stream) = self.spec.stream.clone() {
