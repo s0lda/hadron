@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.38",
+        date: Some("2026-11-03"),
+        added: &[
+            "Live Mission Plan Refresh, Interactive DAG Dispatch & Remote Branches View: Polled workspace plan content and branch fingerprint while RightRailTab::Mission is open with manual and tab-switch refresh, added interactive DAG wave/task dispatch and prompt anatomy HUD, and added remote branch listing with All/Local/Remote filter pills and a Fetch button in Git > Branches",
+            "Shared Inter-Quark Clipboard, /clip Command & LoopWatchdog: Added hadron_lattice::clipboard (.hadron/clipboard.json) with hadron_forge_clip_put/get/list MCP tools and the /clip slash command (list, put, get, clear), plus hadron_gluon::watchdog::LoopWatchdog in LocalQuark and CliQuark streaming loops",
+            "Session Index Caching, Async /clear Decoupling & Direct Conversational Routing: Cached archived session indices in FieldModel, decoupled /clear UI reset from background worktree cleanup, and suppressed @orchestrator tags on direct casual human turns via Projection::from_human_directly",
+        ],
+        changed: &[
+            "Prompt Budget Shedding Priority: Reordered fit_prompt_to_budget so excess invariants and nucleus_digest are trimmed before shedding nucleus_index or recent field_window events",
+        ],
+        fixed: &[
+            "ContextGovernor Chat Truncation, TransportScrubber False Positives & Parallel Test Races: Removed compact_tool_output from field::append_event/append_events and scoped it strictly to raw tool dumps in SlidingContextPruner, required word boundaries and token length in TransportScrubber::mask_prefix_pattern so hyphenated terms like Task-DAG are preserved, cleared negative merge cache entries on ref updates, and eliminated parallel test races in theme.rs and rpc_client.rs",
+        ],
+    },
+    Release {
         version: "0.33.37",
         date: Some("2026-11-02"),
         added: &[

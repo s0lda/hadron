@@ -120,6 +120,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/doctor` | `/doctor` | Run automated system diagnostics on daemon, lockfiles, nucleus budget, fonts, and worktrees. | `/doctor` |
 | `/vocabulary` | `/vocabulary` | Display the definitive Hadron particle physics mental model and glossary. | `/vocabulary` |
 | `/skills` | `/skills` | List all registered procedural skills and their matching trigger phrases. | `/skills` |
+| `/clip` | `/clip [list \| put <key> <value> \| get <key> \| clear]` | Read or write the shared inter-quark artifact clipboard (`.hadron/clipboard/clips.json`). | `/clip put api-schema {"v":1}` |
 
 ---
 

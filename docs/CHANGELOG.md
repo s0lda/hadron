@@ -5,6 +5,30 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.38] - 2026-11-03
+
+### Added
+- **Live Mission Plan Refresh, Interactive DAG Dispatch & Remote Branches View (`hadron-chamber`)**:
+  - Polled workspace plan content and branch fingerprint in `FieldPoll::gather` while `RightRailTab::Mission` is open, cleared negative merge cache entries (`vcs::clear_unmerged_commit_cache`) on ref or plan changes, and added a manual `#mission-plan-refresh` button plus automatic refresh when selecting `Mission` or `MissionSubtab::Plan` (`crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/render/terminal.rs`, `crates/hadron-chamber/src/app/render/dag_visualizer.rs`, `crates/hadron-chamber/src/vcs.rs`).
+  - Added interactive DAG wave and task dispatch buttons (`#dag-dispatch-wave-{ix}`, `#dag-task-dispatch-{ix}`) in `Chamber::plan_dag_visualizer` and a collapsible prompt anatomy HUD in chat (`crates/hadron-chamber/src/app/render/dag_visualizer.rs`, `crates/hadron-chamber/src/app/render/chat.rs`).
+  - Listed remote branches (`BranchEntry.is_remote`) in `vcs::list_branches`, added `All` / `Local` / `Remote` (`BranchScopeFilter`) filter pills (`#git-branch-scope-all`, `#git-branch-scope-local`, `#git-branch-scope-remote`), and added an interactive `Fetch` (`#git-fetch-remotes`) button in `Git > Branches` (`crates/hadron-chamber/src/vcs.rs`, `crates/hadron-chamber/src/app/tabs.rs`, `crates/hadron-chamber/src/app/render/git.rs`).
+- **Shared Inter-Quark Clipboard, `/clip` Slash Command & `LoopWatchdog` (`hadron-lattice`, `hadron-forge-mcp`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added `hadron_lattice::clipboard` (`.hadron/clipboard.json`) with MCP tools `hadron_forge_clip_put`, `hadron_forge_clip_get`, and `hadron_forge_clip_list` (`crates/hadron-lattice/src/clipboard.rs`, `crates/hadron-forge-mcp/src/tools/clipboard.rs`) and wired the `/clip` slash command (`list`, `put <key> <value>`, `get <key>`, `clear`) in Chamber (`crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/input.rs`, `crates/hadron-chamber/src/text.rs`).
+  - Added `hadron_gluon::watchdog::LoopWatchdog` to detect repetitive tool/output loops and wired it into `LocalQuark` and `CliQuark` streaming turns (`crates/hadron-gluon/src/watchdog.rs`, `crates/hadron-gluon/src/adapter/local.rs`, `crates/hadron-gluon/src/adapter/cli.rs`).
+- **Session Index Caching, Async `/clear` Decoupling & Direct Conversational Routing (`hadron-chamber`, `hadron-lattice`, `hadron-gluon`)**:
+  - Cached archived session summaries in `FieldModel` and decoupled `/clear` UI state reset from background worktree cleanup (`crates/hadron-chamber/src/model/mod.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+  - Added `Projection::from_human_directly` and `is_conversational_human_turn` so casual direct human messages suppress automatic `@orchestrator` tagging (`crates/hadron-lattice/src/projection.rs`, `crates/hadron-gluon/src/engine/turn.rs`, `crates/hadron-gluon/src/engine/routing.rs`).
+
+### Changed
+- **Prompt Budget Shedding Priority (`hadron-gluon`)**:
+  - Reordered `fit_prompt_to_budget` so excess invariants and `nucleus_digest` are trimmed before shedding `nucleus_index` or recent `field_window` events (`crates/hadron-gluon/src/adapter/prompt/mod.rs`).
+
+### Fixed
+- **`ContextGovernor` Chat Truncation, `TransportScrubber` False Positives & Parallel Test Races (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Removed `ContextGovernor::compact_tool_output` from `field::append_event` / `append_events` so `/commands` and `/team-brainstorm` messages are never truncated in `field.jsonl`, and scoped `compact_tool_output` strictly to raw tool dumps (`ContextGovernor::is_raw_tool_dump`) in `SlidingContextPruner` (`crates/hadron-lattice/src/io.rs`, `crates/hadron-lattice/src/context_governor.rs`, `crates/hadron-gluon/src/sliding_pruner.rs`).
+  - Required a leading word boundary and token length in `TransportScrubber::mask_prefix_pattern` so hyphenated terms like `Task-DAG` are not redacted (`crates/hadron-lattice/src/transport_scrubber.rs`).
+  - Acquired `THEME_TEST_MUTEX` across global-state theme tests in `theme.rs` and synchronized loopback server startup with a `Barrier` in `rpc_client.rs` to eliminate parallel test races (`crates/hadron-chamber/src/theme.rs`, `crates/hadron-chamber/src/rpc_client.rs`).
+
 ## [0.33.37] - 2026-11-02
 
 ### Added
