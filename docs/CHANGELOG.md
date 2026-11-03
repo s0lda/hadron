@@ -5,6 +5,19 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.39] - 2026-11-03
+
+### Added
+- **Inline Circle-Graph Prompt Anatomy HUD & Live Prompt-Cost Polling (`hadron-chamber`, `hadron-lattice`, `hadron-gluon`)**:
+  - Replaced full-width Prompt Budget & Anatomy bar with a right-aligned inline pill and proportional circle/donut graph alongside `#chat-capsule-tabs` (`crates/hadron-chamber/src/app/render/chat.rs`).
+  - Scaled circle-graph arc segments by actual byte usage (`prompt_anatomy_fractions`) rather than equal flex-1 fifths (`crates/hadron-chamber/src/app/render/chat.rs`).
+  - Added `prompt_cost::load_latest` with latest quark marker and mtime fallback, and polled it in `FieldPoll::gather` so new prompts update Chamber live (`crates/hadron-lattice/src/prompt_cost.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/mod.rs`).
+  - Measured fitted projections in `CliQuark::excite` and wired `with_prompt_cost_dir` for non-streaming CLI seats (`crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/src/adapter/registry/mod.rs`).
+
+### Fixed
+- **Prompt-Cost Marker Error Propagation (`hadron-lattice`)**:
+  - Propagated prompt-cost marker errors to satisfy `RedTeamAuditor` (`crates/hadron-lattice/src/prompt_cost.rs`).
+
 ## [0.33.38] - 2026-11-03
 
 ### Added

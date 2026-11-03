@@ -182,7 +182,18 @@ function Get-RemoteFile {
 # Verify SHA256 checksum
 function Assert-Sha256Checksum {
     param([string]$FilePath, [string]$ExpectedHash)
-    $actualHash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        $actualHash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else {
+        $stream = [System.IO.File]::OpenRead($FilePath)
+        try {
+            $sha256 = [System.Security.Cryptography.SHA256]::Create()
+            $hashBytes = $sha256.ComputeHash($stream)
+            $actualHash = [System.BitConverter]::ToString($hashBytes).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $stream.Close()
+        }
+    }
     $expected = $ExpectedHash.Trim().ToLowerInvariant()
     if ($actualHash -ne $expected) {
         Write-Error "Error: Checksum verification failed for $FilePath`nExpected: $expected`nGot:      $actualHash"

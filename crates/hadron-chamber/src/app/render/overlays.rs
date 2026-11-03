@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.39",
+        date: Some("2026-11-03"),
+        added: &[
+            "Inline Circle-Graph Prompt Anatomy HUD & Live Prompt-Cost Polling: Replaced full-width Prompt Budget & Anatomy bar with a right-aligned inline pill and proportional circle/donut graph alongside #chat-capsule-tabs, scaled arc segments by actual byte usage (prompt_anatomy_fractions), added prompt_cost::load_latest with latest quark marker and mtime fallback, polled it in FieldPoll::gather for live Chamber updates, and measured fitted projections in CliQuark::excite",
+        ],
+        changed: &[],
+        fixed: &[
+            "Prompt-Cost Marker Error Propagation: Propagated prompt-cost marker errors in hadron-lattice to satisfy RedTeamAuditor",
+        ],
+    },
+    Release {
         version: "0.33.38",
         date: Some("2026-11-03"),
         added: &[
