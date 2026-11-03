@@ -1217,13 +1217,13 @@ impl Chamber {
                 cx.notify();
                 true
             }
-            "reboot" => {
+            "reboot" | "stop" | "kill" => {
                 let target = args.trim().trim_start_matches('@');
                 if target.is_empty() {
-                    eprintln!("chamber: `/reboot` requires a target (e.g. `/reboot @Quark` or `/reboot all`)");
+                    eprintln!("chamber: `/{cmd}` requires a target (e.g. `/{cmd} @Quark` or `/{cmd} all`)");
                     self.post_chat_message(
                         Actor::Gluon,
-                        "Usage: `/reboot @Quark` or `/reboot all`".to_string(),
+                        format!("Usage: `/{cmd} @Quark` or `/{cmd} all`"),
                         cx,
                     );
                     return true;
@@ -1240,10 +1240,10 @@ impl Chamber {
                             vec![Event::new(Actor::Human, Some(QuarkId::new(&row.id)), Kind::Reboot)]
                         }
                         None => {
-                            eprintln!("chamber: `/reboot` target not found: {target}");
+                            eprintln!("chamber: `/{cmd}` target not found: {target}");
                             self.post_chat_message(
                                 Actor::Gluon,
-                                format!("chamber: `/reboot` target not found: `{target}`"),
+                                format!("chamber: `/{cmd}` target not found: `{target}`"),
                                 cx,
                             );
                             vec![]
@@ -1373,54 +1373,6 @@ impl Chamber {
                             }
                         }
                     },
-                    cx,
-                );
-                true
-            }
-            "steer" => {
-                let (target, guidance) = crate::text::split_target(args);
-                let Some(target) = target else {
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        "Usage: `/steer @Quark <steering guidance>`".to_string(),
-                        cx,
-                    );
-                    return true;
-                };
-                let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) else {
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        format!("chamber: `/steer` target not found: {target}"),
-                        cx,
-                    );
-                    return true;
-                };
-
-                let guidance = guidance.trim();
-                if guidance.is_empty() {
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        "Provide steering guidance: `/steer @Quark <guidance>`".to_string(),
-                        cx,
-                    );
-                    return true;
-                }
-
-                let quark_id = row.id.clone();
-                let steer_msg = format!("@{} [STEERING GUIDANCE]: {}", quark_id, guidance);
-                let ev = Event::new(Actor::Human, Some(hadron_lattice::QuarkId::new(&quark_id)), Kind::Message { body: steer_msg });
-                if let Err(e) = io::append_event(&self.path, &ev) {
-                    eprintln!("chamber: failed to append steer event: {e}");
-                }
-
-                let steer_dir = hadron_lattice::hadron_dir_of(&self.path).join("steer");
-                let _ = std::fs::create_dir_all(&steer_dir);
-                let steer_file = steer_dir.join(format!("{quark_id}.steer"));
-                let _ = std::fs::write(&steer_file, guidance);
-
-                self.post_chat_message(
-                    Actor::Gluon,
-                    format!("Steering guidance dispatched to `@{}`.", quark_id),
                     cx,
                 );
                 true
@@ -2356,71 +2308,6 @@ impl Chamber {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 let body = crate::text::compact_nucleus_index(&repo_root, args.trim());
                 self.post_chat_message(Actor::Gluon, body, cx);
-                true
-            }
-            "stop" => {
-                let target = args.trim().trim_start_matches('@');
-                if target.is_empty() {
-                    eprintln!("chamber: `/stop` requires a target (e.g. `/stop @Quark`)");
-                    self.post_chat_message(Actor::Gluon, "Usage: `/stop @Quark`".to_string(), cx);
-                    return true;
-                }
-                if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
-                    let id = row.id.clone();
-                    let qid = QuarkId::new(&id);
-                    let ev = Event::new(Actor::Human, Some(qid), Kind::Reboot);
-                    self.append_and_reload(ev, cx);
-                    self.post_chat_message(Actor::Gluon, format!("Stopped in-flight turn for `{id}` gracefully."), cx);
-                } else {
-                    eprintln!("chamber: `/stop` target quark not found: {target}");
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        format!("chamber: `/stop` target quark not found: `{target}`"),
-                        cx,
-                    );
-                }
-                true
-            }
-            "kill" => {
-                let target = args.trim().trim_start_matches('@');
-                if target.is_empty() {
-                    eprintln!("chamber: `/kill` requires a target (e.g. `/kill @Quark`)");
-                    self.post_chat_message(Actor::Gluon, "Usage: `/kill @Quark`".to_string(), cx);
-                    return true;
-                }
-                if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
-                    let id = row.id.clone();
-                    let qid = QuarkId::new(&id);
-                    let ev = Event::new(Actor::Human, Some(qid), Kind::Reboot);
-                    self.append_and_reload(ev, cx);
-                    self.post_chat_message(Actor::Gluon, format!("Force-killed subprocess group for `{id}`."), cx);
-                } else {
-                    eprintln!("chamber: `/kill` target quark not found: {target}");
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        format!("chamber: `/kill` target quark not found: `{target}`"),
-                        cx,
-                    );
-                }
-                true
-            }
-            "cancel" => {
-                let target = args.trim().trim_start_matches('@');
-                let (target_id, label) = if target.is_empty() {
-                    (None, "all seats".to_string())
-                } else if let Some(row) = super::mentions::seat_by_mention(&self.view.roster, target) {
-                    (Some(QuarkId::new(&row.id)), format!("`{}`", row.id))
-                } else {
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        format!("chamber: `/cancel` target quark not found: `{target}`"),
-                        cx,
-                    );
-                    return true;
-                };
-                let ev = Event::new(Actor::Human, target_id, Kind::PermissionGrant { approved: false, remember: false });
-                self.append_and_reload(ev, cx);
-                self.post_chat_message(Actor::Gluon, format!("Cancelled pending dispatch for {label}."), cx);
                 true
             }
             "gate-cancel" => {

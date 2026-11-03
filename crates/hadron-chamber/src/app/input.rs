@@ -672,7 +672,6 @@ pub(super) fn fold_preamble_into_prompt_commands_with_skills(
                 | "settle"
                 | "adr"
                 | "loop"
-                | "steer"
                 | "scout"
         ) && crate::text::command_with_skills(cmd, custom_skills)
             .is_some_and(|c| c.arity == crate::text::Arity::Body)
@@ -987,7 +986,6 @@ mod tests {
             "compact-nucleus",
             "stop",
             "kill",
-            "cancel",
             "gate-cancel",
             "revert",
             "unabandon",
@@ -1042,7 +1040,6 @@ mod tests {
             "radar",
             "baseline",
             "preview-rebase",
-            "steer",
             "scout",
             "clip",
         ];
