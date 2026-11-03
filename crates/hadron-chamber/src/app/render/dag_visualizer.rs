@@ -362,6 +362,39 @@ impl Chamber {
                     );
                 }
 
+                if !task.completed {
+                    let task_id = task.id.clone();
+                    let task_title = task.title.clone();
+                    card = card.child(
+                        h_flex()
+                            .justify_end()
+                            .pt_1()
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("dag-dispatch-step-{}", task_id)))
+                                    .px_1p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .bg(theme::bg_base())
+                                    .border_1()
+                                    .border_color(theme::glass_highlight())
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::accent())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::bg_surface()))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.post_chat_message(
+                                            hadron_lattice::Actor::Human,
+                                            format!("@orchestrator Execute {}: {}", task_id, task_title),
+                                            cx,
+                                        );
+                                    }))
+                                    .child("▶ Dispatch"),
+                            ),
+                    );
+                }
+
                 col = col.child(card);
             }
 

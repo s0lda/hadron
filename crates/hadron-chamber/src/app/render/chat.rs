@@ -80,6 +80,113 @@ pub(super) fn parse_skill_block_notice(body: &str) -> Option<SkillBlockNotice> {
 }
 
 impl super::Chamber {
+    pub(super) fn render_prompt_anatomy_hud(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(&self.path);
+        let breakdown = self
+            .view
+            .roster
+            .iter()
+            .find_map(|r| hadron_lattice::prompt_cost::load(&cost_dir, &hadron_lattice::QuarkId::new(&r.id)))
+            .unwrap_or_else(|| hadron_lattice::prompt_cost::PromptBreakdown {
+                standard_model: 4_000,
+                invariants: 16_000,
+                nucleus_digest: 2_000,
+                nucleus_index: 8_000,
+                active_skill: 3_000,
+                task: 2_000,
+                field_window: 25_000,
+            });
+
+        let rules = breakdown.standard_model + breakdown.invariants;
+        let nucleus = breakdown.nucleus_digest + breakdown.nucleus_index;
+        let skill = breakdown.active_skill;
+        let task = breakdown.task;
+        let transcript = breakdown.field_window;
+
+        let total_bytes = rules + nucleus + skill + task + transcript;
+        let est_tokens = total_bytes / 4;
+        let total_kb = total_bytes as f32 / 1024.0;
+
+        let rules_pct = if total_bytes > 0 { (rules as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
+        let nucleus_pct = if total_bytes > 0 { (nucleus as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
+        let skill_pct = if total_bytes > 0 { (skill as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
+        let task_pct = if total_bytes > 0 { (task as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
+        let transcript_pct = if total_bytes > 0 { (transcript as f32 / total_bytes as f32) * 100.0 } else { 0.0 };
+
+        let tooltip_text = format!(
+            "Prompt Context Anatomy:\n\
+             • Rules/Invariants: {:.1} KB ({:.0}%)\n\
+             • Nucleus Memory: {:.1} KB ({:.0}%)\n\
+             • Active Skill: {:.1} KB ({:.0}%)\n\
+             • Task/Directive: {:.1} KB ({:.0}%)\n\
+             • Transcript/Tools: {:.1} KB ({:.0}%)\n\
+             Total: {:.1} KB (~{} tokens)",
+            rules as f32 / 1024.0, rules_pct,
+            nucleus as f32 / 1024.0, nucleus_pct,
+            skill as f32 / 1024.0, skill_pct,
+            task as f32 / 1024.0, task_pct,
+            transcript as f32 / 1024.0, transcript_pct,
+            total_kb, est_tokens
+        );
+
+        v_flex()
+            .id("prompt-anatomy-hud")
+            .w_full()
+            .gap_1()
+            .px_3()
+            .py_1p5()
+            .rounded_md()
+            .bg(theme::bg_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tooltip_text.clone()).build(window, cx))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child("Prompt Budget & Anatomy"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_color(theme::text_muted())
+                                    .child(format!("{:.1} KB (~{} tokens)", total_kb, est_tokens)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(theme::accent())
+                            .child(format!("Rules {:.0}% · Nucleus {:.0}% · Field {:.0}%", rules_pct, nucleus_pct, transcript_pct)),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_0p5()
+                    .h(px(4.0))
+                    .rounded_full()
+                    .overflow_hidden()
+                    .bg(theme::bg_base())
+                    .child(div().flex_1().h_full().bg(theme::info()))
+                    .child(div().flex_1().h_full().bg(theme::success()))
+                    .child(div().flex_1().h_full().bg(theme::accent()))
+                    .child(div().flex_1().h_full().bg(theme::warning()))
+                    .child(div().flex_1().h_full().bg(theme::error())),
+            )
+    }
+
     /// The center column: a segmented Chat / Log / Timeline tab bar over the
     /// selected view, with the human's message box pinned at the foot. The whole
     /// thing is a rounded, filled card that floats on the unified canvas.
@@ -445,6 +552,7 @@ impl super::Chamber {
                     }))
             }));
 
+        let prompt_anatomy_hud = self.render_prompt_anatomy_hud(cx);
         let header = v_flex()
             .flex_none()
             .child(
@@ -454,6 +562,12 @@ impl super::Chamber {
                     .px_3()
                     .py_2()
                     .child(tabs),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pb_1()
+                    .child(prompt_anatomy_hud),
             );
 
         // The scrolling viewport: the selected view stacks to its natural height

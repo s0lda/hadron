@@ -94,7 +94,7 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "commands", detail: "List every chat command", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "skills", detail: "List the skills the engine can hand a quark, and their triggers", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "vocabulary", detail: "What each Hadron word means — quark, preon, field, gluon…", arity: Arity::None, arg: ArgSource::None, listed: true },
-    Command { name: "clear", detail: "Archive and clear the current chat history", arity: Arity::None, arg: ArgSource::None, listed: true },
+    Command { name: "clear", detail: "Archive and clear the current chat history (supports /clear, /clear --soft, /clear --keep-context)", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "exit", detail: "Exit Hadron Chamber", arity: Arity::None, arg: ArgSource::None, listed: true },
     // A working alias of `/exit`, kept so existing muscle memory does not break,
     // unlisted so the menu offers one way to do it.

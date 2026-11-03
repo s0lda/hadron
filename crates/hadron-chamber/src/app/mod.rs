@@ -2469,17 +2469,17 @@ mod tests {
 
         // A leading command runs; the multi-line remainder keeps its newline (this is the
         // regression guard — the old tokenizer flattened it to "line one line two").
-        let (cmds, body) = split_leading_commands("/clear line one\nline two");
-        assert_eq!(cmds, vec![("clear".to_string(), String::new())]);
+        let (cmds, body) = split_leading_commands("/toggle-roster line one\nline two");
+        assert_eq!(cmds, vec![("toggle-roster".to_string(), String::new())]);
         assert_eq!(body.as_deref(), Some("line one\nline two"));
 
         // Chained zero-arg commands, no message left → body None (caller clears the box).
-        let (cmds, body) = split_leading_commands("/toggle-roster /clear");
+        let (cmds, body) = split_leading_commands("/toggle-roster /toggle-inspector");
         assert_eq!(
             cmds,
             vec![
                 ("toggle-roster".to_string(), String::new()),
-                ("clear".to_string(), String::new()),
+                ("toggle-inspector".to_string(), String::new()),
             ]
         );
         assert_eq!(body, None);

@@ -271,13 +271,55 @@ impl SessionInfo {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionCacheEntry {
+    pub id: String,
+    pub name: Option<String>,
+    pub file_len: u64,
+    pub mtime_secs: u64,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SessionsIndexCache {
+    pub entries: HashMap<String, SessionCacheEntry>,
+}
+
+impl SessionsIndexCache {
+    pub fn load(cache_path: &std::path::Path) -> Self {
+        if let Ok(content) = std::fs::read_to_string(cache_path) {
+            if let Ok(cache) = serde_json::from_str::<Self>(&content) {
+                return cache;
+            }
+        }
+        Self::default()
+    }
+
+    pub fn save(&self, cache_path: &std::path::Path) {
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(cache_path, json);
+        }
+    }
+}
+
 /// List archived sessions under `sessions_dir`, oldest first (directory names are
-/// timestamp-sortable, same order `load_archived_messages` folds them in). A
-/// session's name is the LAST `Kind::SessionName` event in its field — `/rename`
-/// can run more than once, and the latest one is what a human should see, the same
-/// "latest wins" rule `project_with_team` already applies to status/mode. A missing
-/// directory or an unreadable session field yields no rows, not an error.
+/// timestamp-sortable, same order `load_archived_messages` folds them in). Uses
+/// `.hadron/cache/sessions_index.json` session metadata caching to avoid re-parsing
+/// unchanged `.jsonl` files on disk.
 pub fn list_sessions(sessions_dir: &std::path::Path) -> Vec<SessionInfo> {
+    let cache_path = sessions_dir
+        .parent()
+        .map(|p| p.join("cache").join("sessions_index.json"))
+        .unwrap_or_else(|| sessions_dir.join(".sessions_index_cache.json"));
+    list_sessions_with_cache(sessions_dir, &cache_path)
+}
+
+pub fn list_sessions_with_cache(
+    sessions_dir: &std::path::Path,
+    cache_path: &std::path::Path,
+) -> Vec<SessionInfo> {
     let mut dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(sessions_dir) {
         Ok(rd) => rd
             .filter_map(Result::ok)
@@ -288,17 +330,59 @@ pub fn list_sessions(sessions_dir: &std::path::Path) -> Vec<SessionInfo> {
     };
     dirs.sort();
 
-    dirs.into_iter()
-        .map(|dir| {
-            let id = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let events = hadron_lattice::io::read_events(&dir.join("field.jsonl")).unwrap_or_default();
-            let name = events.iter().rev().find_map(|e| match &e.kind {
-                Kind::SessionName { name } => Some(name.clone()),
-                _ => None,
-            });
-            SessionInfo { id, name }
-        })
-        .collect()
+    let mut cache = SessionsIndexCache::load(cache_path);
+    let mut cache_updated = false;
+    let mut sessions = Vec::with_capacity(dirs.len());
+
+    for dir in dirs {
+        let id = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let field_file = dir.join("field.jsonl");
+        let meta = std::fs::metadata(&field_file).ok();
+        let file_len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mtime_secs = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        if let Some(entry) = cache.entries.get(&id) {
+            if entry.file_len == file_len && entry.mtime_secs == mtime_secs {
+                sessions.push(SessionInfo {
+                    id,
+                    name: entry.name.clone(),
+                });
+                continue;
+            }
+        }
+
+        let events = hadron_lattice::io::read_events(&field_file).unwrap_or_default();
+        let name = events.iter().rev().find_map(|e| match &e.kind {
+            Kind::SessionName { name } => Some(name.clone()),
+            _ => None,
+        });
+
+        cache.entries.insert(
+            id.clone(),
+            SessionCacheEntry {
+                id: id.clone(),
+                name: name.clone(),
+                file_len,
+                mtime_secs,
+            },
+        );
+        cache_updated = true;
+        sessions.push(SessionInfo { id, name });
+    }
+
+    if cache_updated {
+        cache.save(cache_path);
+    }
+
+    sessions
 }
 
 /// Resolve a `/resume` target against the session list: the id (the timestamp

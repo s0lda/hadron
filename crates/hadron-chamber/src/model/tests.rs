@@ -262,6 +262,43 @@
         );
     }
 
+    #[test]
+    fn test_sessions_index_cache_hit_and_invalidation() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions");
+        let cache_path = dir.path().join("cache").join("sessions_index.json");
+
+        let s1 = sessions.join("20260101_100000");
+        std::fs::create_dir_all(&s1).unwrap();
+        let field1 = s1.join("field.jsonl");
+        hadron_lattice::io::append_event(
+            &field1,
+            &ev(Actor::Human, None, Kind::SessionName { name: "initial-name".into() }),
+        )
+        .unwrap();
+
+        // 1. Initial list populates cache
+        let rows1 = list_sessions_with_cache(&sessions, &cache_path);
+        assert_eq!(rows1.len(), 1);
+        assert_eq!(rows1[0].name.as_deref(), Some("initial-name"));
+        assert!(cache_path.exists(), "cache file created");
+
+        // 2. Second read hits cache
+        let rows2 = list_sessions_with_cache(&sessions, &cache_path);
+        assert_eq!(rows2, rows1);
+
+        // 3. Modifying file size invalidates cache entry
+        hadron_lattice::io::append_event(
+            &field1,
+            &ev(Actor::Human, None, Kind::SessionName { name: "renamed-session".into() }),
+        )
+        .unwrap();
+
+        let rows3 = list_sessions_with_cache(&sessions, &cache_path);
+        assert_eq!(rows3.len(), 1);
+        assert_eq!(rows3[0].name.as_deref(), Some("renamed-session"));
+    }
+
     /// `/resume <target>` accepts either the session id (the timestamp dir name,
     /// always unique) or the name set by `/rename` (case-insensitive — a human
     /// typing it back should not have to match case exactly). Id wins on a collision.
