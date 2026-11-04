@@ -4032,170 +4032,130 @@ impl Chamber {
         cx.notify();
     }
 
-    /// Initialize Git repository from onboarding card and notify the field.
+    /// Initialize Git repository + `.gitignore` + initial commit from the NUX Onboarding Card.
     pub(super) fn init_git_from_onboarding(&mut self, cx: &mut Context<Self>) {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
         match crate::vcs::init_repository(&repo_root) {
             Ok(msg) => {
-                self.toast_manager.push(ToastKind::Success, msg.clone(), Some(4));
-                self.post_chat_message(
-                    Actor::Gluon,
-                    format!("🌌 Hadron Workspace Initialized: {msg}"),
-                    cx,
-                );
+                self.git_branches = Some(crate::vcs::list_branches(&repo_root, "main"));
+                self.git_remote_branches =
+                    Some(crate::vcs::list_remote_branches(&repo_root, "main"));
+                self.git_worktrees = Some(crate::vcs::list_worktrees(&repo_root));
+                self.git_log_graph = crate::vcs::commit_graph(&repo_root);
+                self.rebuild_graph_rows();
+                self.show_toast(ToastKind::Success, msg, Some(4), cx);
             }
             Err(e) => {
-                self.toast_manager.push(
+                self.show_toast(
                     ToastKind::Error,
                     format!("Failed to initialize Git repository: {e}"),
                     Some(5),
+                    cx,
                 );
             }
         }
         cx.notify();
     }
 
-    /// Auto-detect installed CLI agents and API keys, seeding a default team roster
-    /// where the FIRST discovered Quark is assigned `Flavor::Orchestrator` and
-    /// subsequent Quarks are assigned `Flavor::Worker`.
-    pub(super) fn auto_detect_and_seed_quarks(&mut self, cx: &mut Context<Self>) {
-        use hadron_lattice::{Flavor, QuarkId, Seat, Transport};
+    /// Open the Settings overlay directly on the Providers tab with the preset picker open.
+    pub(super) fn open_provider_wizard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_open = true;
+        self.settings_target = SettingsTarget::Providers;
+        self.wizard_state = WizardState::PickPreset;
+        self.load_settings_inputs(window, cx);
+        cx.notify();
+    }
 
-        let mut detected_seats: Vec<Seat> = Vec::new();
+    /// Populate the chat composer with a starter prompt from the NUX Onboarding Card and focus it.
+    pub(super) fn fill_starter_prompt(
+        &mut self,
+        prompt: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = prompt.to_string();
+        self.input.update(cx, |s, cx| {
+            s.set_value(text, window, cx);
+            s.focus(window, cx);
+        });
+        cx.notify();
+    }
 
-        // 1. Check Anthropic key or claude CLI
-        let has_anthropic_key = std::env::var("ANTHROPIC_API_KEY")
-            .map(|k| !k.trim().is_empty())
-            .unwrap_or(false);
-        let has_claude_cli = command_exists("claude");
-        if has_anthropic_key || has_claude_cli {
-            detected_seats.push(Seat {
-                id: QuarkId::new("cli-claude"),
-                display_name: Some("Anthropic Claude".to_string()),
-                vendor: "claude".to_string(),
-                model: "claude-3-7-sonnet".to_string(),
-                effort: Some("medium".to_string()),
-                mode_config: None,
-                flavor: Flavor::Worker,
-                transport: Transport::Cli,
-                program: None,
-                args: Vec::new(),
-                cli: None,
-                commands: Default::default(),
-            });
+    /// Auto-detect local CLI agents / API keys (or adopt existing global catalogue seats)
+    /// and seed the current repository's team, ensuring the first Quark is `@orchestrator`.
+    pub(super) fn auto_detect_and_seed_quarks(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let resolved_before = resolve_team(&self.team, &self.global);
+        if resolved_before.quarks.is_empty() && !self.global.quarks.is_empty() {
+            let ids: Vec<QuarkId> = self.global.quarks.iter().map(|s| s.id.clone()).collect();
+            for qid in ids {
+                let _ = toggle_or_adopt_quark_in_team(&mut self.team, &self.global, &qid);
+            }
+            self.save_repo_team(cx);
+            self.show_toast(
+                ToastKind::Success,
+                format!(
+                    "Adopted {} Quark(s) from global catalogue (first seat = @orchestrator).",
+                    self.global.quarks.len()
+                ),
+                Some(4),
+                cx,
+            );
+            return;
         }
 
-        // 2. Check Gemini key or agy CLI
-        let has_gemini_key = std::env::var("GEMINI_API_KEY")
-            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-            .map(|k| !k.trim().is_empty())
-            .unwrap_or(false);
-        let has_agy_cli = command_exists("agy");
-        if has_gemini_key || has_agy_cli {
-            detected_seats.push(Seat {
-                id: QuarkId::new("cli-agy"),
-                display_name: Some("Google Antigravity".to_string()),
-                vendor: "agy".to_string(),
-                model: "gemini-2.5-pro".to_string(),
-                effort: Some("high".to_string()),
-                mode_config: None,
-                flavor: Flavor::Worker,
-                transport: Transport::Cli,
-                program: None,
-                args: Vec::new(),
-                cli: None,
-                commands: Default::default(),
-            });
-        }
+        let has_orchestrator = resolved_before
+            .quarks
+            .iter()
+            .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
+        let env_vars: Vec<(String, String)> = std::env::vars().collect();
+        let discovered = build_onboarding_seats(&which_binary_exists, &env_vars, has_orchestrator);
 
-        // 3. Check OpenAI key or codex CLI
-        let has_openai_key = std::env::var("OPENAI_API_KEY")
-            .map(|k| !k.trim().is_empty())
-            .unwrap_or(false);
-        let has_codex_cli = command_exists("codex");
-        if has_openai_key || has_codex_cli {
-            detected_seats.push(Seat {
-                id: QuarkId::new("cli-codex"),
-                display_name: Some("OpenAI Codex".to_string()),
-                vendor: "codex".to_string(),
-                model: "gpt-4o".to_string(),
-                effort: None,
-                mode_config: None,
-                flavor: Flavor::Worker,
-                transport: Transport::Cli,
-                program: None,
-                args: Vec::new(),
-                cli: None,
-                commands: Default::default(),
-            });
-        }
-
-        // Fallback: Seed standard default seats if nothing detected
-        if detected_seats.is_empty() {
-            detected_seats.push(Seat {
-                id: QuarkId::new("cli-claude"),
-                display_name: Some("Anthropic Claude".to_string()),
-                vendor: "claude".to_string(),
-                model: "claude-3-7-sonnet".to_string(),
-                effort: Some("medium".to_string()),
-                mode_config: None,
-                flavor: Flavor::Orchestrator,
-                transport: Transport::Cli,
-                program: None,
-                args: Vec::new(),
-                cli: None,
-                commands: Default::default(),
-            });
-            detected_seats.push(Seat {
-                id: QuarkId::new("cli-agy"),
-                display_name: Some("Google Antigravity".to_string()),
-                vendor: "agy".to_string(),
-                model: "gemini-2.5-pro".to_string(),
-                effort: Some("high".to_string()),
-                mode_config: None,
-                flavor: Flavor::Worker,
-                transport: Transport::Cli,
-                program: None,
-                args: Vec::new(),
-                cli: None,
-                commands: Default::default(),
-            });
-        }
-
-        // Rule 8/SSOT: Guarantee the FIRST seat is strictly Flavor::Orchestrator
-        for (idx, seat) in detected_seats.iter_mut().enumerate() {
-            if idx == 0 {
-                seat.flavor = Flavor::Orchestrator;
-            } else {
-                seat.flavor = Flavor::Worker;
+        let mut added = 0usize;
+        for seat in discovered {
+            let already_exists = self.global.quarks.iter().any(|s| s.id == seat.id)
+                || self.team.quarks.iter().any(|s| s.id == seat.id)
+                || self.team.roster.iter().any(|o| o.id == seat.id);
+            if !already_exists {
+                self.add_configured_quark(seat, cx);
+                added += 1;
             }
         }
 
-        // Persist seats to self.team.quarks and save
-        self.team.quarks = detected_seats.clone();
-        self.save_repo_team(cx);
-
-        let count = detected_seats.len();
-        let orch_id = &detected_seats[0].id;
-        let msg = format!(
-            "Auto-detected and seated {count} agent(s). Assigned @{orch_id} as primary `@orchestrator`."
-        );
-        self.toast_manager.push(ToastKind::Success, msg.clone(), Some(4));
-        self.post_chat_message(Actor::Gluon, format!("🤖 Swarm Auto-Discovery: {msg}"), cx);
-        cx.notify();
+        if added > 0 {
+            self.show_toast(
+                ToastKind::Success,
+                format!("Auto-detected and seated {added} Quark(s) (first Quark set as @orchestrator)."),
+                Some(4),
+                cx,
+            );
+        } else {
+            self.show_toast(
+                ToastKind::Info,
+                "No new local CLI agents found on PATH — opening Provider Wizard.".to_string(),
+                Some(4),
+                cx,
+            );
+            self.open_provider_wizard(window, cx);
+        }
     }
 }
 
-/// Helper to check if an executable binary exists on PATH.
-fn command_exists(name: &str) -> bool {
-    let cmd = if cfg!(windows) { "where.exe" } else { "which" };
-    std::process::Command::new(cmd)
-        .arg(name)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// Check whether `program` exists as an executable on `PATH` (delegates to SSOT in `headless_runner`).
+pub(super) fn which_binary_exists(program: &str) -> bool {
+    crate::headless_runner::which_binary_exists(program)
+}
+
+/// Pure, testable builder for zero-config NUX Quark discovery (delegates to SSOT in `headless_runner`).
+pub(super) fn build_onboarding_seats(
+    has_binary: &dyn Fn(&str) -> bool,
+    env_vars: &[(String, String)],
+    existing_has_orchestrator: bool,
+) -> Vec<hadron_lattice::Seat> {
+    crate::headless_runner::discover_default_seats(has_binary, env_vars, existing_has_orchestrator)
 }
 
 /// Pure decision half of `toggle_process_manager`: the next `process_manager_open`
@@ -4927,33 +4887,37 @@ mod tests {
     }
 
     #[test]
-    fn test_command_exists_helper() {
-        // System commands like git or cargo or cmd/sh should be found
-        let found = if cfg!(windows) {
-            command_exists("cmd.exe") || command_exists("where.exe")
-        } else {
-            command_exists("sh") || command_exists("which")
-        };
-        assert!(found, "Expected common system binary to exist on PATH");
+    fn build_onboarding_seats_promotes_first_quark_to_orchestrator_and_rest_to_worker() {
+        let seats = build_onboarding_seats(
+            &|bin| bin == "claude" || bin == "agy",
+            &[],
+            false,
+        );
+        assert_eq!(seats.len(), 2);
+        assert_eq!(seats[0].id.as_str(), "cli-claude");
+        assert_eq!(seats[0].flavor, hadron_lattice::Flavor::Orchestrator);
+        assert_eq!(seats[1].id.as_str(), "cli-agy");
+        assert_eq!(seats[1].flavor, hadron_lattice::Flavor::Worker);
 
-        // Non-existent command should return false
-        assert!(!command_exists("non_existent_binary_xyz_12345"));
+        // When an orchestrator already exists, all newly discovered seats are workers.
+        let seats_with_existing = build_onboarding_seats(
+            &|bin| bin == "claude" || bin == "agy",
+            &[],
+            true,
+        );
+        assert_eq!(seats_with_existing.len(), 2);
+        assert_eq!(seats_with_existing[0].flavor, hadron_lattice::Flavor::Worker);
+        assert_eq!(seats_with_existing[1].flavor, hadron_lattice::Flavor::Worker);
     }
 
     #[test]
-    fn test_onboarding_git_init_flow() {
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let root = dir.path();
-
-        // Not a repo initially
-        assert!(!crate::vcs::is_git_repo(root));
-
-        // Init repository via VCS helper (used by init_git_from_onboarding)
-        let res = crate::vcs::init_repository(root).unwrap();
-        assert!(res.contains("Initialized Git repository"));
-        assert!(crate::vcs::is_git_repo(root));
+    fn build_onboarding_seats_falls_back_to_env_api_key_when_no_binaries_found() {
+        let env = vec![("GEMINI_API_KEY".to_string(), "AIza-test-key".to_string())];
+        let seats = build_onboarding_seats(&|_| false, &env, false);
+        assert_eq!(seats.len(), 1);
+        assert_eq!(seats[0].id.as_str(), "cli-gemini");
+        assert_eq!(seats[0].flavor, hadron_lattice::Flavor::Orchestrator);
+        assert_eq!(seats[0].secret_env, vec!["GEMINI_API_KEY".to_string()]);
     }
 }
 

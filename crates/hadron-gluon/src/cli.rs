@@ -340,8 +340,10 @@ pub async fn run() {
     let (quarks, mode_label, seat_rows) =
         seat_quarks(&team, team_path.as_deref(), &live_dir, &secret_store);
     if quarks.is_empty() {
-        term::error(Source::Gluon, "team.json had no usable quarks; nothing to run.");
-        std::process::exit(2);
+        term::warn(
+            Source::Gluon,
+            "starting in 0-seat standby mode — waiting for quarks to be configured in team.json.",
+        );
     }
     let max_exchanges = team.max_exchanges.unwrap_or(12);
     let repo_root = hadron_lattice::sys::paths::canonicalize(hadron_lattice::repo_root_of(&args.field_path))

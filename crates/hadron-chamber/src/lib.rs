@@ -26,3 +26,5 @@ pub mod syntax;
 pub mod wsl;
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub mod rpc_client;
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub mod headless_runner;

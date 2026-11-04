@@ -8,6 +8,7 @@ use hadron_lattice::{Actor, Event, Kind};
 pub enum CliAction {
     Version,
     Help,
+    Init,
     Update { version: Option<String> },
     Batch(HeadlessCommand),
     LaunchChamber,
@@ -21,6 +22,7 @@ pub fn parse_cli_action(args: &[String]) -> CliAction {
     match args[1].as_str() {
         "-V" | "--version" => CliAction::Version,
         "-h" | "--help" => CliAction::Help,
+        "init" | "--init" => CliAction::Init,
         "update" => {
             let mut version = None;
             let mut iter = args[2..].iter();
@@ -61,6 +63,7 @@ pub fn print_help() {
     println!("    -V, --version    Print version information");
     println!("    --no-daemon      Attach to an already-running gluon daemon without auto-spawning one\n");
     println!("SUBCOMMANDS:");
+    println!("    init                    Initialize Git repository and auto-discover Quark roster");
     println!("    run <prompt>            Run a single headless swarm turn");
     println!("    ci [--plan <path>]      Run autonomous headless CI execution");
     println!("    update [--version <v>]  Self-update to latest or specific release version");
@@ -265,6 +268,144 @@ pub fn run_headless_batch(cmd: HeadlessCommand, repo_root: &Path) -> Result<(), 
     }
 }
 
+/// Check whether `program` exists as an executable file on `PATH`.
+pub fn which_binary_exists(program: &str) -> bool {
+    let Some(path_os) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path_os) {
+        let candidate = dir.join(program);
+        if candidate.is_file() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            for ext in ["exe", "cmd", "bat"] {
+                if dir.join(format!("{program}.{ext}")).is_file() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Pure, testable builder for zero-config NUX Quark discovery (SSOT shared by CLI `hadron init`
+/// and GPUI `auto_detect_and_seed_quarks`).
+/// Probes CLI binaries (`claude`, `agy`, `gemini`, `codex`) and standard API-key env vars,
+/// enforcing the SSOT invariant that the first seated Quark is `Flavor::Orchestrator`
+/// when `existing_has_orchestrator` is `false`.
+pub fn discover_default_seats(
+    has_binary: &dyn Fn(&str) -> bool,
+    env_vars: &[(String, String)],
+    existing_has_orchestrator: bool,
+) -> Vec<hadron_lattice::Seat> {
+    let mut seats = Vec::new();
+    let mut has_orch = existing_has_orchestrator;
+    let mut next_flavor = || {
+        if !has_orch {
+            has_orch = true;
+            hadron_lattice::Flavor::Orchestrator
+        } else {
+            hadron_lattice::Flavor::Worker
+        }
+    };
+
+    let cli_candidates = [
+        ("claude", "cli-claude", "claude", "claude-opus-4-8"),
+        ("agy", "cli-agy", "agy", "gemini-3-pro"),
+        ("gemini", "cli-gemini", "gemini", "gemini-2.5-pro"),
+        ("codex", "cli-codex", "codex", "gpt-5"),
+    ];
+
+    for (bin, id, vendor, model) in cli_candidates {
+        if has_binary(bin) {
+            seats.push(hadron_lattice::Seat::cli(
+                hadron_lattice::QuarkId::new(id),
+                vendor,
+                model,
+                next_flavor(),
+            ));
+        }
+    }
+
+    if seats.is_empty() {
+        let map: std::collections::HashMap<&str, &str> = env_vars
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let env_pick = if map.get("ANTHROPIC_API_KEY").copied().is_some_and(|v| !v.trim().is_empty()) {
+            Some(("cli-claude", "claude", "claude-opus-4-8", "ANTHROPIC_API_KEY"))
+        } else if map.get("OPENAI_API_KEY").copied().is_some_and(|v| !v.trim().is_empty()) {
+            Some(("cli-codex", "codex", "gpt-5", "OPENAI_API_KEY"))
+        } else if map.get("GEMINI_API_KEY").copied().is_some_and(|v| !v.trim().is_empty()) {
+            Some(("cli-gemini", "gemini", "gemini-2.5-pro", "GEMINI_API_KEY"))
+        } else {
+            None
+        };
+        if let Some((id, vendor, model, env_var)) = env_pick {
+            let mut seat = hadron_lattice::Seat::cli(
+                hadron_lattice::QuarkId::new(id),
+                vendor,
+                model,
+                next_flavor(),
+            );
+            seat.secret_env = vec![env_var.to_string()];
+            seats.push(seat);
+        }
+    }
+
+    seats
+}
+
+/// Initializes a repository for Hadron from the CLI (`hadron init` / `hadron --init`):
+/// 1. Ensures Git repository + `.gitignore` + root commit on `main` via `crate::vcs::init_repository`.
+/// 2. Auto-discovers installed CLI agents & API keys and seeds `.hadron/team.json` with the first
+///    Quark promoted to `Flavor::Orchestrator`.
+pub fn run_cli_init(repo_root: &Path) -> Result<String, String> {
+    let git_msg = crate::vcs::init_repository(repo_root)
+        .map_err(|e| format!("Git initialization failed: {e}"))?;
+    term::info(Source::Chamber, &git_msg);
+
+    let hadron_dir = repo_root.join(".hadron");
+    std::fs::create_dir_all(&hadron_dir)
+        .map_err(|e| format!("Failed to create .hadron directory: {e}"))?;
+    let team_path = hadron_dir.join("team.json");
+    let mut team = if team_path.exists() {
+        hadron_lattice::load_team(&team_path)
+    } else {
+        hadron_lattice::Team::default()
+    };
+
+    let has_orchestrator = team
+        .quarks
+        .iter()
+        .any(|s| s.flavor == hadron_lattice::Flavor::Orchestrator);
+    let env_vars: Vec<(String, String)> = std::env::vars().collect();
+    let discovered = discover_default_seats(&which_binary_exists, &env_vars, has_orchestrator);
+
+    let mut added = 0usize;
+    for seat in discovered {
+        if !team.quarks.iter().any(|s| s.id == seat.id)
+            && !team.roster.iter().any(|o| o.id == seat.id)
+        {
+            team.quarks.push(seat);
+            added += 1;
+        }
+    }
+
+    hadron_lattice::save_team(&team_path, &team)
+        .map_err(|e| format!("Failed to save {}: {e}", team_path.display()))?;
+
+    let summary = format!(
+        "{git_msg} Seated {added} new Quark(s) in {} (total: {}).",
+        team_path.display(),
+        team.quarks.len()
+    );
+    term::info(Source::Chamber, &summary);
+    Ok(summary)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,9 +557,43 @@ mod tests {
             CliAction::Batch(HeadlessCommand::Run { prompt: "test prompt".into() })
         );
         assert_eq!(
+            parse_cli_action(&["hadron".into(), "init".into()]),
+            CliAction::Init
+        );
+        assert_eq!(
+            parse_cli_action(&["hadron".into(), "--init".into()]),
+            CliAction::Init
+        );
+        assert_eq!(
             parse_cli_action(&["hadron".into()]),
             CliAction::LaunchChamber
         );
+    }
+
+    #[test]
+    fn test_discover_default_seats_promotes_first_to_orchestrator() {
+        let seats = discover_default_seats(
+            &|bin| bin == "claude" || bin == "gemini",
+            &[],
+            false,
+        );
+        assert_eq!(seats.len(), 2);
+        assert_eq!(seats[0].id.as_str(), "cli-claude");
+        assert_eq!(seats[0].flavor, hadron_lattice::Flavor::Orchestrator);
+        assert_eq!(seats[1].id.as_str(), "cli-gemini");
+        assert_eq!(seats[1].flavor, hadron_lattice::Flavor::Worker);
+    }
+
+    #[test]
+    fn test_run_cli_init_initializes_git_and_writes_team_json() {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path();
+
+        let summary = run_cli_init(repo_root).expect("run_cli_init should succeed");
+        assert!(summary.contains("Initialized Git repository"));
+        assert!(crate::vcs::is_git_repo(repo_root));
+        assert!(crate::vcs::has_commits(repo_root));
+        assert!(repo_root.join(".hadron").join("team.json").exists());
     }
 
     #[test]

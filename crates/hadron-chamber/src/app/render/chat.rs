@@ -79,6 +79,36 @@ pub(super) fn parse_skill_block_notice(body: &str) -> Option<SkillBlockNotice> {
     None
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OnboardingReadiness {
+    pub git_ready: bool,
+    pub active_quark_count: usize,
+    /// `(id, vendor, model)` of the active `@orchestrator` seat, if one is seated and enabled.
+    pub orchestrator_badge: Option<(String, String, String)>,
+}
+
+/// Pure evaluation of NUX onboarding readiness from Git status and resolved team seats.
+pub(super) fn compute_onboarding_readiness(
+    git_ready: bool,
+    resolved: &hadron_lattice::Team,
+) -> OnboardingReadiness {
+    let enabled_seats: Vec<&hadron_lattice::Seat> =
+        resolved.quarks.iter().filter(|s| s.enabled).collect();
+    let active_quark_count = enabled_seats.len();
+    let orch = enabled_seats
+        .iter()
+        .copied()
+        .find(|s| s.flavor == hadron_lattice::Flavor::Orchestrator)
+        .or_else(|| enabled_seats.first().copied())
+        .map(|s| (s.id.as_str().to_string(), s.vendor.clone(), s.model.clone()));
+
+    OnboardingReadiness {
+        git_ready,
+        active_quark_count,
+        orchestrator_badge: orch,
+    }
+}
+
 /// Computes `(bytes, usage_fraction_0_to_1)` for each of the 5 prompt anatomy categories:
 /// `[Rules/Invariants, Nucleus Memory, Active Skill, Task/Directive, Transcript/Tools]`.
 /// Fractions reflect actual byte usage (`bytes / total_bytes`) rather than equal 1/5th slices.
@@ -1204,380 +1234,433 @@ impl super::Chamber {
         banners
     }
 
-    /// Renders the interactive GPUI NUX Onboarding & Readiness Card for fresh workspaces.
-    pub(super) fn render_nux_onboarding_card(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let git_ready = crate::vcs::is_git_repo(&repo_root);
+    /// Render the interactive NUX Onboarding & Readiness Card when the chat history is empty.
+    pub(super) fn render_onboarding_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let repo_root = crate::vcs::repo_root_of(&self.path);
+        let git_ready = self
+            .git_branches
+            .as_ref()
+            .is_some_and(|b| !b.is_empty())
+            || (crate::vcs::is_git_repo(repo_root) && crate::vcs::has_commits(repo_root));
+        let resolved = resolve_team(&self.team, &self.global);
+        let readiness = compute_onboarding_readiness(git_ready, &resolved);
 
-        let active_orch = self
-            .view
-            .roster
-            .iter()
-            .find(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator))
-            .or_else(|| self.view.roster.first());
-
-        let orch_label = match active_orch {
-            Some(r) => {
-                let model = if r.model.is_empty() { "default" } else { &r.model };
-                format!("@{} ({})", r.id, model)
-            }
-            None => "No agents configured".to_string(),
+        let git_row = if readiness.git_ready {
+            h_flex()
+                .id("nux-git-ready-row")
+                .w_full()
+                .items_center()
+                .justify_between()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::success().opacity(0.35))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2p5()
+                        .child(
+                            Icon::new(IconName::CircleCheck)
+                                .small()
+                                .text_color(theme::success()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::text())
+                                        .child("1. Git Worktree Physics Ready"),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(
+                                            "Repository initialized with base commit — Quarks operate in isolated `.hadron/trees/`.",
+                                        ),
+                                ),
+                        ),
+                )
+        } else {
+            h_flex()
+                .id("nux-git-missing-row")
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::warning().opacity(0.45))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2p5()
+                        .min_w_0()
+                        .child(
+                            Icon::new(IconName::Info)
+                                .small()
+                                .text_color(theme::warning()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::text())
+                                        .child("1. Git Repository Required for Quark Worktrees"),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(
+                                            "Initialize Git here (creates `.gitignore` + root commit on `main`) or switch folders.",
+                                        ),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_shrink_0()
+                        .child(
+                            h_flex()
+                                .id("nux-init-git-btn")
+                                .items_center()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme::accent())
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(theme::text())
+                                .hover(|s| s.opacity(0.88))
+                                .cursor_pointer()
+                                .child("Initialize Git Repository")
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.init_git_from_onboarding(cx);
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .id("nux-select-folder-btn")
+                                .items_center()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme::glass_card())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                .cursor_pointer()
+                                .child("Select Folder…")
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.open_workspace(cx);
+                                })),
+                        ),
+                )
         };
 
-        let total_agents = self.view.roster.len();
-        let mono_font = cx.theme().mono_font_family.clone();
+        let swarm_row = if let Some((orch_id, vendor, model)) = readiness.orchestrator_badge {
+            let orch_id_click = orch_id.clone();
+            h_flex()
+                .id("nux-swarm-ready-row")
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::success().opacity(0.35))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2p5()
+                        .min_w_0()
+                        .child(
+                            Icon::new(IconName::CircleCheck)
+                                .small()
+                                .text_color(theme::success()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::text())
+                                        .child(format!(
+                                            "2. Swarm Seated ({} Active Quark{})",
+                                            readiness.active_quark_count,
+                                            if readiness.active_quark_count == 1 { "" } else { "s" }
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(
+                                            "Primary @orchestrator routes tasks across worker Quarks automatically.",
+                                        ),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_shrink_0()
+                        .child(
+                            h_flex()
+                                .id("nux-orchestrator-model-badge")
+                                .items_center()
+                                .gap_1p5()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_full()
+                                .bg(theme::glass_card())
+                                .border_1()
+                                .border_color(theme::accent().opacity(0.5))
+                                .text_xs()
+                                .text_color(theme::accent())
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme::glass_highlight()))
+                                .child(Icon::new(IconName::Bot).xsmall())
+                                .child(format!("@{orch_id} · {vendor} · {model}"))
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.open_quark_info(orch_id_click.clone(), InfoTab::Home, cx);
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .id("nux-add-more-quarks-btn")
+                                .items_center()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme::glass_card())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                .cursor_pointer()
+                                .child("Add Quark…")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_provider_wizard(window, cx);
+                                })),
+                        ),
+                )
+        } else {
+            h_flex()
+                .id("nux-swarm-missing-row")
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .p_3()
+                .rounded_lg()
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::warning().opacity(0.45))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2p5()
+                        .min_w_0()
+                        .child(
+                            Icon::new(IconName::Bot)
+                                .small()
+                                .text_color(theme::warning()),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_color(theme::text())
+                                        .child("2. Onboard Your First Quark (@orchestrator)"),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme::text_muted())
+                                        .child(
+                                            "Auto-detect installed CLI agents & API keys (first Quark becomes @orchestrator) or configure manually.",
+                                        ),
+                                ),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_shrink_0()
+                        .child(
+                            h_flex()
+                                .id("nux-auto-detect-quarks-btn")
+                                .items_center()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme::accent())
+                                .text_xs()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(theme::text())
+                                .hover(|s| s.opacity(0.88))
+                                .cursor_pointer()
+                                .child("Auto-Detect Agents & Keys")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.auto_detect_and_seed_quarks(window, cx);
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .id("nux-configure-providers-btn")
+                                .items_center()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme::glass_card())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                .cursor_pointer()
+                                .child("Configure Providers…")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_provider_wizard(window, cx);
+                                })),
+                        ),
+                )
+        };
+
+        let starter_prompts = [
+            (
+                "nux-starter-map",
+                "Map Architecture",
+                "@orchestrator Map this repository and summarize its architecture.",
+            ),
+            (
+                "nux-starter-debate",
+                "Start Debate",
+                "/debate Evaluate architectural options and trade-offs for ",
+            ),
+            (
+                "nux-starter-brainstorm",
+                "Brainstorm Feature",
+                "/brainstorm Let's design and plan ",
+            ),
+        ];
 
         v_flex()
             .id("nux-onboarding-card")
-            .w_full()
-            .max_w(px(720.0))
-            .mx_auto()
-            .my_auto()
+            .size_full()
+            .items_center()
+            .justify_center()
             .p_6()
-            .gap_5()
-            .rounded_2xl()
-            .bg(theme::glass_surface())
-            .border_1()
-            .border_color(theme::glass_highlight())
-            .shadow_xl()
-            // Header Banner
             .child(
                 v_flex()
-                    .gap_1p5()
+                    .w_full()
+                    .max_w(px(680.0))
+                    .gap_4()
+                    .p_5()
+                    .rounded_xl()
+                    .bg(theme::glass_card())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
                     .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
+                        v_flex()
+                            .gap_1()
                             .child(
                                 div()
-                                    .text_xl()
+                                    .text_base()
                                     .font_weight(gpui::FontWeight::BOLD)
                                     .text_color(theme::text())
-                                    .child("🌌 Welcome to Hadron Swarm"),
+                                    .child("Welcome to Hadron"),
                             )
                             .child(
                                 div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_full()
-                                    .bg(theme::accent().opacity(0.15))
-                                    .border_1()
-                                    .border_color(theme::accent().opacity(0.3))
                                     .text_xs()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(theme::accent())
-                                    .child("NUX Readiness"),
+                                    .text_color(theme::text_muted())
+                                    .child(
+                                        "Zero-config swarm setup for beginners and power users (`hadron init`). Complete the checklist below or type a message to begin.",
+                                    ),
                             ),
                     )
+                    .child(git_row)
+                    .child(swarm_row)
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme::text_secondary())
-                            .child("Orchestrate frontier LLMs across isolated Git worktrees with automated Merge Gate verification."),
-                    ),
-            )
-            // Checklist Section
-            .child(
-                v_flex()
-                    .gap_3()
-                    // 1. Git Status Card
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .justify_between()
-                            .p_3p5()
-                            .rounded_xl()
-                            .bg(theme::bg_surface())
-                            .border_1()
-                            .border_color(if git_ready {
-                                theme::success().opacity(0.3)
-                            } else {
-                                theme::warning().opacity(0.3)
-                            })
+                        v_flex()
+                            .gap_2()
+                            .pt_1()
                             .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .size(px(10.0))
-                                            .rounded_full()
-                                            .bg(if git_ready { theme::success() } else { theme::warning() }),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .gap_0p5()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_color(theme::text())
-                                                    .child(if git_ready {
-                                                        "Git Repository Initialized"
-                                                    } else {
-                                                        "Git Repository Required"
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme::text_muted())
-                                                    .child(if git_ready {
-                                                        format!("Isolated worktrees ready at {}", repo_root.display())
-                                                    } else {
-                                                        "Worktrees require an initialized Git repository with a base commit.".to_string()
-                                                    }),
-                                            ),
-                                    ),
+                                div()
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::text_secondary())
+                                    .child("3. Quick-Start Missions"),
                             )
                             .child(
-                                if !git_ready {
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
+                                h_flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .children(starter_prompts.into_iter().map(
+                                        |(btn_id, label, prompt_text)| {
                                             h_flex()
-                                                .id("nux-init-git-btn")
+                                                .id(btn_id)
                                                 .items_center()
-                                                .px_3()
-                                                .py_1p5()
-                                                .rounded_lg()
-                                                .bg(theme::accent())
-                                                .text_xs()
-                                                .font_weight(gpui::FontWeight::BOLD)
-                                                .text_color(theme::text())
-                                                .hover(|s| s.opacity(0.85))
-                                                .cursor_pointer()
-                                                .child("Initialize Git")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.init_git_from_onboarding(cx);
-                                                })),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .id("nux-open-folder-btn")
-                                                .items_center()
-                                                .px_3()
-                                                .py_1p5()
-                                                .rounded_lg()
-                                                .bg(theme::glass_card())
+                                                .gap_1p5()
+                                                .px_2p5()
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(theme::bg_elevated())
                                                 .border_1()
                                                 .border_color(theme::glass_highlight())
                                                 .text_xs()
-                                                .text_color(theme::text_muted())
-                                                .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                                .text_color(theme::text_secondary())
+                                                .hover(|s| {
+                                                    s.text_color(theme::text())
+                                                        .bg(theme::glass_highlight())
+                                                })
                                                 .cursor_pointer()
-                                                .child("Open Folder…")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.open_workspace(cx);
-                                                })),
-                                        )
-                                } else {
-                                    h_flex()
-                                        .items_center()
-                                        .gap_1p5()
-                                        .px_2p5()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(theme::success().opacity(0.12))
-                                        .text_xs()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(theme::success())
-                                        .child("Ready")
-                                }
-                            ),
-                    )
-                    // 2. Swarm Orchestrator & Roster Card
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .justify_between()
-                            .p_3p5()
-                            .rounded_xl()
-                            .bg(theme::bg_surface())
-                            .border_1()
-                            .border_color(if total_agents > 0 {
-                                theme::info().opacity(0.3)
-                            } else {
-                                theme::warning().opacity(0.3)
-                            })
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .size(px(10.0))
-                                            .rounded_full()
-                                            .bg(if total_agents > 0 { theme::info() } else { theme::warning() }),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .gap_0p5()
-                                            .child(
-                                                h_flex()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .child(
-                                                        div()
-                                                            .text_sm()
-                                                            .font_weight(gpui::FontWeight::BOLD)
-                                                            .text_color(theme::text())
-                                                            .child("Swarm Leader"),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .px_2()
-                                                            .py_0p5()
-                                                            .rounded_md()
-                                                            .bg(theme::glass_card())
-                                                            .border_1()
-                                                            .border_color(theme::glass_highlight())
-                                                            .text_xs()
-                                                            .font_family(mono_font)
-                                                            .text_color(theme::accent())
-                                                            .child(orch_label),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(theme::text_muted())
-                                                    .child(format!("{total_agents} agent seat(s) active in team roster.")),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        h_flex()
-                                            .id("nux-auto-detect-btn")
-                                            .items_center()
-                                            .px_3()
-                                            .py_1p5()
-                                            .rounded_lg()
-                                            .bg(theme::bg_elevated())
-                                            .border_1()
-                                            .border_color(theme::glass_highlight())
-                                            .text_xs()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .text_color(theme::text())
-                                            .hover(|s| s.bg(theme::glass_highlight()))
-                                            .cursor_pointer()
-                                            .child("Auto-Detect Agents")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.auto_detect_and_seed_quarks(cx);
-                                            })),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .id("nux-configure-providers-btn")
-                                            .items_center()
-                                            .px_3()
-                                            .py_1p5()
-                                            .rounded_lg()
-                                            .bg(theme::glass_card())
-                                            .border_1()
-                                            .border_color(theme::glass_highlight())
-                                            .text_xs()
-                                            .text_color(theme::text_muted())
-                                            .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
-                                            .cursor_pointer()
-                                            .child("Configure Roster")
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.toggle_rail(Rail::Roster, window, cx);
-                                            })),
-                                    ),
+                                                .child(label)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.fill_starter_prompt(
+                                                            prompt_text, window, cx,
+                                                        );
+                                                    },
+                                                ))
+                                        },
+                                    )),
                             ),
                     ),
             )
-            // Starter Prompts Section
-            .child(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(theme::text_muted())
-                            .child("STARTER PROMPTS"),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .child(self.render_starter_prompt_pill(
-                                "auth-pill",
-                                "🔐 Implement User Authentication",
-                                "Implement user authentication with unit tests",
-                                cx,
-                            ))
-                            .child(self.render_starter_prompt_pill(
-                                "audit-pill",
-                                "🛡️ Security Audit Codebase",
-                                "Audit codebase security and rule invariants",
-                                cx,
-                            ))
-                            .child(self.render_starter_prompt_pill(
-                                "spec-pill",
-                                "📐 Draft Architectural Spec",
-                                "Write architectural design spec for new feature",
-                                cx,
-                            ))
-                            .child(self.render_starter_prompt_pill(
-                                "test-pill",
-                                "⚡ Run Gatekeeper Suite",
-                                "Run full test gate and report baseline status",
-                                cx,
-                            )),
-                    ),
-            )
-    }
-
-    fn render_starter_prompt_pill(
-        &self,
-        id: &'static str,
-        label: &'static str,
-        prompt: &'static str,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        h_flex()
-            .id(id)
-            .items_center()
-            .px_3()
-            .py_1p5()
-            .rounded_xl()
-            .bg(theme::glass_card())
-            .border_1()
-            .border_color(theme::glass_highlight())
-            .text_xs()
-            .text_color(theme::text_secondary())
-            .hover(|s| {
-                s.text_color(theme::text())
-                    .bg(theme::glass_highlight())
-                    .border_color(theme::accent().opacity(0.5))
-            })
-            .cursor_pointer()
-            .child(label)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.input.update(cx, |input, cx| {
-                    input.set_value(prompt, window, cx);
-                });
-                window.focus(&this.input.focus_handle(cx), cx);
-            }))
     }
 
     /// The Chat tab: the conversation only (message events), styled like a chat
     /// with each author's avatar and name.
     pub(super) fn chat_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.chat_message_ixs.is_empty() {
-            return v_flex()
-                .size_full()
-                .p_4()
-                .child(self.render_nux_onboarding_card(cx))
-                .into_any_element();
+            return self.render_onboarding_card(cx).into_any_element();
         }
 
         let weak_view = cx.entity().downgrade();
@@ -3128,6 +3211,53 @@ mod milestone_3_tests {
     fn prompt_anatomy_colors_returns_five_colors() {
         let colors = super::prompt_anatomy_colors();
         assert_eq!(colors.len(), 5);
+    }
+
+    #[test]
+    fn compute_onboarding_readiness_identifies_orchestrator_badge_and_active_counts() {
+        let empty_team = hadron_lattice::Team::default();
+        let r0 = super::compute_onboarding_readiness(false, &empty_team);
+        assert!(!r0.git_ready);
+        assert_eq!(r0.active_quark_count, 0);
+        assert_eq!(r0.orchestrator_badge, None);
+
+        let mut worker = hadron_lattice::Seat::cli(
+            hadron_lattice::QuarkId::new("cli-codex"),
+            "codex",
+            "gpt-5",
+            hadron_lattice::Flavor::Worker,
+        );
+        worker.enabled = true;
+        let mut orch = hadron_lattice::Seat::cli(
+            hadron_lattice::QuarkId::new("cli-agy"),
+            "agy",
+            "gemini-3-pro",
+            hadron_lattice::Flavor::Orchestrator,
+        );
+        orch.enabled = true;
+        let mut disabled = hadron_lattice::Seat::cli(
+            hadron_lattice::QuarkId::new("cli-claude"),
+            "claude",
+            "claude-opus-4-8",
+            hadron_lattice::Flavor::Worker,
+        );
+        disabled.enabled = false;
+
+        let team = hadron_lattice::Team {
+            quarks: vec![worker, orch, disabled],
+            ..Default::default()
+        };
+        let r1 = super::compute_onboarding_readiness(true, &team);
+        assert!(r1.git_ready);
+        assert_eq!(r1.active_quark_count, 2);
+        assert_eq!(
+            r1.orchestrator_badge,
+            Some((
+                "cli-agy".to_string(),
+                "agy".to_string(),
+                "gemini-3-pro".to_string()
+            ))
+        );
     }
 }
 

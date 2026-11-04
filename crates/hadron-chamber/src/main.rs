@@ -60,6 +60,17 @@ fn main() {
             headless_runner::print_help();
             std::process::exit(0);
         }
+        headless_runner::CliAction::Init => {
+            let repo_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            match headless_runner::run_cli_init(&repo_root) {
+                Ok(_) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         headless_runner::CliAction::Update { version } => {
             match headless_runner::run_cli_update(version.as_deref()) {
                 Ok(()) => std::process::exit(0),
