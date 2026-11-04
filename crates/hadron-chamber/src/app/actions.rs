@@ -4031,6 +4031,171 @@ impl Chamber {
         };
         cx.notify();
     }
+
+    /// Initialize Git repository from onboarding card and notify the field.
+    pub(super) fn init_git_from_onboarding(&mut self, cx: &mut Context<Self>) {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        match crate::vcs::init_repository(&repo_root) {
+            Ok(msg) => {
+                self.toast_manager.push(ToastKind::Success, msg.clone(), Some(4));
+                self.post_chat_message(
+                    Actor::Gluon,
+                    format!("🌌 Hadron Workspace Initialized: {msg}"),
+                    cx,
+                );
+            }
+            Err(e) => {
+                self.toast_manager.push(
+                    ToastKind::Error,
+                    format!("Failed to initialize Git repository: {e}"),
+                    Some(5),
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// Auto-detect installed CLI agents and API keys, seeding a default team roster
+    /// where the FIRST discovered Quark is assigned `Flavor::Orchestrator` and
+    /// subsequent Quarks are assigned `Flavor::Worker`.
+    pub(super) fn auto_detect_and_seed_quarks(&mut self, cx: &mut Context<Self>) {
+        use hadron_lattice::{Flavor, QuarkId, Seat, Transport};
+
+        let mut detected_seats: Vec<Seat> = Vec::new();
+
+        // 1. Check Anthropic key or claude CLI
+        let has_anthropic_key = std::env::var("ANTHROPIC_API_KEY")
+            .map(|k| !k.trim().is_empty())
+            .unwrap_or(false);
+        let has_claude_cli = command_exists("claude");
+        if has_anthropic_key || has_claude_cli {
+            detected_seats.push(Seat {
+                id: QuarkId::new("cli-claude"),
+                display_name: Some("Anthropic Claude".to_string()),
+                vendor: "claude".to_string(),
+                model: "claude-3-7-sonnet".to_string(),
+                effort: Some("medium".to_string()),
+                mode_config: None,
+                flavor: Flavor::Worker,
+                transport: Transport::Cli,
+                program: None,
+                args: Vec::new(),
+                cli: None,
+                commands: Default::default(),
+            });
+        }
+
+        // 2. Check Gemini key or agy CLI
+        let has_gemini_key = std::env::var("GEMINI_API_KEY")
+            .or_else(|_| std::env::var("GOOGLE_API_KEY"))
+            .map(|k| !k.trim().is_empty())
+            .unwrap_or(false);
+        let has_agy_cli = command_exists("agy");
+        if has_gemini_key || has_agy_cli {
+            detected_seats.push(Seat {
+                id: QuarkId::new("cli-agy"),
+                display_name: Some("Google Antigravity".to_string()),
+                vendor: "agy".to_string(),
+                model: "gemini-2.5-pro".to_string(),
+                effort: Some("high".to_string()),
+                mode_config: None,
+                flavor: Flavor::Worker,
+                transport: Transport::Cli,
+                program: None,
+                args: Vec::new(),
+                cli: None,
+                commands: Default::default(),
+            });
+        }
+
+        // 3. Check OpenAI key or codex CLI
+        let has_openai_key = std::env::var("OPENAI_API_KEY")
+            .map(|k| !k.trim().is_empty())
+            .unwrap_or(false);
+        let has_codex_cli = command_exists("codex");
+        if has_openai_key || has_codex_cli {
+            detected_seats.push(Seat {
+                id: QuarkId::new("cli-codex"),
+                display_name: Some("OpenAI Codex".to_string()),
+                vendor: "codex".to_string(),
+                model: "gpt-4o".to_string(),
+                effort: None,
+                mode_config: None,
+                flavor: Flavor::Worker,
+                transport: Transport::Cli,
+                program: None,
+                args: Vec::new(),
+                cli: None,
+                commands: Default::default(),
+            });
+        }
+
+        // Fallback: Seed standard default seats if nothing detected
+        if detected_seats.is_empty() {
+            detected_seats.push(Seat {
+                id: QuarkId::new("cli-claude"),
+                display_name: Some("Anthropic Claude".to_string()),
+                vendor: "claude".to_string(),
+                model: "claude-3-7-sonnet".to_string(),
+                effort: Some("medium".to_string()),
+                mode_config: None,
+                flavor: Flavor::Orchestrator,
+                transport: Transport::Cli,
+                program: None,
+                args: Vec::new(),
+                cli: None,
+                commands: Default::default(),
+            });
+            detected_seats.push(Seat {
+                id: QuarkId::new("cli-agy"),
+                display_name: Some("Google Antigravity".to_string()),
+                vendor: "agy".to_string(),
+                model: "gemini-2.5-pro".to_string(),
+                effort: Some("high".to_string()),
+                mode_config: None,
+                flavor: Flavor::Worker,
+                transport: Transport::Cli,
+                program: None,
+                args: Vec::new(),
+                cli: None,
+                commands: Default::default(),
+            });
+        }
+
+        // Rule 8/SSOT: Guarantee the FIRST seat is strictly Flavor::Orchestrator
+        for (idx, seat) in detected_seats.iter_mut().enumerate() {
+            if idx == 0 {
+                seat.flavor = Flavor::Orchestrator;
+            } else {
+                seat.flavor = Flavor::Worker;
+            }
+        }
+
+        // Persist seats to self.team.quarks and save
+        self.team.quarks = detected_seats.clone();
+        self.save_repo_team(cx);
+
+        let count = detected_seats.len();
+        let orch_id = &detected_seats[0].id;
+        let msg = format!(
+            "Auto-detected and seated {count} agent(s). Assigned @{orch_id} as primary `@orchestrator`."
+        );
+        self.toast_manager.push(ToastKind::Success, msg.clone(), Some(4));
+        self.post_chat_message(Actor::Gluon, format!("🤖 Swarm Auto-Discovery: {msg}"), cx);
+        cx.notify();
+    }
+}
+
+/// Helper to check if an executable binary exists on PATH.
+fn command_exists(name: &str) -> bool {
+    let cmd = if cfg!(windows) { "where.exe" } else { "which" };
+    std::process::Command::new(cmd)
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Pure decision half of `toggle_process_manager`: the next `process_manager_open`
@@ -4760,4 +4925,35 @@ mod tests {
         assert!(s.contains("skills"));
         assert!(s.contains("Ubuntu"));
     }
+
+    #[test]
+    fn test_command_exists_helper() {
+        // System commands like git or cargo or cmd/sh should be found
+        let found = if cfg!(windows) {
+            command_exists("cmd.exe") || command_exists("where.exe")
+        } else {
+            command_exists("sh") || command_exists("which")
+        };
+        assert!(found, "Expected common system binary to exist on PATH");
+
+        // Non-existent command should return false
+        assert!(!command_exists("non_existent_binary_xyz_12345"));
+    }
+
+    #[test]
+    fn test_onboarding_git_init_flow() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        // Not a repo initially
+        assert!(!crate::vcs::is_git_repo(root));
+
+        // Init repository via VCS helper (used by init_git_from_onboarding)
+        let res = crate::vcs::init_repository(root).unwrap();
+        assert!(res.contains("Initialized Git repository"));
+        assert!(crate::vcs::is_git_repo(root));
+    }
 }
+

@@ -1204,13 +1204,379 @@ impl super::Chamber {
         banners
     }
 
+    /// Renders the interactive GPUI NUX Onboarding & Readiness Card for fresh workspaces.
+    pub(super) fn render_nux_onboarding_card(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let git_ready = crate::vcs::is_git_repo(&repo_root);
+
+        let active_orch = self
+            .view
+            .roster
+            .iter()
+            .find(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator))
+            .or_else(|| self.view.roster.first());
+
+        let orch_label = match active_orch {
+            Some(r) => {
+                let model = if r.model.is_empty() { "default" } else { &r.model };
+                format!("@{} ({})", r.id, model)
+            }
+            None => "No agents configured".to_string(),
+        };
+
+        let total_agents = self.view.roster.len();
+        let mono_font = cx.theme().mono_font_family.clone();
+
+        v_flex()
+            .id("nux-onboarding-card")
+            .w_full()
+            .max_w(px(720.0))
+            .mx_auto()
+            .my_auto()
+            .p_6()
+            .gap_5()
+            .rounded_2xl()
+            .bg(theme::glass_surface())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .shadow_xl()
+            // Header Banner
+            .child(
+                v_flex()
+                    .gap_1p5()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .text_color(theme::text())
+                                    .child("🌌 Welcome to Hadron Swarm"),
+                            )
+                            .child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(theme::accent().opacity(0.15))
+                                    .border_1()
+                                    .border_color(theme::accent().opacity(0.3))
+                                    .text_xs()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme::accent())
+                                    .child("NUX Readiness"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme::text_secondary())
+                            .child("Orchestrate frontier LLMs across isolated Git worktrees with automated Merge Gate verification."),
+                    ),
+            )
+            // Checklist Section
+            .child(
+                v_flex()
+                    .gap_3()
+                    // 1. Git Status Card
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .p_3p5()
+                            .rounded_xl()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(if git_ready {
+                                theme::success().opacity(0.3)
+                            } else {
+                                theme::warning().opacity(0.3)
+                            })
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .size(px(10.0))
+                                            .rounded_full()
+                                            .bg(if git_ready { theme::success() } else { theme::warning() }),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(theme::text())
+                                                    .child(if git_ready {
+                                                        "Git Repository Initialized"
+                                                    } else {
+                                                        "Git Repository Required"
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme::text_muted())
+                                                    .child(if git_ready {
+                                                        format!("Isolated worktrees ready at {}", repo_root.display())
+                                                    } else {
+                                                        "Worktrees require an initialized Git repository with a base commit.".to_string()
+                                                    }),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                if !git_ready {
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            h_flex()
+                                                .id("nux-init-git-btn")
+                                                .items_center()
+                                                .px_3()
+                                                .py_1p5()
+                                                .rounded_lg()
+                                                .bg(theme::accent())
+                                                .text_xs()
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_color(theme::text())
+                                                .hover(|s| s.opacity(0.85))
+                                                .cursor_pointer()
+                                                .child("Initialize Git")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.init_git_from_onboarding(cx);
+                                                })),
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .id("nux-open-folder-btn")
+                                                .items_center()
+                                                .px_3()
+                                                .py_1p5()
+                                                .rounded_lg()
+                                                .bg(theme::glass_card())
+                                                .border_1()
+                                                .border_color(theme::glass_highlight())
+                                                .text_xs()
+                                                .text_color(theme::text_muted())
+                                                .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                                .cursor_pointer()
+                                                .child("Open Folder…")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.open_workspace(cx);
+                                                })),
+                                        )
+                                } else {
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .px_2p5()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(theme::success().opacity(0.12))
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::success())
+                                        .child("Ready")
+                                }
+                            ),
+                    )
+                    // 2. Swarm Orchestrator & Roster Card
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .p_3p5()
+                            .rounded_xl()
+                            .bg(theme::bg_surface())
+                            .border_1()
+                            .border_color(if total_agents > 0 {
+                                theme::info().opacity(0.3)
+                            } else {
+                                theme::warning().opacity(0.3)
+                            })
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .size(px(10.0))
+                                            .rounded_full()
+                                            .bg(if total_agents > 0 { theme::info() } else { theme::warning() }),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .font_weight(gpui::FontWeight::BOLD)
+                                                            .text_color(theme::text())
+                                                            .child("Swarm Leader"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .px_2()
+                                                            .py_0p5()
+                                                            .rounded_md()
+                                                            .bg(theme::glass_card())
+                                                            .border_1()
+                                                            .border_color(theme::glass_highlight())
+                                                            .text_xs()
+                                                            .font_family(mono_font)
+                                                            .text_color(theme::accent())
+                                                            .child(orch_label),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(theme::text_muted())
+                                                    .child(format!("{total_agents} agent seat(s) active in team roster.")),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .id("nux-auto-detect-btn")
+                                            .items_center()
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(theme::bg_elevated())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .text_color(theme::text())
+                                            .hover(|s| s.bg(theme::glass_highlight()))
+                                            .cursor_pointer()
+                                            .child("Auto-Detect Agents")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.auto_detect_and_seed_quarks(cx);
+                                            })),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .id("nux-configure-providers-btn")
+                                            .items_center()
+                                            .px_3()
+                                            .py_1p5()
+                                            .rounded_lg()
+                                            .bg(theme::glass_card())
+                                            .border_1()
+                                            .border_color(theme::glass_highlight())
+                                            .text_xs()
+                                            .text_color(theme::text_muted())
+                                            .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                            .cursor_pointer()
+                                            .child("Configure Roster")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.toggle_rail(Rail::Roster, window, cx);
+                                            })),
+                                    ),
+                            ),
+                    ),
+            )
+            // Starter Prompts Section
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme::text_muted())
+                            .child("STARTER PROMPTS"),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(self.render_starter_prompt_pill(
+                                "auth-pill",
+                                "🔐 Implement User Authentication",
+                                "Implement user authentication with unit tests",
+                                cx,
+                            ))
+                            .child(self.render_starter_prompt_pill(
+                                "audit-pill",
+                                "🛡️ Security Audit Codebase",
+                                "Audit codebase security and rule invariants",
+                                cx,
+                            ))
+                            .child(self.render_starter_prompt_pill(
+                                "spec-pill",
+                                "📐 Draft Architectural Spec",
+                                "Write architectural design spec for new feature",
+                                cx,
+                            ))
+                            .child(self.render_starter_prompt_pill(
+                                "test-pill",
+                                "⚡ Run Gatekeeper Suite",
+                                "Run full test gate and report baseline status",
+                                cx,
+                            )),
+                    ),
+            )
+    }
+
+    fn render_starter_prompt_pill(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        prompt: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .id(id)
+            .items_center()
+            .px_3()
+            .py_1p5()
+            .rounded_xl()
+            .bg(theme::glass_card())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .text_xs()
+            .text_color(theme::text_secondary())
+            .hover(|s| {
+                s.text_color(theme::text())
+                    .bg(theme::glass_highlight())
+                    .border_color(theme::accent().opacity(0.5))
+            })
+            .cursor_pointer()
+            .child(label)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.input.update(cx, |input, cx| {
+                    input.set_value(prompt, window, cx);
+                });
+                window.focus(&this.input.focus_handle(cx), cx);
+            }))
+    }
+
     /// The Chat tab: the conversation only (message events), styled like a chat
     /// with each author's avatar and name.
     pub(super) fn chat_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.chat_message_ixs.is_empty() {
             return v_flex()
+                .size_full()
                 .p_4()
-                .child(empty_hint("No messages yet — say something below."))
+                .child(self.render_nux_onboarding_card(cx))
                 .into_any_element();
         }
 
