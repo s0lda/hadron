@@ -5,12 +5,9 @@
 //! and interactive node selection.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::f32::consts::PI;
 use serde::{Deserialize, Serialize};
 use super::*;
-use super::visualizer::{Point3D, Rotation3D, focus_angles_for_spherical};
 use gpui::{canvas, fill, point, px, size, Bounds, MouseButton, PathBuilder};
-use gpui_component::resizable::{resizable_panel, v_resizable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NucleusHealthBadgeState {
@@ -452,86 +449,6 @@ pub(crate) fn filter_nucleus_nodes(
         .collect()
 }
 
-/// Deterministic 3D spherical layout entry for a Nucleus note in the 3D Knowledge Sphere.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NucleusSphereNode {
-    pub slug: String,
-    pub title: String,
-    pub is_orphan: bool,
-    pub has_dead_link: bool,
-    pub is_invariant_linked: bool,
-    pub shell_mult: f32,
-    pub theta: f32,
-    pub phi: f32,
-}
-
-/// Computes deterministic dual-shell 3D Fibonacci spherical coordinates for every note in `cached`:
-/// - Healthy indexed notes (`!is_orphan && !has_dead_link`) reside on the primary `1.0x` Knowledge Shell.
-/// - Orphaned (`is_orphan`) or broken-link (`has_dead_link`) notes reside on the outer `1.28x` Drift Shell.
-pub(crate) fn compute_nucleus_sphere_layout(
-    cached: &CachedNucleusGraph,
-) -> Vec<NucleusSphereNode> {
-    const GOLDEN_ANGLE: f32 = 2.399_963_1;
-    let orphan_set: HashSet<&str> = cached.orphaned_notes.iter().map(|s| s.as_str()).collect();
-    let dead_sources: HashSet<&str> = cached.dead_links.iter().map(|(s, _)| s.as_str()).collect();
-
-    let mut inner_entries = Vec::new();
-    let mut outer_entries = Vec::new();
-
-    for (slug, node) in &cached.nodes {
-        let is_orphan = orphan_set.contains(slug.as_str());
-        let has_dead_link = dead_sources.contains(slug.as_str());
-        let is_invariant_linked = node.incoming_links.iter().any(|l| l == "invariants");
-        if is_orphan || has_dead_link {
-            outer_entries.push((slug, node, is_orphan, has_dead_link, is_invariant_linked));
-        } else {
-            inner_entries.push((slug, node, is_orphan, has_dead_link, is_invariant_linked));
-        }
-    }
-
-    let inner_count = inner_entries.len().max(1);
-    let outer_count = outer_entries.len().max(1);
-    let mut result = Vec::with_capacity(cached.nodes.len());
-
-    for (i, (slug, node, is_orphan, has_dead_link, is_invariant_linked)) in
-        inner_entries.into_iter().enumerate()
-    {
-        let lat_frac = ((i as f32 + 0.5) / inner_count as f32) * 2.0 - 1.0;
-        let theta = (lat_frac * 0.86).asin();
-        let phi = (i as f32) * GOLDEN_ANGLE;
-        result.push(NucleusSphereNode {
-            slug: slug.clone(),
-            title: node.title.clone(),
-            is_orphan,
-            has_dead_link,
-            is_invariant_linked,
-            shell_mult: 1.0,
-            theta,
-            phi,
-        });
-    }
-
-    for (i, (slug, node, is_orphan, has_dead_link, is_invariant_linked)) in
-        outer_entries.into_iter().enumerate()
-    {
-        let lat_frac = ((i as f32 + 0.5) / outer_count as f32) * 2.0 - 1.0;
-        let theta = (lat_frac * 0.88).asin();
-        let phi = (i as f32) * GOLDEN_ANGLE + 1.25;
-        result.push(NucleusSphereNode {
-            slug: slug.clone(),
-            title: node.title.clone(),
-            is_orphan,
-            has_dead_link,
-            is_invariant_linked,
-            shell_mult: 1.28,
-            theta,
-            phi,
-        });
-    }
-
-    result
-}
-
 impl super::Chamber {
     pub(super) fn nucleus_graph_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
@@ -672,8 +589,6 @@ impl super::Chamber {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.nucleus_graph_zoom = 1.0;
                         this.nucleus_graph_pan = (0.0, 0.0);
-                        this.nucleus_graph_yaw = 0.4;
-                        this.nucleus_graph_pitch = 0.25;
                         cx.notify();
                     })),
             );
