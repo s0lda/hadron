@@ -519,3 +519,32 @@ fn strip_seat_numeric_suffix_and_unique_seat_id_prevent_nested_suffixes() {
 
 
 
+
+#[test]
+fn test_schedule_registry_caching() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let reg1 = super::overlay::cached_schedule_registry(root);
+    assert_eq!(reg1.jobs.len(), 0);
+
+    let mut reg_new = hadron_lattice::ScheduleRegistry::default();
+    reg_new.add_job(hadron_lattice::ScheduledJob {
+        id: "test-job".to_string(),
+        name: "Test Job".to_string(),
+        cron: "0 * * * *".to_string(),
+        prompt: "Run test".to_string(),
+        target: "all".to_string(),
+        enabled: true,
+        task_id: "test-task".to_string(),
+        missed_policy: hadron_lattice::MissedWindowPolicy::CatchUpOnce,
+        last_run_at: None,
+        last_eval_at: None,
+        last_status: None,
+    });
+    let _ = reg_new.save(root);
+
+    super::overlay::invalidate_schedule_registry_cache();
+    let reg2 = super::overlay::cached_schedule_registry(root);
+    assert_eq!(reg2.jobs.len(), 1);
+    assert_eq!(reg2.jobs[0].id, "test-job");
+}

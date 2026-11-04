@@ -20,6 +20,22 @@ pub struct ThreeWayHunk {
     pub status: ThreeWayStatus,
 }
 
+#[derive(Clone)]
+struct CachedDiffFile {
+    file_path: String,
+    changed_hunks: Vec<ThreeWayHunk>,
+}
+
+struct CachedDiffInspector {
+    key: (std::path::PathBuf, String, String, Vec<String>),
+    files: Vec<CachedDiffFile>,
+    cached_at: std::time::Instant,
+}
+
+thread_local! {
+    static DIFF_INSPECTOR_CACHE: std::cell::RefCell<Option<CachedDiffInspector>> = const { std::cell::RefCell::new(None) };
+}
+
 /// A file diff containing 3-way comparison hunks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -223,14 +239,37 @@ impl Chamber {
                 .child(div().w(px(90.0)).text_right().text_color(theme::text_muted()).child("Steer")),
         );
 
-        let mut global_hunk_idx = 0usize;
-        for file_path in files_to_check.iter().take(5) {
-            let base_content = crate::vcs::show_file_at_ref(repo, base_ref, file_path).unwrap_or_default();
-            let ours_content = std::fs::read_to_string(repo.join(file_path)).unwrap_or_default();
-            let theirs_content = crate::vcs::show_file_at_ref(repo, theirs_ref, file_path).unwrap_or_default();
+        let cache_key = (repo.to_path_buf(), base_ref.to_string(), theirs_ref.to_string(), files_to_check.clone());
+        let cached_files = DIFF_INSPECTOR_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if let Some(ref c) = *cache {
+                if c.key == cache_key && c.cached_at.elapsed() < std::time::Duration::from_millis(500) {
+                    return c.files.clone();
+                }
+            }
+            let files: Vec<CachedDiffFile> = files_to_check.iter().take(5).map(|file_path| {
+                let base_content = crate::vcs::show_file_at_ref(repo, base_ref, file_path).unwrap_or_default();
+                let ours_content = std::fs::read_to_string(repo.join(file_path)).unwrap_or_default();
+                let theirs_content = crate::vcs::show_file_at_ref(repo, theirs_ref, file_path).unwrap_or_default();
+                let all_hunks = compute_three_way_diff(&base_content, &ours_content, &theirs_content);
+                let changed_hunks = all_hunks.into_iter().filter(|h| h.status != ThreeWayStatus::Same).collect();
+                CachedDiffFile {
+                    file_path: file_path.clone(),
+                    changed_hunks,
+                }
+            }).collect();
+            *cache = Some(CachedDiffInspector {
+                key: cache_key,
+                files: files.clone(),
+                cached_at: std::time::Instant::now(),
+            });
+            files
+        });
 
-            let all_hunks = compute_three_way_diff(&base_content, &ours_content, &theirs_content);
-            let changed_hunks: Vec<ThreeWayHunk> = all_hunks.iter().filter(|h| h.status != ThreeWayStatus::Same).cloned().collect();
+        let mut global_hunk_idx = 0usize;
+        for cached_file in &cached_files {
+            let file_path = &cached_file.file_path;
+            let changed_hunks = &cached_file.changed_hunks;
             let changed_count = changed_hunks.len();
 
             let mut file_card = v_flex()
@@ -274,12 +313,7 @@ impl Chamber {
             );
 
             let mut hunks_list = v_flex().gap_0p5().w_full();
-            // Show changed hunks or first 20 lines if clean
-            let display_hunks: Vec<ThreeWayHunk> = if !changed_hunks.is_empty() {
-                changed_hunks
-            } else {
-                all_hunks.into_iter().take(20).collect()
-            };
+            let display_hunks: Vec<ThreeWayHunk> = changed_hunks.clone();
 
             for hunk in display_hunks {
                 let hunk_idx = global_hunk_idx;

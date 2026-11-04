@@ -1,5 +1,47 @@
 use super::*;
 
+struct CachedScheduleRegistry {
+    path: std::path::PathBuf,
+    mtime_nanos: u128,
+    registry: hadron_lattice::ScheduleRegistry,
+}
+
+thread_local! {
+    static SCHEDULE_REGISTRY_CACHE: std::cell::RefCell<Option<CachedScheduleRegistry>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(in crate::app) fn cached_schedule_registry(repo_root: &std::path::Path) -> hadron_lattice::ScheduleRegistry {
+    let schedules_path = repo_root.join(".hadron/schedules.json");
+    let mtime_nanos = std::fs::metadata(&schedules_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    SCHEDULE_REGISTRY_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(ref c) = *cache {
+            if c.path == repo_root && c.mtime_nanos == mtime_nanos {
+                return c.registry.clone();
+            }
+        }
+        let reg = hadron_lattice::ScheduleRegistry::load(repo_root).unwrap_or_default();
+        *cache = Some(CachedScheduleRegistry {
+            path: repo_root.to_path_buf(),
+            mtime_nanos,
+            registry: reg.clone(),
+        });
+        reg
+    })
+}
+
+pub(in crate::app) fn invalidate_schedule_registry_cache() {
+    SCHEDULE_REGISTRY_CACHE.with(|cache| {
+        *cache.borrow_mut() = None;
+    });
+}
+
 impl super::Chamber {
     // `pub(crate)`, not `pub(super)`: called from `app::render::mod` (a sibling of
     // `settings`), the same reach it had when this fn lived directly in settings.rs.
@@ -1308,7 +1350,7 @@ impl super::Chamber {
     /// missed-window policy, last run, inline Run/Enable/Disable/Edit/Remove actions, and Add Schedule form.
     pub(super) fn schedules_settings_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let registry = hadron_lattice::ScheduleRegistry::load(&repo_root).unwrap_or_default();
+        let registry = cached_schedule_registry(&repo_root);
         let now = chrono::Utc::now();
 
         let mut jobs_list = v_flex().gap_2().w_full();
@@ -1443,6 +1485,7 @@ impl super::Chamber {
                                                     if let Some(j) = reg.get_mut(&id_for_toggle) {
                                                         j.enabled = !j.enabled;
                                                         let _ = reg.save(&root_for_toggle);
+                                                        invalidate_schedule_registry_cache();
                                                     }
                                                 }
                                                 this.settings_schedule_status_msg = None;
@@ -1477,6 +1520,7 @@ impl super::Chamber {
                                                 if let Ok(mut reg) = hadron_lattice::ScheduleRegistry::load(&root_for_del) {
                                                     reg.remove_job(&id_for_del);
                                                     let _ = reg.save(&root_for_del);
+                                                    invalidate_schedule_registry_cache();
                                                     this.settings_schedule_status_msg = Some((
                                                         true,
                                                         format!("Removed scheduled task '{id_for_del}'."),

@@ -65,46 +65,71 @@ impl super::Chamber {
     }
 
     pub(super) fn loaded_skills(&self) -> Vec<SkillInfo> {
-        let mut skills = Vec::new();
+        struct CachedLoadedSkills {
+            chamber_path: std::path::PathBuf,
+            last_scanned: std::time::Instant,
+            skills: Vec<SkillInfo>,
+        }
 
-        // Helper to scan a dir for markdown files
-        let mut scan_dir = |dir: &std::path::Path, is_global: bool| {
-            if let Ok(rd) = std::fs::read_dir(dir) {
-                let mut entries: Vec<_> = rd.filter_map(Result::ok).collect();
-                entries.sort_by_key(|e| e.path());
-                for entry in entries {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                            let name = stem.to_string();
-                            if !skills.iter().any(|s: &SkillInfo| s.name == name) {
-                                skills.push(SkillInfo {
-                                    name,
-                                    path,
-                                    is_global,
-                                });
+        thread_local! {
+            static LOADED_SKILLS_CACHE: std::cell::RefCell<Option<CachedLoadedSkills>> = const { std::cell::RefCell::new(None) };
+        }
+
+        LOADED_SKILLS_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if let Some(ref c) = *cache {
+                if c.chamber_path == self.path && c.last_scanned.elapsed() < std::time::Duration::from_millis(1500) {
+                    return c.skills.clone();
+                }
+            }
+
+            let mut skills = Vec::new();
+
+            // Helper to scan a dir for markdown files
+            let mut scan_dir = |dir: &std::path::Path, is_global: bool| {
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    let mut entries: Vec<_> = rd.filter_map(Result::ok).collect();
+                    entries.sort_by_key(|e| e.path());
+                    for entry in entries {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                let name = stem.to_string();
+                                if !skills.iter().any(|s: &SkillInfo| s.name == name) {
+                                    skills.push(SkillInfo {
+                                        name,
+                                        path,
+                                        is_global,
+                                    });
+                                }
                             }
                         }
                     }
                 }
+            };
+
+            // 1. Repo skills (.hadron/skills and fallback .hadron/preons)
+            let hadron_dir = match self.path.parent() {
+                Some(p) => p.to_path_buf(),
+                None => std::path::PathBuf::from(".hadron"),
+            };
+            scan_dir(&hadron_dir.join("skills"), false);
+            scan_dir(&hadron_dir.join("preons"), false);
+
+            // 2. Global skills (~/.hadron/skills and fallback ~/.hadron/preons)
+            if let Some(user_dir) = hadron_lattice::user_hadron_dir() {
+                scan_dir(&user_dir.join("skills"), true);
+                scan_dir(&user_dir.join("preons"), true);
             }
-        };
 
-        // 1. Repo skills (.hadron/skills and fallback .hadron/preons)
-        let hadron_dir = match self.path.parent() {
-            Some(p) => p.to_path_buf(),
-            None => std::path::PathBuf::from(".hadron"),
-        };
-        scan_dir(&hadron_dir.join("skills"), false);
-        scan_dir(&hadron_dir.join("preons"), false);
+            *cache = Some(CachedLoadedSkills {
+                chamber_path: self.path.clone(),
+                last_scanned: std::time::Instant::now(),
+                skills: skills.clone(),
+            });
 
-        // 2. Global skills (~/.hadron/skills and fallback ~/.hadron/preons)
-        if let Some(user_dir) = hadron_lattice::user_hadron_dir() {
-            scan_dir(&user_dir.join("skills"), true);
-            scan_dir(&user_dir.join("preons"), true);
-        }
-
-        skills
+            skills
+        })
     }
 
     pub(super) fn available_skills(&self) -> Vec<String> {

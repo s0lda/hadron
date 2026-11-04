@@ -17,7 +17,7 @@ mod identity;
 mod acp_probe;
 mod http_probe;
 mod model_select;
-mod overlay;
+pub(super) mod overlay;
 pub(super) mod providers;
 pub mod quark_theme;
 #[allow(unused_imports)]

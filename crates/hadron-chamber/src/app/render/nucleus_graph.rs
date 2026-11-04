@@ -1588,9 +1588,41 @@ impl super::Chamber {
 
         // Selected Note Inspector Panel
         let selected_note_panel = selected_note.as_ref().and_then(|slug| cached.nodes.get(slug)).map(|n| {
+            struct CachedNotePreview {
+                path: std::path::PathBuf,
+                mtime_nanos: u128,
+                content: String,
+            }
+
+            thread_local! {
+                static NOTE_PREVIEW_CACHE: std::cell::RefCell<Option<CachedNotePreview>> = const { std::cell::RefCell::new(None) };
+            }
+
             let n_slug = n.slug.clone();
             let note_path = repo_root.join(".hadron/nucleus").join(&n.path);
-            let content_preview = std::fs::read_to_string(&note_path).unwrap_or_else(|_| "Note file content unavailable".to_string());
+            let mtime_nanos = std::fs::metadata(&note_path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+
+            let content_preview = NOTE_PREVIEW_CACHE.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                if let Some(ref c) = *cache {
+                    if c.path == note_path && c.mtime_nanos == mtime_nanos {
+                        return c.content.clone();
+                    }
+                }
+                let content = std::fs::read_to_string(&note_path)
+                    .unwrap_or_else(|_| "Note file content unavailable".to_string());
+                *cache = Some(CachedNotePreview {
+                    path: note_path.clone(),
+                    mtime_nanos,
+                    content: content.clone(),
+                });
+                content
+            });
             let is_orphan = cached.orphaned_notes.contains(&n_slug);
             let note_dead_targets: Vec<String> = cached
                 .dead_links

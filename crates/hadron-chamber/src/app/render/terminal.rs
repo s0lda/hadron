@@ -1764,7 +1764,7 @@ impl super::Chamber {
                         let now = chrono::Utc::now();
                         let render_now = now;
                         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                        let schedule_reg = hadron_lattice::ScheduleRegistry::load(&repo_root).unwrap_or_default();
+                        let schedule_reg = super::super::settings::overlay::cached_schedule_registry(&repo_root);
                         let enabled_schedules = schedule_reg.jobs.iter().filter(|j| j.enabled).count();
                         let total_schedules = schedule_reg.jobs.len();
 
