@@ -5,9 +5,13 @@
 //! and interactive node selection.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::f32::consts::PI;
 use serde::{Deserialize, Serialize};
 use super::*;
+use super::visualizer::{Point3D, Rotation3D, focus_angles_for_spherical};
 use gpui::{canvas, fill, point, px, size, Bounds, MouseButton, PathBuilder};
+use gpui_component::resizable::{resizable_panel, v_resizable};
+use gpui_component::StyleSized;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NucleusHealthBadgeState {
@@ -449,6 +453,86 @@ pub(crate) fn filter_nucleus_nodes(
         .collect()
 }
 
+/// Deterministic 3D spherical layout entry for a Nucleus note in the 3D Knowledge Sphere.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NucleusSphereNode {
+    pub slug: String,
+    pub title: String,
+    pub is_orphan: bool,
+    pub has_dead_link: bool,
+    pub is_invariant_linked: bool,
+    pub shell_mult: f32,
+    pub theta: f32,
+    pub phi: f32,
+}
+
+/// Computes deterministic dual-shell 3D Fibonacci spherical coordinates for every note in `cached`:
+/// - Healthy indexed notes (`!is_orphan && !has_dead_link`) reside on the primary `1.0x` Knowledge Shell.
+/// - Orphaned (`is_orphan`) or broken-link (`has_dead_link`) notes reside on the outer `1.28x` Drift Shell.
+pub(crate) fn compute_nucleus_sphere_layout(
+    cached: &CachedNucleusGraph,
+) -> Vec<NucleusSphereNode> {
+    const GOLDEN_ANGLE: f32 = 2.399_963_1;
+    let orphan_set: HashSet<&str> = cached.orphaned_notes.iter().map(|s| s.as_str()).collect();
+    let dead_sources: HashSet<&str> = cached.dead_links.iter().map(|(s, _)| s.as_str()).collect();
+
+    let mut inner_entries = Vec::new();
+    let mut outer_entries = Vec::new();
+
+    for (slug, node) in &cached.nodes {
+        let is_orphan = orphan_set.contains(slug.as_str());
+        let has_dead_link = dead_sources.contains(slug.as_str());
+        let is_invariant_linked = node.incoming_links.iter().any(|l| l == "invariants");
+        if is_orphan || has_dead_link {
+            outer_entries.push((slug, node, is_orphan, has_dead_link, is_invariant_linked));
+        } else {
+            inner_entries.push((slug, node, is_orphan, has_dead_link, is_invariant_linked));
+        }
+    }
+
+    let inner_count = inner_entries.len().max(1);
+    let outer_count = outer_entries.len().max(1);
+    let mut result = Vec::with_capacity(cached.nodes.len());
+
+    for (i, (slug, node, is_orphan, has_dead_link, is_invariant_linked)) in
+        inner_entries.into_iter().enumerate()
+    {
+        let lat_frac = ((i as f32 + 0.5) / inner_count as f32) * 2.0 - 1.0;
+        let theta = (lat_frac * 0.86).asin();
+        let phi = (i as f32) * GOLDEN_ANGLE;
+        result.push(NucleusSphereNode {
+            slug: slug.clone(),
+            title: node.title.clone(),
+            is_orphan,
+            has_dead_link,
+            is_invariant_linked,
+            shell_mult: 1.0,
+            theta,
+            phi,
+        });
+    }
+
+    for (i, (slug, node, is_orphan, has_dead_link, is_invariant_linked)) in
+        outer_entries.into_iter().enumerate()
+    {
+        let lat_frac = ((i as f32 + 0.5) / outer_count as f32) * 2.0 - 1.0;
+        let theta = (lat_frac * 0.88).asin();
+        let phi = (i as f32) * GOLDEN_ANGLE + 1.25;
+        result.push(NucleusSphereNode {
+            slug: slug.clone(),
+            title: node.title.clone(),
+            is_orphan,
+            has_dead_link,
+            is_invariant_linked,
+            shell_mult: 1.28,
+            theta,
+            phi,
+        });
+    }
+
+    result
+}
+
 impl super::Chamber {
     pub(super) fn nucleus_graph_view(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
@@ -774,13 +858,13 @@ impl super::Chamber {
         let filtered_notes = filter_nucleus_nodes(cached, self.visualizer_nucleus_filter.as_deref());
         let visible_node_slugs: HashSet<String> = filtered_notes.iter().map(|n| n.slug.clone()).collect();
 
-        // 2D Node-Link Canvas Rendering
-        let nodes_map: BTreeMap<String, hadron_forge::nucleus_graph::NucleusNode> = cached
-            .nodes
+        // 3D Knowledge Sphere Node & Arc Canvas Rendering
+        let sphere_nodes = compute_nucleus_sphere_layout(cached);
+        let sphere_map: HashMap<String, NucleusSphereNode> = sphere_nodes
             .iter()
-            .filter(|(slug, _)| visible_node_slugs.contains(*slug))
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|n| (n.slug.clone(), n.clone()))
             .collect();
+
         let edges_list: Vec<ForceEdge> = cached
             .force_graph
             .edges
@@ -788,17 +872,20 @@ impl super::Chamber {
             .filter(|e| visible_node_slugs.contains(&e.source) && visible_node_slugs.contains(&e.target))
             .cloned()
             .collect();
-        let positions_map = cached.positions.clone();
-        let orphaned_set: HashSet<String> = cached.orphaned_notes.iter().cloned().collect();
         let dead_sources_set = dead_sources.clone();
         let dead_targets: HashSet<String> = cached.dead_links.iter().map(|(_, t)| t.clone()).collect();
         let sel_slug = selected_note.clone();
         let hov_slug = hovered_note.clone();
 
-        let hit_positions_cell = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, Bounds<Pixels>, f32, f32)>::new()));
+        let sphere_map_for_chips = sphere_map.clone();
+
+        let hit_positions_cell = std::rc::Rc::new(std::cell::RefCell::new(Vec::<(String, Bounds<Pixels>, f32, f32, f32, f32)>::new()));
         let hit_positions_for_paint = hit_positions_cell.clone();
         let canvas_center_cell = std::rc::Rc::new(std::cell::Cell::new(self.nucleus_graph_canvas_center.get()));
         let canvas_center_for_paint = canvas_center_cell.clone();
+
+        let yaw = self.nucleus_graph_yaw;
+        let pitch = self.nucleus_graph_pitch;
 
         let canvas_elem = canvas(
             move |bounds, _, _| bounds,
@@ -808,103 +895,283 @@ impl super::Chamber {
                 let origin_x = f32::from(bounds.origin.x);
                 let origin_y = f32::from(bounds.origin.y);
 
-                canvas_center_for_paint.set((origin_x + w * 0.5, origin_y + h * 0.5));
+                let cx_pt = origin_x + w * 0.5 + pan_x;
+                let cy_pt = origin_y + h * 0.5 + pan_y;
+                canvas_center_for_paint.set((cx_pt, cy_pt));
 
-                let (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y) =
-                    compute_nucleus_projection_with_view(
-                        &positions_map,
-                        origin_x,
-                        origin_y,
-                        w,
-                        h,
-                        zoom,
-                        pan_x,
-                        pan_y,
+                let base_radius = (w.min(h) * 0.36).clamp(110.0, 260.0);
+                let camera_dist = 600.0;
+                let rot = Rotation3D::new(yaw, pitch);
+
+                // 1. Central Synaptic Knowledge Core Glow & Singularity
+                let core_glow_r = px(46.0 * zoom.clamp(0.6, 2.5));
+                window.paint_quad(
+                    fill(
+                        Bounds {
+                            origin: point(px(cx_pt) - core_glow_r, px(cy_pt) - core_glow_r),
+                            size: size(core_glow_r * 2.0, core_glow_r * 2.0),
+                        },
+                        theme::accent().opacity(0.12),
+                    )
+                    .corner_radii(core_glow_r),
+                );
+
+                let core_mid_r = px(28.0 * zoom.clamp(0.6, 2.5));
+                window.paint_quad(
+                    fill(
+                        Bounds {
+                            origin: point(px(cx_pt) - core_mid_r, px(cy_pt) - core_mid_r),
+                            size: size(core_mid_r * 2.0, core_mid_r * 2.0),
+                        },
+                        theme::info().opacity(0.22),
+                    )
+                    .corner_radii(core_mid_r),
+                );
+
+                let core_r = px(15.0 * zoom.clamp(0.6, 2.5));
+                window.paint_quad(
+                    fill(
+                        Bounds {
+                            origin: point(px(cx_pt) - core_r, px(cy_pt) - core_r),
+                            size: size(core_r * 2.0, core_r * 2.0),
+                        },
+                        theme::accent().opacity(0.85),
+                    )
+                    .corner_radii(core_r),
+                );
+
+                // 2. Wireframe Latitude & Meridian Constellation Rings
+                let lats = [-0.75f32, -0.38, 0.0, 0.38, 0.75];
+                for &lat_val in &lats {
+                    let lat_theta = lat_val * (PI * 0.42);
+                    let mut builder = PathBuilder::stroke(px(0.9));
+                    let mut started = false;
+                    for step in 0..=32 {
+                        let phi = (step as f32 / 32.0) * (2.0 * PI);
+                        let p3 = Point3D::from_spherical(base_radius * zoom, lat_theta, phi);
+                        let p_rot = rot.transform(p3);
+                        let (sx, sy, _z, _scale) = p_rot.project(cx_pt, cy_pt, camera_dist);
+                        if !started {
+                            builder.move_to(point(px(sx), px(sy)));
+                            started = true;
+                        } else {
+                            builder.line_to(point(px(sx), px(sy)));
+                        }
+                    }
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, theme::glass_highlight().opacity(0.18));
+                    }
+                }
+
+                for m_idx in 0..8 {
+                    let phi = (m_idx as f32 / 8.0) * (2.0 * PI);
+                    let mut builder = PathBuilder::stroke(px(0.8));
+                    let mut started = false;
+                    for step in 0..=32 {
+                        let theta = (step as f32 / 32.0) * PI - (PI / 2.0);
+                        let p3 = Point3D::from_spherical(base_radius * zoom, theta, phi);
+                        let p_rot = rot.transform(p3);
+                        let (sx, sy, _z, _scale) = p_rot.project(cx_pt, cy_pt, camera_dist);
+                        if !started {
+                            builder.move_to(point(px(sx), px(sy)));
+                            started = true;
+                        } else {
+                            builder.line_to(point(px(sx), px(sy)));
+                        }
+                    }
+                    if let Ok(path) = builder.build() {
+                        window.paint_path(path, theme::glass_highlight().opacity(0.14));
+                    }
+                }
+
+                // 3. Project Nodes into 3D Spherical Coordinates
+                struct ProjNode {
+                    slug: String,
+                    title: String,
+                    is_orphan: bool,
+                    has_dead_link: bool,
+                    is_invariant_linked: bool,
+                    theta: f32,
+                    phi: f32,
+                    sx: f32,
+                    sy: f32,
+                    z: f32,
+                    scale: f32,
+                }
+
+                let mut proj_map: HashMap<String, ProjNode> = HashMap::new();
+                for (slug, sp_node) in &sphere_map {
+                    if !visible_node_slugs.contains(slug) {
+                        continue;
+                    }
+                    let p3 = Point3D::from_spherical(
+                        base_radius * sp_node.shell_mult * zoom,
+                        sp_node.theta,
+                        sp_node.phi,
                     );
+                    let p_rot = rot.transform(p3);
+                    let (sx, sy, z, scale) = p_rot.project(cx_pt, cy_pt, camera_dist);
+                    proj_map.insert(
+                        slug.clone(),
+                        ProjNode {
+                            slug: slug.clone(),
+                            title: sp_node.title.clone(),
+                            is_orphan: sp_node.is_orphan,
+                            has_dead_link: sp_node.has_dead_link,
+                            is_invariant_linked: sp_node.is_invariant_linked,
+                            theta: sp_node.theta,
+                            phi: sp_node.phi,
+                            sx,
+                            sy,
+                            z,
+                            scale,
+                        },
+                    );
+                }
 
-                let project = |x: f32, y: f32| -> (f32, f32) {
-                    let sx = cx_pt + (x - center_orig_x) * scale_x;
-                    let sy = cy_pt + (y - center_orig_y) * scale_y;
-                    (sx, sy)
-                };
-
-                let mut painted_hits = Vec::new();
-
-                // 1. Edges
+                // 4. Draw 3D Curved Link Arcs
                 for edge in &edges_list {
-                    if let (Some(&(x1, y1)), Some(&(x2, y2))) = (positions_map.get(&edge.source), positions_map.get(&edge.target)) {
-                        let (sx1, sy1) = project(x1, y1);
-                        let (sx2, sy2) = project(x2, y2);
+                    if let (Some(n1), Some(n2)) = (proj_map.get(&edge.source), proj_map.get(&edge.target)) {
+                        let is_selected_link = sel_slug.as_deref() == Some(&edge.source)
+                            || sel_slug.as_deref() == Some(&edge.target)
+                            || hov_slug.as_deref() == Some(&edge.source)
+                            || hov_slug.as_deref() == Some(&edge.target);
+                        let is_dead = dead_targets.contains(&edge.target)
+                            || dead_sources_set.contains(&edge.source);
 
-                        let mut builder = PathBuilder::stroke(px(1.2));
-                        builder.move_to(point(px(sx1), px(sy1)));
-                        builder.line_to(point(px(sx2), px(sy2)));
+                        let mid_x = (n1.sx + n2.sx) * 0.5 + (cx_pt - (n1.sx + n2.sx) * 0.5) * 0.22;
+                        let mid_y = (n1.sy + n2.sy) * 0.5 + (cy_pt - (n1.sy + n2.sy) * 0.5) * 0.22;
+
+                        let stroke_w = if is_selected_link { 2.2 } else if is_dead { 1.5 } else { 1.0 };
+                        let mut builder = PathBuilder::stroke(px(stroke_w));
+                        builder.move_to(point(px(n1.sx), px(n1.sy)));
+                        builder.line_to(point(px(mid_x), px(mid_y)));
+                        builder.line_to(point(px(n2.sx), px(n2.sy)));
 
                         if let Ok(path) = builder.build() {
-                            let is_dead = dead_targets.contains(&edge.target);
-                            let color = if is_dead {
-                                gpui::rgb(0xf38ba8).opacity(0.55)
+                            let color = if is_selected_link {
+                                theme::accent().opacity(0.85)
+                            } else if is_dead {
+                                theme::error().opacity(0.60)
                             } else {
-                                gpui::rgb(0xa87ffb).opacity(0.35)
+                                let depth_alpha = if (n1.z + n2.z) < 0.0 { 0.16 } else { 0.35 };
+                                theme::accent().opacity(depth_alpha)
                             };
                             window.paint_path(path, color);
                         }
                     }
                 }
 
-                // 2. Nodes
-                for (slug, _node) in &nodes_map {
-                    if let Some(&(x, y)) = positions_map.get(slug) {
-                        let (sx, sy) = project(x, y);
-                        let center = point(px(sx), px(sy));
-
-                        let is_selected = sel_slug.as_deref() == Some(slug.as_str());
-                        let is_hovered = hov_slug.as_deref() == Some(slug.as_str());
-                        let is_orphan = orphaned_set.contains(slug);
-                        let has_dead_link = dead_sources_set.contains(slug);
-
-                        let radius = px(if is_selected {
-                            9.0
-                        } else if is_hovered {
-                            8.0
-                        } else {
-                            6.5
-                        });
-
-                        if is_selected || is_hovered {
-                            let glow_r = radius + px(if is_selected { 6.0 } else { 4.5 });
-                            let glow_bounds = Bounds {
-                                origin: point(center.x - glow_r, center.y - glow_r),
-                                size: size(glow_r * 2.0, glow_r * 2.0),
-                            };
-                            window.paint_quad(
-                                fill(
-                                    glow_bounds,
-                                    theme::accent().opacity(if is_selected { 0.30 } else { 0.20 }),
-                                )
-                                .corner_radii(glow_r),
-                            );
+                // Radial Core Tether for Selected or Hovered Note
+                if let Some(target_slug) = hov_slug.as_ref().or(sel_slug.as_ref()) {
+                    if let Some(tnode) = proj_map.get(target_slug) {
+                        let mut builder = PathBuilder::stroke(px(1.8));
+                        builder.move_to(point(px(cx_pt), px(cy_pt)));
+                        builder.line_to(point(px(tnode.sx), px(tnode.sy)));
+                        if let Ok(path) = builder.build() {
+                            window.paint_path(path, theme::accent().opacity(0.75));
                         }
-
-                        let node_bounds = Bounds {
-                            origin: point(center.x - radius, center.y - radius),
-                            size: size(radius * 2.0, radius * 2.0),
-                        };
-
-                        painted_hits.push((slug.clone(), node_bounds, sx, sy));
-
-                        let node_bg = if is_selected || is_hovered {
-                            theme::accent()
-                        } else if has_dead_link {
-                            theme::error().into()
-                        } else if is_orphan {
-                            theme::warning().into()
-                        } else {
-                            theme::info().into()
-                        };
-
-                        window.paint_quad(fill(node_bounds, node_bg).corner_radii(radius));
                     }
+                }
+
+                // 5. Depth-Sorted 3D Note Orbs with Metallic Specular Pinpoint and Rims
+                let mut sorted_nodes: Vec<&ProjNode> = proj_map.values().collect();
+                sorted_nodes.sort_by(|a, b| a.z.partial_cmp(&b.z).unwrap_or(std::cmp::Ordering::Equal));
+
+                let mut painted_hits = Vec::new();
+
+                for node in sorted_nodes {
+                    let is_selected = sel_slug.as_deref() == Some(node.slug.as_str());
+                    let is_hovered = hov_slug.as_deref() == Some(node.slug.as_str());
+
+                    let base_r = if is_selected {
+                        10.5
+                    } else if is_hovered {
+                        9.0
+                    } else if node.is_orphan || node.has_dead_link {
+                        6.5
+                    } else {
+                        7.5
+                    };
+                    let radius = px(base_r * node.scale);
+                    let center = point(px(node.sx), px(node.sy));
+                    let alpha = if node.z < 0.0 { 0.40 } else { 0.95 };
+
+                    // Outer Selection / Hover Glow
+                    if is_selected || is_hovered {
+                        let glow_r = radius + px(if is_selected { 6.5 } else { 4.5 });
+                        let glow_bounds = Bounds {
+                            origin: point(center.x - glow_r, center.y - glow_r),
+                            size: size(glow_r * 2.0, glow_r * 2.0),
+                        };
+                        window.paint_quad(
+                            fill(
+                                glow_bounds,
+                                theme::accent().opacity(if is_selected { 0.35 } else { 0.22 }),
+                            )
+                            .corner_radii(glow_r),
+                        );
+                    }
+
+                    // Invariant Halo Ring
+                    if node.is_invariant_linked {
+                        let inv_r = radius + px(3.0);
+                        let inv_bounds = Bounds {
+                            origin: point(center.x - inv_r, center.y - inv_r),
+                            size: size(inv_r * 2.0, inv_r * 2.0),
+                        };
+                        window.paint_quad(
+                            fill(inv_bounds, theme::halo_reasoning().opacity(0.35 * alpha))
+                                .corner_radii(inv_r),
+                        );
+                    }
+
+                    // Obsidian Rim
+                    let rim_r = radius + px(1.2);
+                    let rim_bounds = Bounds {
+                        origin: point(center.x - rim_r, center.y - rim_r),
+                        size: size(rim_r * 2.0, rim_r * 2.0),
+                    };
+                    window.paint_quad(
+                        fill(rim_bounds, theme::bg_surface().opacity(0.85 * alpha)).corner_radii(rim_r),
+                    );
+
+                    // Node Core Orb Quad
+                    let node_bounds = Bounds {
+                        origin: point(center.x - radius, center.y - radius),
+                        size: size(radius * 2.0, radius * 2.0),
+                    };
+
+                    painted_hits.push((
+                        node.slug.clone(),
+                        node_bounds,
+                        node.sx,
+                        node.sy,
+                        node.theta,
+                        node.phi,
+                    ));
+
+                    let node_bg = if is_selected || is_hovered {
+                        theme::accent().opacity(alpha)
+                    } else if node.has_dead_link {
+                        theme::error().opacity(alpha)
+                    } else if node.is_orphan {
+                        theme::warning().opacity(alpha)
+                    } else {
+                        theme::info().opacity(alpha)
+                    };
+
+                    window.paint_quad(fill(node_bounds, node_bg).corner_radii(radius));
+
+                    // Specular Center Pinpoint
+                    let spec_r = radius * 0.35;
+                    let spec_bounds = Bounds {
+                        origin: point(center.x - radius * 0.25, center.y - radius * 0.25),
+                        size: size(spec_r, spec_r),
+                    };
+                    window.paint_quad(
+                        fill(spec_bounds, gpui::rgb(0xffffff).opacity(0.60 * alpha)).corner_radii(spec_r),
+                    );
                 }
 
                 if let Ok(mut cell) = hit_positions_for_paint.try_borrow_mut() {
@@ -969,8 +1236,8 @@ impl super::Chamber {
                         let dy = f32::from(ev.position.y - last_pos.y);
                         if this.nucleus_graph_drag_moved || (dx * dx + dy * dy) > 4.0 {
                             this.nucleus_graph_drag_moved = true;
-                            this.nucleus_graph_pan.0 += dx;
-                            this.nucleus_graph_pan.1 += dy;
+                            this.nucleus_graph_yaw += dx * 0.006;
+                            this.nucleus_graph_pitch = (this.nucleus_graph_pitch + dy * 0.006).clamp(-1.40, 1.40);
                             this.nucleus_graph_last_mouse = Some(ev.position);
                             cx.notify();
                         }
@@ -983,7 +1250,7 @@ impl super::Chamber {
                     let my = f32::from(ev.position.y);
                     let mut closest_hover: Option<String> = None;
                     let mut min_dist_sq = 18.0 * 18.0;
-                    for (slug, _bounds, sx, sy) in hit_positions_for_move.borrow().iter() {
+                    for (slug, _bounds, sx, sy, _theta, _phi) in hit_positions_for_move.borrow().iter() {
                         let dx = *sx - mx;
                         let dy = *sy - my;
                         let d_sq = dx * dx + dy * dy;
@@ -1007,21 +1274,24 @@ impl super::Chamber {
                         let click_x = f32::from(click_pos.x);
                         let click_y = f32::from(click_pos.y);
 
-                        let mut closest_slug: Option<String> = None;
+                        let mut closest_node: Option<(String, f32, f32)> = None;
                         let mut min_dist_sq = 28.0 * 28.0;
 
-                        for (slug, _bounds, sx, sy) in hit_positions_for_up.borrow().iter() {
+                        for (slug, _bounds, sx, sy, theta, phi) in hit_positions_for_up.borrow().iter() {
                             let dx = *sx - click_x;
                             let dy = *sy - click_y;
                             let d_sq = dx * dx + dy * dy;
                             if d_sq < min_dist_sq {
                                 min_dist_sq = d_sq;
-                                closest_slug = Some(slug.clone());
+                                closest_node = Some((slug.clone(), *theta, *phi));
                             }
                         }
 
-                        if let Some(slug) = closest_slug {
+                        if let Some((slug, theta, phi)) = closest_node {
                             this.visualizer_selected_note = Some(slug);
+                            let (yaw, pitch) = focus_angles_for_spherical(theta, phi);
+                            this.nucleus_graph_yaw = yaw;
+                            this.nucleus_graph_pitch = pitch;
                             cx.notify();
                         }
                     }
@@ -1217,14 +1487,15 @@ impl super::Chamber {
         let note_chips_dock = v_flex()
             .id("nucleus-notes-dock-scroll")
             .w_full()
-            .max_h(px(140.0))
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
             .child(
                 h_flex()
                     .id("nucleus-notes-dock")
                     .w_full()
                     .min_w_0()
-                    .overflow_hidden()
+                    .flex_shrink_0()
                     .flex_wrap()
                     .px_3()
                     .py_2()
@@ -1235,6 +1506,7 @@ impl super::Chamber {
                         let is_sel = selected_note.as_deref() == Some(&slug);
                         let is_orphan = cached.orphaned_notes.contains(&slug);
                         let has_dead_link = dead_sources.contains(&slug);
+                        let sphere_node_opt = sphere_map_for_chips.get(&slug).cloned();
 
                         let chip_bg = if is_sel {
                             theme::tab_bar_bg()
@@ -1304,6 +1576,11 @@ impl super::Chamber {
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.visualizer_selected_note = Some(slug.clone());
+                                if let Some(ref sp) = sphere_node_opt {
+                                    let (yaw, pitch) = focus_angles_for_spherical(sp.theta, sp.phi);
+                                    this.nucleus_graph_yaw = yaw;
+                                    this.nucleus_graph_pitch = pitch;
+                                }
                                 cx.notify();
                             }))
                     }))
@@ -1557,7 +1834,8 @@ impl super::Chamber {
                     div()
                         .id(SharedString::from(format!("nucleus-preview-{}", n.slug)))
                         .w_full()
-                        .max_h(px(100.0))
+                        .flex_1()
+                        .min_h_0()
                         .overflow_y_scroll()
                         .p_2()
                         .rounded_md()
@@ -1570,15 +1848,47 @@ impl super::Chamber {
                 )
         });
 
+        let notes_dock_group = v_flex()
+            .size_full()
+            .overflow_hidden()
+            .child(filter_pills)
+            .child(note_chips_dock);
+
+        let resizable_body = v_resizable(SharedString::from("nucleus-graph-v-split"))
+            .child(
+                resizable_panel()
+                    .input_size(gpui_component::Size::Size(px(320.0)))
+                    .min_size(px(160.0))
+                    .child(canvas_container),
+            )
+            .child(
+                resizable_panel()
+                    .input_size(gpui_component::Size::Size(px(130.0)))
+                    .min_size(px(70.0))
+                    .child(notes_dock_group),
+            )
+            .when_some(selected_note_panel, |resizable, panel| {
+                resizable.child(
+                    resizable_panel()
+                        .input_size(gpui_component::Size::Size(px(220.0)))
+                        .min_size(px(100.0))
+                        .child(panel.size_full().min_h_0().overflow_hidden()),
+                )
+            });
+
         v_flex()
             .id("nucleus-graph-container")
             .size_full()
             .bg(theme::canvas_base())
             .child(header)
-            .child(canvas_container)
-            .child(filter_pills)
-            .child(note_chips_dock)
-            .children(selected_note_panel)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(resizable_body),
+            )
             .into_any_element()
     }
 }
@@ -1790,5 +2100,48 @@ mod tests {
             nucleus_health_badge_state(0, 0),
             NucleusHealthBadgeState::Healthy
         );
+    }
+
+    #[test]
+    fn test_compute_nucleus_sphere_layout_dual_shell_placement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nucleus_dir = tmp.path().join(".hadron/nucleus");
+        let notes_dir = nucleus_dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(
+            nucleus_dir.join("index.md"),
+            "- [healthy-note](notes/healthy-note.md) — Healthy\n",
+        )
+        .unwrap();
+        std::fs::write(
+            notes_dir.join("healthy-note.md"),
+            "---\nname: healthy-note\ndescription: Healthy\n---\nHealthy note content.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            notes_dir.join("orphan-note.md"),
+            "---\nname: orphan-note\ndescription: Orphan\n---\nUnindexed orphan.\n",
+        )
+        .unwrap();
+
+        let cached = CachedNucleusGraph::build(tmp.path());
+        let layout = compute_nucleus_sphere_layout(&cached);
+        assert_eq!(layout.len(), 2);
+
+        let healthy_sp = layout.iter().find(|n| n.slug == "healthy-note").unwrap();
+        let orphan_sp = layout.iter().find(|n| n.slug == "orphan-note").unwrap();
+
+        assert_eq!(healthy_sp.shell_mult, 1.0);
+        assert_eq!(orphan_sp.shell_mult, 1.28);
+        assert!(orphan_sp.is_orphan);
+    }
+
+    #[test]
+    fn test_spherical_camera_snap_angles() {
+        let theta = 0.25;
+        let phi = 1.20;
+        let (yaw, pitch) = focus_angles_for_spherical(theta, phi);
+        assert!(yaw >= 0.0 && yaw <= 2.0 * PI);
+        assert_eq!(pitch, theta);
     }
 }
