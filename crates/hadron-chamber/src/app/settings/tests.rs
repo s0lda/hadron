@@ -528,18 +528,18 @@ fn test_schedule_registry_caching() {
     assert_eq!(reg1.jobs.len(), 0);
 
     let mut reg_new = hadron_lattice::ScheduleRegistry::default();
-    reg_new.add_job(hadron_lattice::ScheduledJob {
+    reg_new.jobs.push(hadron_lattice::ScheduledJob {
         id: "test-job".to_string(),
         name: "Test Job".to_string(),
-        cron: "0 * * * *".to_string(),
-        prompt: "Run test".to_string(),
-        target: "all".to_string(),
-        enabled: true,
         task_id: "test-task".to_string(),
-        missed_policy: hadron_lattice::MissedWindowPolicy::CatchUpOnce,
+        cron: "0 * * * *".to_string(),
+        target: "@orchestrator".to_string(),
+        enabled: true,
+        missed_policy: hadron_lattice::MissedPolicy::Run,
         last_run_at: None,
-        last_eval_at: None,
-        last_status: None,
+        last_skipped_at: None,
+        overdue_warned_at: None,
+        missing_task_warned: false,
     });
     let _ = reg_new.save(root);
 
