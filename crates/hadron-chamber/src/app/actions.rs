@@ -2698,6 +2698,7 @@ impl Chamber {
         job.last_run_at = Some(chrono::Utc::now());
         job.overdue_warned_at = None;
         let _ = reg.save(repo_root);
+        self.overdue_schedule_jobs.retain(|(jid, _, _, _)| jid != id);
 
         self.post_chat_message(Actor::Gluon, body, cx);
     }
@@ -2720,6 +2721,7 @@ impl Chamber {
         job.last_skipped_at = Some(chrono::Utc::now());
         job.overdue_warned_at = None;
         let _ = reg.save(repo_root);
+        self.overdue_schedule_jobs.retain(|(jid, _, _, _)| jid != id);
 
         self.post_chat_message(
             Actor::Gluon,
@@ -4037,6 +4039,8 @@ impl Chamber {
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
         match crate::vcs::init_repository(&repo_root) {
             Ok(msg) => {
+                self.git_ready = true;
+                self.git_ready_verified = true;
                 self.git_branches = Some(crate::vcs::list_branches(&repo_root, "main"));
                 self.git_remote_branches =
                     Some(crate::vcs::list_remote_branches(&repo_root, "main"));

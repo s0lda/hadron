@@ -32,8 +32,7 @@ impl super::Chamber {
     /// "what did this branch change?" and "who else has a checkout" are answerable
     /// without leaving the chamber.
     pub(super) fn git_tab_content(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let repo_root = crate::vcs::repo_root_of(&self.path);
-        if !crate::vcs::is_git_repo(repo_root) {
+        if !self.git_ready && self.git_branches.as_ref().is_none_or(|b| b.is_empty()) {
             return v_flex()
                 .size_full()
                 .items_center()
@@ -84,6 +83,8 @@ impl super::Chamber {
                                         Ok(msg) => {
                                             this.post_chat_message(Actor::Gluon, msg, cx);
                                             let repo = crate::vcs::repo_root_of(&this.path).to_path_buf();
+                                            this.git_ready = true;
+                                            this.git_ready_verified = true;
                                             this.git_branches = Some(crate::vcs::list_branches(&repo, "main"));
                                             this.git_remote_branches =
                                                 Some(crate::vcs::list_remote_branches(&repo, "main"));

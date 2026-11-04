@@ -215,15 +215,6 @@ impl super::Chamber {
         let (quark_id, breakdown) = self
             .last_prompt_cost
             .clone()
-            .or_else(|| {
-                if crate::wsl::is_wsl_unc_path(&self.path) {
-                    return None;
-                }
-                let cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(&self.path);
-                let roster_ids: Vec<String> =
-                    self.view.roster.iter().map(|r| r.id.clone()).collect();
-                hadron_lattice::prompt_cost::load_latest(&cost_dir, &roster_ids)
-            })
             .map(|(id, b)| (Some(id), b))
             .unwrap_or_else(|| {
                 (
@@ -1127,108 +1118,101 @@ impl super::Chamber {
 
     /// Renders actionable banner pills for overdue scheduled tasks requiring confirmation (`MissedPolicy::Ask`).
     pub(super) fn overdue_schedule_banners(&self, cx: &mut Context<Self>) -> Vec<impl IntoElement> {
+        if self.overdue_schedule_jobs.is_empty() {
+            return Vec::new();
+        }
         let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let reg = match hadron_lattice::ScheduleRegistry::load(&repo_root) {
-            Ok(r) => r,
-            Err(_) => return Vec::new(),
-        };
+        let mut banners = Vec::with_capacity(self.overdue_schedule_jobs.len());
 
-        let now = chrono::Utc::now();
-        let evaluations = reg.evaluate_due_jobs(&repo_root, now, 3600);
-        let mut banners = Vec::new();
+        for (job_id, job_name, job_task, due_formatted) in &self.overdue_schedule_jobs {
+            let job_id = job_id.clone();
+            let job_name = job_name.clone();
+            let job_task = job_task.clone();
+            let due_formatted = due_formatted.clone();
 
-        for (idx, status) in evaluations {
-            if let hadron_lattice::DueStatus::OverdueAsk { due_at } = status {
-                let job = &reg.jobs[idx];
-                let job_id = job.id.clone();
-                let job_name = job.name.clone();
-                let job_task = job.task_id.clone();
-                let due_formatted = due_at.format("%Y-%m-%d %H:%M").to_string();
+            let run_id = job_id.clone();
+            let run_root = repo_root.clone();
+            let skip_id = job_id.clone();
+            let skip_root = repo_root.clone();
 
-                let run_id = job_id.clone();
-                let run_root = repo_root.clone();
-                let skip_id = job_id.clone();
-                let skip_root = repo_root.clone();
+            let banner = h_flex()
+                .id(format!("overdue-schedule-banner-{}", job_id))
+                .w_full()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .px_3()
+                .py_2()
+                .mb_2()
+                .rounded_xl()
+                .bg(theme::bg_elevated())
+                .border_1()
+                .border_color(theme::warning().opacity(0.35))
+                .shadow_sm()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .min_w_0()
+                        .child(
+                            Icon::new(IconName::Info)
+                                .xsmall()
+                                .text_color(theme::warning()),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme::text())
+                                .child(format!(
+                                    "Scheduled task '{}' (`{}`) is overdue (due {} UTC)",
+                                    job_name, job_task, due_formatted
+                                )),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_shrink_0()
+                        .child(
+                            h_flex()
+                                .id(format!("run-scheduled-btn-{}", job_id))
+                                .items_center()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::accent())
+                                .text_xs()
+                                .text_color(theme::text())
+                                .hover(|s| s.opacity(0.85))
+                                .cursor_pointer()
+                                .child("Run Now")
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.run_scheduled_job(&run_id, &run_root, cx);
+                                })),
+                        )
+                        .child(
+                            h_flex()
+                                .id(format!("skip-scheduled-btn-{}", job_id))
+                                .items_center()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(theme::glass_card())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
+                                .cursor_pointer()
+                                .child("Skip")
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.skip_scheduled_job(&skip_id, &skip_root, cx);
+                                })),
+                        ),
+                );
 
-                let banner = h_flex()
-                    .id(format!("overdue-schedule-banner-{}", job_id))
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .px_3()
-                    .py_2()
-                    .mb_2()
-                    .rounded_xl()
-                    .bg(theme::bg_elevated())
-                    .border_1()
-                    .border_color(theme::warning().opacity(0.35))
-                    .shadow_sm()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .child(
-                                Icon::new(IconName::Info)
-                                    .xsmall()
-                                    .text_color(theme::warning()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme::text())
-                                    .child(format!(
-                                        "Scheduled task '{}' (`{}`) is overdue (due {} UTC)",
-                                        job_name, job_task, due_formatted
-                                    )),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .flex_shrink_0()
-                            .child(
-                                h_flex()
-                                    .id(format!("run-scheduled-btn-{}", job_id))
-                                    .items_center()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(theme::accent())
-                                    .text_xs()
-                                    .text_color(theme::text())
-                                    .hover(|s| s.opacity(0.85))
-                                    .cursor_pointer()
-                                    .child("Run Now")
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        this.run_scheduled_job(&run_id, &run_root, cx);
-                                    })),
-                            )
-                            .child(
-                                h_flex()
-                                    .id(format!("skip-scheduled-btn-{}", job_id))
-                                    .items_center()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded_md()
-                                    .bg(theme::glass_card())
-                                    .border_1()
-                                    .border_color(theme::glass_highlight())
-                                    .text_xs()
-                                    .text_color(theme::text_muted())
-                                    .hover(|s| s.text_color(theme::text()).bg(theme::glass_highlight()))
-                                    .cursor_pointer()
-                                    .child("Skip")
-                                    .on_click(cx.listener(move |this, _, _window, cx| {
-                                        this.skip_scheduled_job(&skip_id, &skip_root, cx);
-                                    })),
-                            ),
-                    );
-
-                banners.push(banner);
-            }
+            banners.push(banner);
         }
 
         banners
@@ -1236,21 +1220,15 @@ impl super::Chamber {
 
     /// Render the interactive NUX Onboarding & Readiness Card when the chat history is empty.
     pub(super) fn render_onboarding_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo_root = crate::vcs::repo_root_of(&self.path);
-        let git_ready = self
-            .git_branches
-            .as_ref()
-            .is_some_and(|b| !b.is_empty())
-            || (crate::vcs::is_git_repo(repo_root) && crate::vcs::has_commits(repo_root));
+        let git_ready =
+            self.git_ready || self.git_branches.as_ref().is_some_and(|b| !b.is_empty());
         let resolved = resolve_team(&self.team, &self.global);
         let readiness = compute_onboarding_readiness(git_ready, &resolved);
 
         let git_row = if readiness.git_ready {
-            h_flex()
+            v_flex()
                 .id("nux-git-ready-row")
                 .w_full()
-                .items_center()
-                .justify_between()
                 .p_3()
                 .rounded_lg()
                 .bg(theme::bg_elevated())
@@ -1258,8 +1236,10 @@ impl super::Chamber {
                 .border_color(theme::success().opacity(0.35))
                 .child(
                     h_flex()
-                        .items_center()
+                        .w_full()
+                        .items_start()
                         .gap_2p5()
+                        .min_w_0()
                         .child(
                             Icon::new(IconName::CircleCheck)
                                 .small()
@@ -1267,6 +1247,8 @@ impl super::Chamber {
                         )
                         .child(
                             v_flex()
+                                .flex_1()
+                                .min_w_0()
                                 .gap_0p5()
                                 .child(
                                     div()
@@ -1286,12 +1268,10 @@ impl super::Chamber {
                         ),
                 )
         } else {
-            h_flex()
+            v_flex()
                 .id("nux-git-missing-row")
                 .w_full()
-                .items_center()
-                .justify_between()
-                .gap_3()
+                .gap_2p5()
                 .p_3()
                 .rounded_lg()
                 .bg(theme::bg_elevated())
@@ -1299,7 +1279,8 @@ impl super::Chamber {
                 .border_color(theme::warning().opacity(0.45))
                 .child(
                     h_flex()
-                        .items_center()
+                        .w_full()
+                        .items_start()
                         .gap_2p5()
                         .min_w_0()
                         .child(
@@ -1309,6 +1290,8 @@ impl super::Chamber {
                         )
                         .child(
                             v_flex()
+                                .flex_1()
+                                .min_w_0()
                                 .gap_0p5()
                                 .child(
                                     div()
@@ -1329,9 +1312,11 @@ impl super::Chamber {
                 )
                 .child(
                     h_flex()
+                        .w_full()
+                        .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .flex_shrink_0()
+                        .pl_6()
                         .child(
                             h_flex()
                                 .id("nux-init-git-btn")
@@ -1374,12 +1359,10 @@ impl super::Chamber {
 
         let swarm_row = if let Some((orch_id, vendor, model)) = readiness.orchestrator_badge {
             let orch_id_click = orch_id.clone();
-            h_flex()
+            v_flex()
                 .id("nux-swarm-ready-row")
                 .w_full()
-                .items_center()
-                .justify_between()
-                .gap_3()
+                .gap_2p5()
                 .p_3()
                 .rounded_lg()
                 .bg(theme::bg_elevated())
@@ -1387,7 +1370,8 @@ impl super::Chamber {
                 .border_color(theme::success().opacity(0.35))
                 .child(
                     h_flex()
-                        .items_center()
+                        .w_full()
+                        .items_start()
                         .gap_2p5()
                         .min_w_0()
                         .child(
@@ -1397,6 +1381,8 @@ impl super::Chamber {
                         )
                         .child(
                             v_flex()
+                                .flex_1()
+                                .min_w_0()
                                 .gap_0p5()
                                 .child(
                                     div()
@@ -1421,9 +1407,11 @@ impl super::Chamber {
                 )
                 .child(
                     h_flex()
+                        .w_full()
+                        .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .flex_shrink_0()
+                        .pl_6()
                         .child(
                             h_flex()
                                 .id("nux-orchestrator-model-badge")
@@ -1466,12 +1454,10 @@ impl super::Chamber {
                         ),
                 )
         } else {
-            h_flex()
+            v_flex()
                 .id("nux-swarm-missing-row")
                 .w_full()
-                .items_center()
-                .justify_between()
-                .gap_3()
+                .gap_2p5()
                 .p_3()
                 .rounded_lg()
                 .bg(theme::bg_elevated())
@@ -1479,7 +1465,8 @@ impl super::Chamber {
                 .border_color(theme::warning().opacity(0.45))
                 .child(
                     h_flex()
-                        .items_center()
+                        .w_full()
+                        .items_start()
                         .gap_2p5()
                         .min_w_0()
                         .child(
@@ -1489,6 +1476,8 @@ impl super::Chamber {
                         )
                         .child(
                             v_flex()
+                                .flex_1()
+                                .min_w_0()
                                 .gap_0p5()
                                 .child(
                                     div()
@@ -1509,9 +1498,11 @@ impl super::Chamber {
                 )
                 .child(
                     h_flex()
+                        .w_full()
+                        .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .flex_shrink_0()
+                        .pl_6()
                         .child(
                             h_flex()
                                 .id("nux-auto-detect-quarks-btn")

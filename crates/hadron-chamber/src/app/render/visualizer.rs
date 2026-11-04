@@ -1974,14 +1974,16 @@ impl super::Chamber {
 
             // Phase 2: Check metadata fingerprints in background and rebuild only stale graphs
             let repo_for_revalidate = repo_root.clone();
-            let (rebuilt_crate, rebuilt_nucleus) = cx
+            let (rebuilt_crate, rebuilt_nucleus, nucleus_fp) = cx
                 .background_executor()
                 .spawn(async move {
-                    disk_cache.revalidate(
+                    let (cg, ng) = disk_cache.revalidate(
                         &repo_for_revalidate,
                         !had_crate_in_mem,
                         !had_nucleus_in_mem,
-                    )
+                    );
+                    let fp = compute_nucleus_graph_fingerprint(&repo_for_revalidate);
+                    (cg, ng, fp)
                 })
                 .await;
 
@@ -1992,7 +1994,7 @@ impl super::Chamber {
                 if let Some(ng) = rebuilt_nucleus {
                     *chamber.cached_nucleus_graph.borrow_mut() = Some(ng);
                 }
-                chamber.cached_nucleus_fingerprint = compute_nucleus_graph_fingerprint(&repo_root);
+                chamber.cached_nucleus_fingerprint = nucleus_fp;
                 chamber.cached_crate_graph_loading.set(false);
                 chamber.cached_nucleus_graph_loading.set(false);
                 cx.notify();

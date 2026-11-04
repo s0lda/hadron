@@ -711,6 +711,9 @@ struct Chamber {
     pub(super) cached_active_plan_content: Option<(String, String)>,
     pub(super) cached_nucleus_docs: (Option<String>, Option<String>, Option<String>),
     pub(super) cached_nucleus_fingerprint: u64,
+    pub(super) git_ready: bool,
+    pub(super) git_ready_verified: bool,
+    pub(super) overdue_schedule_jobs: Vec<(String, String, String, String)>,
     pub(super) visualizer_last_tick: Option<std::time::Instant>,
     pub(super) visualizer_hit_nodes: std::rc::Rc<std::cell::RefCell<Vec<(String, f32, f32)>>>,
 }
@@ -1448,6 +1451,7 @@ impl Chamber {
                 };
                 let roster_ids: Vec<String> =
                     chamber.view.roster.iter().map(|r| r.id.clone()).collect();
+                let verified_git_ready = chamber.git_ready && chamber.git_ready_verified;
                 Some((
                     chamber.path.clone(),
                     chamber.repo_team_path(),
@@ -1460,6 +1464,7 @@ impl Chamber {
                     prev_fp,
                     chamber.file_tree_paths.is_empty(),
                     chamber.last_plan_path.clone(),
+                    verified_git_ready,
                 ))
             }) {
                 Ok(Some(s)) => s,
@@ -1491,6 +1496,7 @@ impl Chamber {
                         state.6 == RightRailTab::Git,
                         matches!(state.6, RightRailTab::Git | RightRailTab::Mission),
                         state.7,
+                        state.11,
                         state.8.as_deref(),
                         state.10.as_deref(),
                     )
@@ -1642,13 +1648,32 @@ impl Chamber {
             .collect();
         let delegations = delegation::parse_delegations(&events, &alias_map);
         let audio_manager = audio::AudioTelemetryManager::new(prefs.audio.clone());
-        let rpc_endpoint = crate::rpc_client::active_endpoint(&path);
+        let rpc_endpoint = if workspace_mode == WorkspaceMode::Selector || is_wsl {
+            None
+        } else {
+            crate::rpc_client::active_endpoint(&path)
+        };
         let last_prompt_cost = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             None
         } else {
             let roster_ids: Vec<String> = view.roster.iter().map(|r| r.id.clone()).collect();
             let cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(&path);
             hadron_lattice::prompt_cost::load_latest(&cost_dir, &roster_ids)
+        };
+        let (git_ready, git_ready_verified) = if workspace_mode == WorkspaceMode::Selector {
+            (false, true)
+        } else if is_wsl {
+            (true, false)
+        } else {
+            (
+                crate::vcs::is_git_repo(&repo_root) && crate::vcs::has_commits(&repo_root),
+                true,
+            )
+        };
+        let overdue_schedule_jobs = if workspace_mode == WorkspaceMode::Selector || is_wsl {
+            Vec::new()
+        } else {
+            reload::gather_overdue_schedule_jobs(&repo_root)
         };
 
         let mut chamber = Chamber {
@@ -1939,13 +1964,18 @@ impl Chamber {
             cached_active_plan_content: None,
             cached_nucleus_docs,
             cached_nucleus_fingerprint,
+            git_ready,
+            git_ready_verified,
+            overdue_schedule_jobs,
             visualizer_last_tick: None,
             visualizer_hit_nodes: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         };
         if workspace_mode != WorkspaceMode::Selector && !is_wsl {
             chamber.update_active_plan();
         }
-        if workspace_mode != WorkspaceMode::Selector {
+        if workspace_mode != WorkspaceMode::Selector
+            && chamber.right_rail_tab == RightRailTab::Visualizer
+        {
             chamber.warm_visualizer_graphs(cx);
         }
         if workspace_mode != WorkspaceMode::Selector && is_wsl {

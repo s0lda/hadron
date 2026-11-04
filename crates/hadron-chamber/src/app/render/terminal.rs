@@ -75,6 +75,8 @@ impl super::Chamber {
                             .detach();
                         } else if this.right_rail_tab == RightRailTab::Mission {
                             this.refresh_mission_plan(cx);
+                        } else if this.right_rail_tab == RightRailTab::Visualizer {
+                            this.warm_visualizer_graphs(cx);
                         }
                         cx.notify();
                     }))

@@ -4,6 +4,8 @@ use super::*;
 #[derive(Debug, Clone)]
 pub(super) struct WorkspaceScan {
     pub(super) files: Vec<(String, bool)>,
+    pub(super) git_ready: bool,
+    pub(super) overdue_schedule_jobs: Vec<(String, String, String, String)>,
     pub(super) git_statuses: std::collections::HashMap<String, crate::vcs::GitStatus>,
     pub(super) working_diff: Option<Vec<crate::vcs::FileDiff>>,
     pub(super) git_branch_fingerprint: Option<String>,
@@ -19,17 +21,56 @@ pub(super) struct WorkspaceScan {
     pub(super) nucleus_fingerprint: u64,
 }
 
+pub(super) fn gather_overdue_schedule_jobs(
+    repo_root: &std::path::Path,
+) -> Vec<(String, String, String, String)> {
+    if !repo_root
+        .join(".hadron")
+        .join("schedules")
+        .join("schedules.json")
+        .is_file()
+    {
+        return Vec::new();
+    }
+    let Ok(reg) = hadron_lattice::ScheduleRegistry::load(repo_root) else {
+        return Vec::new();
+    };
+    let now = chrono::Utc::now();
+    let evaluations = reg.evaluate_due_jobs(repo_root, now, 3600);
+    let mut jobs = Vec::new();
+    for (idx, status) in evaluations {
+        if let hadron_lattice::DueStatus::OverdueAsk { due_at } = status {
+            let job = &reg.jobs[idx];
+            jobs.push((
+                job.id.clone(),
+                job.name.clone(),
+                job.task_id.clone(),
+                due_at.format("%Y-%m-%d %H:%M").to_string(),
+            ));
+        }
+    }
+    jobs
+}
+
 impl WorkspaceScan {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn gather(
         repo_root: &std::path::Path,
         file_tree_expanded: &std::collections::HashSet<String>,
         scan_diff: bool,
         scan_git: bool,
         scan_health: bool,
+        verified_git_ready: bool,
         prev_branch_fingerprint: Option<&str>,
         active_plan_hint: Option<&str>,
     ) -> Option<Self> {
         let files = crate::sys::list_workspace_files(repo_root, file_tree_expanded);
+        let git_ready = if verified_git_ready && repo_root.join(".git").exists() {
+            true
+        } else {
+            crate::vcs::is_git_repo(repo_root) && crate::vcs::has_commits(repo_root)
+        };
+        let overdue_schedule_jobs = gather_overdue_schedule_jobs(repo_root);
         let git_statuses = crate::vcs::get_git_statuses(repo_root);
         let working_diff = if scan_diff {
             crate::vcs::working_diff(repo_root)
@@ -79,6 +120,8 @@ impl WorkspaceScan {
             crate::app::render::visualizer::compute_nucleus_graph_fingerprint(repo_root);
         Some(Self {
             files,
+            git_ready,
+            overdue_schedule_jobs,
             git_statuses,
             working_diff,
             git_branch_fingerprint,
@@ -127,6 +170,7 @@ impl FieldPoll {
         scan_diff: bool,
         scan_git: bool,
         scan_health: bool,
+        verified_git_ready: bool,
         prev_branch_fingerprint: Option<&str>,
         active_plan_hint: Option<&str>,
     ) -> Self {
@@ -165,6 +209,7 @@ impl FieldPoll {
                 scan_diff,
                 scan_git,
                 scan_health,
+                verified_git_ready,
                 prev_branch_fingerprint,
                 active_plan_hint,
             )
@@ -471,19 +516,33 @@ impl super::Chamber {
                 if scan.nucleus_docs != self.cached_nucleus_docs
                     || scan.nucleus_fingerprint != self.cached_nucleus_fingerprint
                 {
+                    let was_initial = self.cached_nucleus_fingerprint == 0
+                        && self.cached_nucleus_docs == (None, None, None);
                     self.cached_nucleus_docs = scan.nucleus_docs;
                     self.cached_nucleus_fingerprint = scan.nucleus_fingerprint;
-                    self.refresh_nucleus_graph(cx);
-                    let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                    self.repo_health_report =
-                        Some(hadron_gatekeeper::RepoMonitor::check_repo(&root));
+                    if !was_initial && self.right_rail_tab == RightRailTab::Visualizer {
+                        self.refresh_nucleus_graph(cx);
+                    }
                     changed = true;
                 }
                 if scan.files != self.file_tree_paths {
                     // Gitignored entries included, mirroring `new` — see the note there.
                     *self.completion_files.borrow_mut() = scan.files.clone();
                     self.file_tree_paths = scan.files;
-                    self.warm_visualizer_graphs(cx);
+                    if self.right_rail_tab == RightRailTab::Visualizer {
+                        self.warm_visualizer_graphs(cx);
+                    }
+                    changed = true;
+                }
+
+                self.git_ready_verified = true;
+                if scan.git_ready != self.git_ready {
+                    self.git_ready = scan.git_ready;
+                    changed = true;
+                }
+
+                if scan.overdue_schedule_jobs != self.overdue_schedule_jobs {
+                    self.overdue_schedule_jobs = scan.overdue_schedule_jobs;
                     changed = true;
                 }
 
@@ -1545,5 +1604,12 @@ mod tests {
             plans.iter().any(|(_, path)| path.contains("2026-10-29-quark-plan.md")),
             "expected worktree plan to be scanned, got: {plans:?}"
         );
+    }
+
+    #[test]
+    fn test_gather_overdue_schedule_jobs_fast_returns_empty_when_unscheduled() {
+        let temp = tempfile::tempdir().unwrap();
+        let jobs = gather_overdue_schedule_jobs(temp.path());
+        assert!(jobs.is_empty());
     }
 }
