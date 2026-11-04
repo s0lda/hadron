@@ -275,7 +275,7 @@ struct Chamber {
     stats_window: StatsWindow,
     /// Projected messages of every archived session (`sessions/*/field.jsonl`), the
     /// history the wider [`StatsWindow`]s fold in. Loaded once at startup and rebuilt by
-    /// [`Self::reload_archives`].
+    /// [`Self::reload_archives_in_background`].
     archived_messages: Vec<MessageRow>,
     /// The archived sessions the app menu's `Sessions` submenu offers to `/resume`,
     /// newest first. Cached rather than listed on menu-open: [`crate::model::list_sessions`]
@@ -1591,7 +1591,7 @@ impl Chamber {
 
         // Load the archived sessions once — the history the wider Stats windows fold in,
         // and the rows the app menu's `Sessions` submenu offers. Rebuilt by
-        // `Self::reload_archives` after `/clear` or `/resume` writes a new archive.
+        // `Self::reload_archives_in_background` after `/clear` or `/resume` writes a new archive.
         let sessions_dir = path.parent().map(|p| p.join("sessions")).unwrap_or_default();
         let (archived_messages, sessions) = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             (Vec::new(), Vec::new())

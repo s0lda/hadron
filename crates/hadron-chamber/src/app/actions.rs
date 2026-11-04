@@ -25,21 +25,9 @@ impl Chamber {
             .join("sessions")
     }
 
-    /// Re-read the session archive into both caches that derive from it. They are always
-    /// rebuilt together — a new archive is simultaneously new Stats history and a new
-    /// Sessions-submenu row — so they get one rebuild path rather than two that can drift.
-    /// Called after `/clear` and `/resume`, the only two writers of an archive.
-    #[allow(dead_code)]
-    pub(super) fn reload_archives(&mut self) {
-        let dir = self.sessions_dir();
-        let (archived_messages, sessions) = crate::model::load_archives_and_sessions(&dir);
-        self.archived_messages = archived_messages;
-        self.sessions = sessions;
-        self.cached_stats.borrow_mut().clear();
-    }
-
     /// Asynchronously rebuild `archived_messages` and `sessions` in a single pass on the
     /// background executor, then update the view caches without blocking the UI thread.
+    /// Called at startup (on WSL) and after `/clear` or `/resume`, the only writers of an archive.
     pub(super) fn reload_archives_in_background(&mut self, cx: &mut Context<Self>) {
         let dir = self.sessions_dir();
         cx.spawn(async move |this, cx| {
