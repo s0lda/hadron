@@ -5,6 +5,25 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.40] - 2026-11-04
+
+### Added
+- **3D Knowledge Sphere Nucleus Graph, Resizable Bottom Panels & Colored Prompt Anatomy Tooltip (`hadron-chamber`)**:
+  - Upgraded `Visualizer > Nucleus Graph` with a deterministic dual-shell 3D Fibonacci Knowledge Sphere (`compute_nucleus_sphere_layout` placing indexed notes on the inner `1.0x` shell and orphaned/dead-link notes on the outer `1.28x` drift shell), central Synaptic Knowledge Core glow, 3D projected curved link arcs, invariant halo rings, drag-to-rotate (`nucleus_graph_yaw`, `nucleus_graph_pitch`), scroll-wheel zoom, and click-to-focus spherical snapping (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/mod.rs`).
+  - Wrapped `Nucleus Graph` in a vertically resizable split layout (`gpui_component::resizable::v_resizable`) separating the 3D viewport, scrollable `#nucleus-notes-dock-scroll` chip dock, and expandable note file preview (`crates/hadron-chamber/src/app/render/nucleus_graph.rs`).
+  - Extracted `prompt_anatomy_colors` in `chat.rs` as the SSOT shared between `render_prompt_anatomy_circle` and a rich `Tooltip::element` breakdown with colored category dots, and unified the `Swarm 3D` bottom selected quark HUD card with sharp dock borders (`crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/render/visualizer.rs`).
+- **Single-Lane Instant Interrupt-and-Resume Job Queue (`hadron-gluon`)**:
+  - Collapsed orchestrator seating onto the single `Lane::Work` job queue, added `Engine::wake_notifier` (`<1ms` in-flight interrupt wake via `daemon/wake` RPC and `FieldWatcher`), wired `CancelSlot` on `CliQuark` and `LocalQuark` for instant subprocess/HTTP cancellation while preserving resident session state, added `worktree::ensure_with_base_and_carry` to carry forward uncommitted WIP on interruption, and prioritized new messages first in `frame_interrupted_resumption` (`crates/hadron-gluon/src/cli.rs`, `crates/hadron-gluon/src/engine.rs`, `crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/src/adapter/local.rs`, `crates/hadron-gluon/src/worktree.rs`, `crates/hadron-gluon/src/adapter/prompt/mod.rs`).
+
+### Changed
+- **Unified Quark Control Commands (`hadron-chamber`)**:
+  - Retired `/steer` and `/cancel` slash commands and unified `/reboot`, `/stop`, and `/kill` (`crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/input.rs`, `crates/hadron-chamber/src/text.rs`, `docs/commands.md`).
+
+### Fixed
+- **Universal Multi-Step Turn Message Deduplication & Multi-Commit Plan Merge Detection (`hadron-gluon`, `hadron-chamber`)**:
+  - Added `append_message_chunk_with_step_break` and `deduplicate_turn_message` in `crates/hadron-gluon/src/adapter/telemetry.rs` as the provider-agnostic SSOT across ACP, CLI, and Local Quarks so multi-step text chunks separate cleanly across tool/thought/step boundaries and duplicate blocks or transient `- Waiting for ...` lines are stripped (`crates/hadron-gluon/src/adapter/telemetry.rs`, `crates/hadron-gluon/src/adapter/acp/session.rs`, `crates/hadron-gluon/src/adapter/cli_stream.rs`, `crates/hadron-gluon/scripts/agy_acp.py`).
+  - Updated `vcs::is_commit_merged` to extract and verify all hex commit tokens from multi-commit plan step annotations (such as `(commit 5e2f4101, e6daff91)`) so multi-commit tasks merged to `main` display as `Complete` rather than `In Branch` (`crates/hadron-chamber/src/vcs.rs`, `crates/hadron-chamber/src/app/mentions.rs`).
+
 ## [0.33.39] - 2026-11-03
 
 ### Added

@@ -105,16 +105,30 @@ pub fn clear_unmerged_commit_cache() {
     }
 }
 
-/// Checks if a commit hash is merged into / reachable from `target_branch` (e.g. "main").
+/// Checks if a commit hash (or comma/space-separated list of commit hashes from a plan
+/// annotation such as `5e2f4101, e6daff91` or `ceb7243c on main`) is merged into /
+/// reachable from `target_branch` (e.g. "main").
 pub fn is_commit_merged(repo_root: &Path, commit: &str, target_branch: &str) -> bool {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-    use std::time::{Duration, Instant};
-
+    let hex_tokens: Vec<&str> = commit
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 7 && t.chars().all(|c| c.is_ascii_hexdigit()))
+        .collect();
+    if !hex_tokens.is_empty() {
+        return hex_tokens
+            .into_iter()
+            .all(|h| is_single_commit_merged(repo_root, h, target_branch));
+    }
     let clean_commit = commit.trim().trim_matches(|c: char| !c.is_ascii_alphanumeric());
     if clean_commit.is_empty() {
         return false;
     }
+    is_single_commit_merged(repo_root, clean_commit, target_branch)
+}
+
+fn is_single_commit_merged(repo_root: &Path, clean_commit: &str, target_branch: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
 
     let cache = MERGED_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let key = (

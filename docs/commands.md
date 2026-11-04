@@ -72,10 +72,8 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/toggle` | `/toggle @Quark` | Park or unpark a Quark — retains seat configuration while skipping turns. | `/toggle @Quark` |
 | `/reboot` | `/reboot [@Quark \| all]` | Force-restart resident ACP / CLI agent subprocesses. | `/reboot @Quark` |
 | `/bridge` | `/bridge [status \| update]` | Manage Antigravity Python bridge dependencies and evaluate virtual environment health. | `/bridge update` |
-| `/stop` | `/stop @Quark` | Gracefully stop a Quark's in-flight turn. | `/stop @Quark` |
-| `/steer` | `/steer [@Quark] <guidance>` | Inject mid-turn steering guidance to an active running Quark. | `/steer @Quark focus on error handling` |
+| `/stop` | `/stop [@Quark \| all]` | Stop a Quark's in-flight turn and clear its queued work. | `/stop @Quark` |
 | `/kill` | `/kill @Quark` | Force-kill a Quark's subprocess group (`-pgid`). | `/kill @Quark` |
-| `/cancel` | `/cancel [@Quark]` | Cancel pending unhandled dispatch for a seat. | `/cancel @Quark` |
 | `/retry` | `/retry [@Quark]` | Re-dispatch the last failed message or turn. | `/retry @Quark` |
 | `/approve` | `/approve @Quark [remember]` | Approve a pending permission request. | `/approve @worker remember` |
 | `/deny` | `/deny @Quark` | Deny a pending permission request. | `/deny @worker` |

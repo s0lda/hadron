@@ -754,6 +754,7 @@ mod tests {
 
 ### Task 1: First
 - [x] Step 1: Landed (commit 3f1efd9e)
+- [x] Step 1b: Landed multi-commit (commit 5e2f4101, e6daff91)
 - [/] Step 2: In-branch
 - [ ] Step 3: Pending
 
@@ -762,14 +763,15 @@ mod tests {
 ";
         let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let (total, landed, branch, items) = parse_plan_progress_with_status(repo, content);
-        assert_eq!(total, 4);
-        assert_eq!(landed, 2);
+        assert_eq!(total, 5);
+        assert_eq!(landed, 3);
         assert_eq!(branch, 1);
-        assert_eq!(items.len(), 4);
+        assert_eq!(items.len(), 5);
         assert_eq!(items[0].1, StepStatus::MainLanded);
-        assert_eq!(items[1].1, StepStatus::BranchCompleted);
-        assert_eq!(items[2].1, StepStatus::Pending);
-        assert_eq!(items[3].1, StepStatus::MainLanded);
+        assert_eq!(items[1].1, StepStatus::MainLanded);
+        assert_eq!(items[2].1, StepStatus::BranchCompleted);
+        assert_eq!(items[3].1, StepStatus::Pending);
+        assert_eq!(items[4].1, StepStatus::MainLanded);
     }
 
     #[test]

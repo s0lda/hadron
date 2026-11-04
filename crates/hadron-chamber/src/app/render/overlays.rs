@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.40",
+        date: Some("2026-11-04"),
+        added: &[
+            "3D Knowledge Sphere Nucleus Graph, Resizable Bottom Panels & Colored Prompt Anatomy Tooltip: Upgraded Visualizer > Nucleus Graph with a deterministic dual-shell 3D Fibonacci Knowledge Sphere (compute_nucleus_sphere_layout), v_resizable bottom note chip dock and expandable file preview, SSOT prompt_anatomy_colors with colored-dot Tooltip::element breakdown, and sharp Swarm 3D bottom card borders",
+            "Single-Lane Instant Interrupt-and-Resume Job Queue: Collapsed orchestrator seating onto Lane::Work, added Engine::wake_notifier (<1ms interrupt wake via daemon/wake RPC), wired CancelSlot on CliQuark and LocalQuark, and added worktree::ensure_with_base_and_carry to carry forward uncommitted WIP",
+        ],
+        changed: &[
+            "Unified Quark Control Commands: Retired /steer and /cancel slash commands and unified /reboot, /stop, and /kill",
+        ],
+        fixed: &[
+            "Universal Multi-Step Turn Message Deduplication & Multi-Commit Plan Merge Detection: Added append_message_chunk_with_step_break and deduplicate_turn_message across ACP, CLI, and Local Quarks, and updated vcs::is_commit_merged to verify multi-commit plan step annotations against main",
+        ],
+    },
+    Release {
         version: "0.33.39",
         date: Some("2026-11-03"),
         added: &[
