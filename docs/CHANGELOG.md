@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.42] - 2026-11-04
+
+### Fixed
+- **Decoupled UI Render Thread (Zero Subprocess/Disk I/O on Render), WSL Startup Unfreeze & NUX Badge Stacking (`hadron-chamber`)**:
+  - Moved `git_ready` (`vcs::is_git_repo` + `vcs::has_commits`) and `overdue_schedule_jobs` (`ScheduleRegistry::load` + `evaluate_due_jobs`) off the GPUI render thread into background `WorkspaceScan::gather` so `Chamber::render_onboarding_card`, `Chamber::overdue_schedule_banners`, `Chamber::render_prompt_anatomy_hud`, and `Chamber::git_tab_content` read strictly from in-memory fields on every keystroke (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/render/git.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+  - Removed synchronous UI-thread `RepoMonitor::check_repo` from `Chamber::reload_if_changed`, moved `compute_nucleus_graph_fingerprint` inside `background_executor()` in `Chamber::warm_visualizer_graphs`, and gated visualizer graph warming to `RightRailTab::Visualizer` to eliminate the ~30-second freeze after opening a WSL workspace (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/render/visualizer.rs`, `crates/hadron-chamber/src/app/render/terminal.rs`).
+  - Stacked `#nux-orchestrator-model-badge` and `#nux-add-more-quarks-btn` on a wrapped row beneath the `2. Swarm Seated` label in `Chamber::render_onboarding_card` so they no longer overlap or cover the readiness title (`crates/hadron-chamber/src/app/render/chat.rs`).
+
 ## [0.33.41] - 2026-11-04
 
 ### Added

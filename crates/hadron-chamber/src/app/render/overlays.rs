@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.42",
+        date: Some("2026-11-04"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Decoupled UI Render Thread, WSL Startup Unfreeze & NUX Badge Stacking: Moved git_ready (is_git_repo + has_commits) and overdue_schedule_jobs (ScheduleRegistry::load) off the GPUI render thread into background WorkspaceScan::gather so every keystroke reads strictly in-memory state, removed synchronous UI-thread RepoMonitor::check_repo and backgrounded compute_nucleus_graph_fingerprint while gating visualizer warming to RightRailTab::Visualizer, and stacked #nux-orchestrator-model-badge and #nux-add-more-quarks-btn beneath the 2. Swarm Seated label",
+        ],
+    },
+    Release {
         version: "0.33.41",
         date: Some("2026-11-04"),
         added: &[
