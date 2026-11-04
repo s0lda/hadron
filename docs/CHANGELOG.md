@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.41] - 2026-11-04
+
+### Added
+- **User Onboarding Quality of Life Upgrade — Interactive NUX Card, `hadron init` CLI & 0-Seat Gluon Standby (`hadron-chamber`, `hadron-gluon`)**:
+  - Replaced the bare empty chat state in `Chamber::chat_view` with the interactive GPUI **NUX Onboarding & Readiness Card** (`render_onboarding_card` / `compute_onboarding_readiness`), surfacing a 3-step readiness checklist: (1) **Git Worktree Physics** check (`vcs::is_git_repo` + `vcs::has_commits`) with 1-click `Initialize Git Repository` (`init_git_from_onboarding`) and `Select Folder…` buttons, (2) **Swarm & `@orchestrator` Roster** check showing a clickable `@<id> · <vendor> · <model>` pill badge when seated or 1-click `Auto-Detect Agents & Keys` (`auto_detect_and_seed_quarks`) and `Configure Providers…` (`open_provider_wizard`) buttons when unconfigured, and (3) clickable **Quick-Start Missions** (`fill_starter_prompt`) (`crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+  - Added `CliAction::Init` (`hadron init` / `hadron --init`), `run_cli_init`, `discover_default_seats`, and `which_binary_exists` in `headless_runner.rs` as the shared SSOT for probing installed CLI agents (`claude`, `agy`, `gemini`, `codex`) and API-key environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) while enforcing that the first discovered Quark is promoted to `Flavor::Orchestrator` (`crates/hadron-chamber/src/headless_runner.rs`, `crates/hadron-chamber/src/main.rs`, `crates/hadron-chamber/src/lib.rs`).
+  - Removed the fatal `std::process::exit(2)` on empty `team.json` in `hadron_gluon::cli::run` so the daemon boots into **0-seat standby mode** on fresh workspaces and live-reconciles (`apply_reseat`) as soon as Quarks are added via the NUX wizard or `hadron init` (`crates/hadron-gluon/src/cli.rs`).
+
 ## [0.33.40] - 2026-11-04
 
 ### Added

@@ -77,6 +77,9 @@ cargo install --locked --git https://github.com/s0lda/hadron.git hadron
 # Open or create a swarm workspace in your project directory
 cd ~/dev/my_project && hadron
 
+# Or initialize Git + auto-discover local CLI agents & API keys from the terminal
+hadron init
+
 # Or execute headlessly in CI / terminal batch mode
 hadron run "Implement user authentication with tests"
 hadron ci --plan .hadron/docs/plans/<plan_name>

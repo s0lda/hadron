@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.41",
+        date: Some("2026-11-04"),
+        added: &[
+            "Interactive GPUI NUX Onboarding & Readiness Card: Replaced the empty chat hint with a 3-step onboarding card featuring a 1-click Initialize Git Repository guard, a clickable @orchestrator provider/model badge, 1-click Auto-Detect Agents & Keys, and quick-start mission pills",
+            "Zero-Config CLI Initialization (hadron init) & First-Quark Orchestrator SSOT: Added hadron init / --init and discover_default_seats to initialize Git + .gitignore + root commit and auto-discover installed CLI agents and API keys with the first Quark promoted to Flavor::Orchestrator",
+            "0-Seat Gluon Standby Mode: Removed fatal exit(2) on empty team.json in hadron-gluon so fresh installs stay alive in standby mode and live-reconcile as soon as Quarks are seated",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.40",
         date: Some("2026-11-04"),
         added: &[
