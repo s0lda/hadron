@@ -256,6 +256,12 @@ pub fn deduplicate_turn_message(raw: &str) -> String {
         return String::new();
     }
 
+    let governed = hadron_lattice::ContextGovernor::govern_message(
+        raw,
+        &hadron_lattice::GovernorConfig::default(),
+    );
+    let raw = governed.as_str();
+
     // Pass 1: expand glued inline waiting updates & collapse exact inline `S + S` outside fences.
     let mut expanded_lines: Vec<String> = Vec::new();
     let mut in_fence = false;

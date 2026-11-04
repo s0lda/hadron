@@ -248,6 +248,22 @@ def _transient_tpm_retry_delay_secs(exc: Exception) -> Optional[float]:
     return min(max(delay, 2.0), 60.0)
 
 
+_SYSTEM_MSG_RE = re.compile(
+    r"(?:!The system automatically notified us of a message:\s*)?"
+    r"<SYSTEM_MESSAGE>.*?</SYSTEM_MESSAGE>[-+]*\n?",
+    re.DOTALL,
+)
+
+
+def _strip_system_messages(text: str) -> str:
+    """Remove internal Antigravity SDK `<SYSTEM_MESSAGE>...</SYSTEM_MESSAGE>` background-task
+    wakeup notifications from assistant text chunks so raw background task stdout never
+    pollutes the ACP message stream."""
+    if "<SYSTEM_MESSAGE>" not in text:
+        return text
+    return _SYSTEM_MSG_RE.sub("", text)
+
+
 async def handle_prompt(msg_id, session_id, prompt):
     session_data = sessions.get(session_id)
     if not session_data:
@@ -288,7 +304,9 @@ async def handle_prompt(msg_id, session_id, prompt):
                 async for chunk in response.chunks:
                     if isinstance(chunk, Text):
                         step_idx = getattr(chunk, "step_index", None)
-                        chunk_text = chunk.text
+                        chunk_text = _strip_system_messages(chunk.text or "")
+                        if not chunk_text.strip():
+                            continue
                         if (
                             last_text_step_index is not None
                             and step_idx is not None
@@ -325,7 +343,7 @@ async def handle_prompt(msg_id, session_id, prompt):
 
                 # Fallback if no Text chunks were streamed (e.g. model generated thoughts or text only via resolve())
                 if not text_accumulated:
-                    fallback_text = await response.text()
+                    fallback_text = _strip_system_messages((await response.text()) or "")
                     if not fallback_text and thought_accumulated:
                         fallback_text = "".join(thought_accumulated)
                     if fallback_text:

@@ -338,12 +338,15 @@ pub fn fit_projection_with_sliding_pruner(
     config: &crate::sliding_pruner::SlidingPrunerConfig,
 ) -> (Projection, String) {
     let render = |p: &Projection| crate::adapter::prompt::build(p, self_id);
-    let prompt = render(projection);
+    let mut p = projection.clone();
+    // Always govern raw terminal/compiler dumps and `<SYSTEM_MESSAGE>` blocks in `task`
+    // and `field_window` even when the overall prompt is under `max_bytes`.
+    let _ = crate::sliding_pruner::SlidingContextPruner::govern_projection_tool_dumps(&mut p);
+    let prompt = render(&p);
     if prompt.len() <= max_bytes {
-        return (projection.clone(), prompt);
+        return (p, prompt);
     }
 
-    let mut p = projection.clone();
     if crate::sliding_pruner::SlidingContextPruner::prune_projection(&mut p, config) {
         let compacted_prompt = render(&p);
         if compacted_prompt.len() <= max_bytes {

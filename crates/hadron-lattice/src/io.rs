@@ -32,6 +32,10 @@ fn append_lock() -> &'static Mutex<()> {
 pub fn append_event(path: &Path, event: &Event) -> std::io::Result<()> {
     let mut ev = event.clone();
     if let crate::Kind::Message { ref mut body } = ev.kind {
+        *body = crate::context_governor::ContextGovernor::govern_message(
+            body,
+            &crate::context_governor::GovernorConfig::default(),
+        );
         *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
     }
     let mut line = serde_json::to_string(&ev)?;
@@ -51,6 +55,10 @@ pub fn append_events(path: &Path, events: &[Event]) -> std::io::Result<()> {
     for event in events {
         let mut ev = event.clone();
         if let crate::Kind::Message { ref mut body } = ev.kind {
+            *body = crate::context_governor::ContextGovernor::govern_message(
+                body,
+                &crate::context_governor::GovernorConfig::default(),
+            );
             *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
         }
         let line = serde_json::to_string(&ev)?;

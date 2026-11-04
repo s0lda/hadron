@@ -129,31 +129,43 @@ impl SlidingContextPruner {
         (pruned, true)
     }
 
-    /// Compact a projection's field window in place using the sliding pruner.
-    pub fn prune_projection(projection: &mut Projection, config: &SlidingPrunerConfig) -> bool {
+    /// Govern embedded terminal/compiler/test output dumps in `projection.task` and
+    /// `projection.field_window` without dropping older field events.
+    pub fn govern_projection_tool_dumps(projection: &mut Projection) -> bool {
         let base_root = hadron_gatekeeper::infer_repo_root_from_worktree(&projection.cwd)
             .unwrap_or_else(|| projection.cwd.clone());
         let scratch_dir = base_root.join(".hadron").join("scratch");
         let _ = std::fs::create_dir_all(&scratch_dir);
-        let mut folded_any = false;
+        let gov_cfg = hadron_lattice::GovernorConfig::default();
+        let mut changed = false;
+
+        let governed_task = hadron_lattice::ContextGovernor::govern_message(&projection.task, &gov_cfg);
+        if governed_task != projection.task {
+            projection.task = governed_task;
+            changed = true;
+        }
+
         for ev in &mut projection.field_window {
             if let Kind::Message { body } = &mut ev.kind {
                 let (folded, did_fold) = Self::fold_test_output(body, &scratch_dir);
                 if did_fold {
                     *body = folded;
-                    folded_any = true;
-                } else if hadron_lattice::ContextGovernor::is_raw_tool_dump(body) {
-                    let compacted = hadron_lattice::ContextGovernor::compact_tool_output(
-                        body,
-                        &hadron_lattice::GovernorConfig::default(),
-                    );
-                    if compacted.len() < body.len() {
-                        *body = compacted;
-                        folded_any = true;
+                    changed = true;
+                } else {
+                    let governed = hadron_lattice::ContextGovernor::govern_message(body, &gov_cfg);
+                    if governed != *body {
+                        *body = governed;
+                        changed = true;
                     }
                 }
             }
         }
+        changed
+    }
+
+    /// Compact a projection's field window in place using the sliding pruner.
+    pub fn prune_projection(projection: &mut Projection, config: &SlidingPrunerConfig) -> bool {
+        let folded_any = Self::govern_projection_tool_dumps(projection);
         let (pruned, compacted) = Self::prune_events(&projection.field_window, config);
         if compacted {
             projection.field_window = pruned;
