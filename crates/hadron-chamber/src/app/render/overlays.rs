@@ -20,6 +20,16 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.43",
+        date: Some("2026-11-04"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Zero-Flicker Optimistic Chat Pipeline (FieldWriteQueue), Atomic /clear & UI-Thread Decoupling: Seeded Chamber::new with initial events on WSL, added FIFO FieldWriteQueue with monotonic epoch tracking and atomic io::replace_events so background polls never flash stale messages during message submit or /clear, moved /clear archive and /reset-energy SQLite deletes off the UI thread, and cached 3-way diff hunks, note previews, schedule registries, and skill directory walks",
+            "Surgical Span-Aware ContextGovernor::govern_message & Antigravity <SYSTEM_MESSAGE> Filtering: Added ContextGovernor::govern_message and _strip_system_messages in agy_acp.py to strip <SYSTEM_MESSAGE> background-task wakeup dumps, trim redundant trailing Done stubs, and compact contiguous >25-line compiler/test/terminal dump spans in-place while preserving /commands, Markdown prose, and structured reports verbatim",
+        ],
+    },
+    Release {
         version: "0.33.42",
         date: Some("2026-11-04"),
         added: &[],

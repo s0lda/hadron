@@ -5,6 +5,17 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.43] - 2026-11-04
+
+### Fixed
+- **Zero-Flicker Optimistic Chat Pipeline (`FieldWriteQueue`), Atomic `/clear` & Render/Settings UI-Thread Decoupling (`hadron-chamber`, `hadron-lattice`)**:
+  - Seeded `Chamber::new` with initial `events` from `app::run` on WSL workspaces so the first `append_and_reload` never replaces chat history with a 1-event slice (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/reload.rs`).
+  - Added a FIFO `FieldWriteQueue` with monotonic epoch tracking (`field_write_queue`) and atomic `io::replace_events` (acquiring `append_lock` and invalidating `field_cache`), gating `Chamber::reload_if_changed` so in-flight background `FieldPoll` snapshots never overwrite optimistic local appends or flash old messages back after `/clear` (`crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/input.rs`, `crates/hadron-lattice/src/io.rs`).
+  - Moved `/clear` session archive + worktree reset and `/reset-energy` SQLite deletes off the UI thread, removed synchronous `io::read_events` calls from `/approve`, `/deny`, `/limit`, and `/reset-energy`, and cached 3-way diff hunks (`diff_inspector.rs`), note previews (`nucleus_graph.rs`), schedule registries (`settings/overlay.rs`, `terminal.rs`), and skill directory walks (`settings/identity.rs`) (`crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/render/diff_inspector.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/settings/overlay.rs`, `crates/hadron-chamber/src/app/settings/identity.rs`).
+- **Surgical Span-Aware `ContextGovernor::govern_message` & Antigravity `<SYSTEM_MESSAGE>` Filtering (`hadron-lattice`, `hadron-gluon`)**:
+  - Added `ContextGovernor::govern_message` in `crates/hadron-lattice/src/context_governor.rs` to strip Antigravity SDK `<SYSTEM_MESSAGE>...</SYSTEM_MESSAGE>` background-task wakeup payloads, trim redundant trailing `**Done**: Task complete` stubs after structured reports, and compact contiguous `> 25`-line compiler/test/terminal dump spans in-place while preserving `/commands`, Markdown prose, tables, and structured reports verbatim.
+  - Wired `ContextGovernor::govern_message` into `io::append_event` / `append_events`, `telemetry::deduplicate_turn_message`, and `SlidingContextPruner::govern_projection_tool_dumps` (called unconditionally in `fit_projection_with_sliding_pruner` on both `projection.task` and `projection.field_window`), and stripped `<SYSTEM_MESSAGE>` blocks in `agy_acp.py` before emitting `agent_message_chunk` (`crates/hadron-lattice/src/io.rs`, `crates/hadron-gluon/src/adapter/telemetry.rs`, `crates/hadron-gluon/src/sliding_pruner.rs`, `crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/scripts/agy_acp.py`).
+
 ## [0.33.42] - 2026-11-04
 
 ### Fixed
