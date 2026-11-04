@@ -63,6 +63,34 @@ pub fn append_events(path: &Path, events: &[Event]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Atomically replace the entire contents of `path` with `events` under the
+/// process-wide [`append_lock`] and invalidate the incremental read cache for
+/// `path`. Used by `/clear` and `/resume` so concurrent in-process readers
+/// never observe a truncated empty file between clearing and seeding.
+pub fn replace_events(path: &Path, events: &[Event]) -> std::io::Result<()> {
+    let mut payload = String::new();
+    for event in events {
+        let mut ev = event.clone();
+        if let crate::Kind::Message { ref mut body } = ev.kind {
+            *body = crate::transport_scrubber::TransportScrubber::scrub_string(body);
+        }
+        let line = serde_json::to_string(&ev)?;
+        payload.push_str(&line);
+        payload.push('\n');
+    }
+    let _guard = append_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)?;
+    f.write_all(payload.as_bytes())?;
+    if let Ok(mut cache) = field_cache().lock() {
+        cache.remove(path);
+    }
+    Ok(())
+}
+
 /// Read every event in order. A missing file yields an empty vec. Blank lines
 /// are skipped. A line that fails to parse is skipped rather than crashing the
 /// reader (append-only integrity means a torn final line can be ignored).
@@ -72,6 +100,7 @@ pub fn append_events(path: &Path, events: &[Event]) -> std::io::Result<()> {
 /// per tick). Automatically invalidates and re-reads from byte 0 if the file is
 /// truncated, deleted, or its leading line changes (e.g. `/clear` or session swap).
 pub fn read_events(path: &Path) -> std::io::Result<Vec<Event>> {
+    let _append_guard = append_lock().lock().unwrap_or_else(|e| e.into_inner());
     let file = match File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -397,5 +426,31 @@ mod tests {
         } else {
             panic!("expected Kind::Message");
         }
+    }
+
+    #[test]
+    fn replace_events_atomically_replaces_field_and_invalidates_cache() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("field.jsonl");
+
+        let e1 = Event::new(Actor::Human, None, Kind::Message { body: "before-1".into() });
+        let e2 = Event::new(Actor::Human, None, Kind::Message { body: "before-2".into() });
+        append_events(&path, &[e1.clone(), e2.clone()]).unwrap();
+        assert_eq!(read_events(&path).unwrap(), vec![e1, e2]);
+
+        let post1 = Event::new(
+            Actor::Human,
+            None,
+            Kind::Command {
+                cmd: "/clear".into(),
+                exit: 0,
+                out_summary: "Session reset".into(),
+            },
+        );
+        let post2 = Event::new(Actor::Human, None, Kind::ModeSet { mode: crate::Mode::Bypass });
+        replace_events(&path, &[post1.clone(), post2.clone()]).unwrap();
+
+        let after = read_events(&path).unwrap();
+        assert_eq!(after, vec![post1, post2]);
     }
 }

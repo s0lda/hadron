@@ -89,20 +89,9 @@ impl super::Chamber {
             split_leading_commands_with_skills(&full, &self.cached_skill_ids);
         fold_preamble_into_prompt_commands_with_skills(&mut cmds, &mut body, &self.cached_skill_ids);
         for (cmd, args) in &cmds {
-            if cmd != "clear" {
+            if cmd != "clear" && cmd != "resume" {
                 let cmd_ev = slash_command_event(cmd, args);
-                let path = self.path.clone();
-                let cmd_ev_bg = cmd_ev.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Err(e) = io::append_event(&path, &cmd_ev_bg) {
-                            eprintln!("chamber: failed to append command event: {e}");
-                        } else {
-                            crate::rpc_client::notify_daemon_wake(&path);
-                        }
-                    })
-                    .detach();
-                self.events.push(cmd_ev);
+                self.append_and_reload(cmd_ev, cx);
             }
             self.handle_chat_command(cmd, args, window, cx);
         }
@@ -112,11 +101,6 @@ impl super::Chamber {
                 // Only recognised commands were present (`body` is `None` only when at
                 // least one command ran): clear the box and stop before posting nothing.
                 input.update(cx, |state, cx| state.set_value("", window, cx));
-                if !cmds.is_empty() && !cmds.iter().any(|(c, _)| c == "clear") {
-                    let events = self.events.clone();
-                    self.sync_view(&events);
-                    cx.notify();
-                }
                 return;
             }
         };

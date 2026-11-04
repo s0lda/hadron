@@ -706,6 +706,7 @@ struct Chamber {
     pub(super) selector_search: Entity<InputState>,
     pub(super) project_switcher_open: bool,
     pub(super) events: Vec<Event>,
+    pub(super) field_write_queue: reload::FieldWriteQueue,
     pub(super) cached_skill_ids: Vec<String>,
     pub(super) cached_plan_paths: Vec<(std::time::SystemTime, String)>,
     pub(super) cached_active_plan_content: Option<(String, String)>,
@@ -770,6 +771,7 @@ pub enum ContextMenuAction {
 impl Chamber {
     fn new(
         view: ChamberView,
+        events: Vec<Event>,
         prefs: ChamberPrefs,
         team: Team,
         global: Team,
@@ -1465,6 +1467,7 @@ impl Chamber {
                     chamber.file_tree_paths.is_empty(),
                     chamber.last_plan_path.clone(),
                     verified_git_ready,
+                    chamber.field_write_queue.clone(),
                 ))
             }) {
                 Ok(Some(s)) => s,
@@ -1487,6 +1490,7 @@ impl Chamber {
                 .spawn(async move {
                     reload::FieldPoll::gather(
                         &state.0,
+                        &state.12,
                         &state.1,
                         state.2,
                         state.3,
@@ -1606,11 +1610,6 @@ impl Chamber {
             })
             .collect();
 
-        let events = if workspace_mode == WorkspaceMode::Selector || is_wsl {
-            Vec::new()
-        } else {
-            io::read_events(&path).unwrap_or_default()
-        };
         let cached_skill_ids = if workspace_mode == WorkspaceMode::Selector || is_wsl {
             Vec::new()
         } else {
@@ -1959,6 +1958,7 @@ impl Chamber {
             selector_search,
             project_switcher_open: false,
             events,
+            field_write_queue: reload::FieldWriteQueue::new(),
             cached_skill_ids,
             cached_plan_paths,
             cached_active_plan_content: None,
@@ -2456,6 +2456,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
                 let chamber = cx.new(|cx| {
                     Chamber::new(
                         view.clone(),
+                        events.clone(),
                         prefs.clone(),
                         team.clone(),
                         global.clone(),

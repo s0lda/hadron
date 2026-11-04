@@ -29,6 +29,7 @@ impl Chamber {
     /// rebuilt together — a new archive is simultaneously new Stats history and a new
     /// Sessions-submenu row — so they get one rebuild path rather than two that can drift.
     /// Called after `/clear` and `/resume`, the only two writers of an archive.
+    #[allow(dead_code)]
     pub(super) fn reload_archives(&mut self) {
         let dir = self.sessions_dir();
         let (archived_messages, sessions) = crate::model::load_archives_and_sessions(&dir);
@@ -372,37 +373,14 @@ impl Chamber {
     }
 }
 
-/// Archive the current field to `session_dir`, reset `field_path`, and seed the new field
-/// with a post-clear `/clear` command event, the default mode seed, and resident reboots.
-///
-/// Both pre-clear and post-clear command events are recorded to make `/clear` observable
-/// in the Event Log (preserving auditability in both the archived and newly active fields).
-pub(super) fn perform_clear_field(
-    field_path: &std::path::Path,
-    session_dir: &std::path::Path,
+/// Build the post-`/clear` seed events (the `/clear` command notice, optional active-plan
+/// preservation notice, default permission mode seed, and resident ACP reboots).
+pub(super) fn build_post_clear_events(
     session_id: &str,
     default_mode: hadron_lattice::Mode,
     roster: &[crate::model::RosterRow],
     keep_context_plan: Option<String>,
-) -> Result<Vec<Event>, std::io::Error> {
-    std::fs::create_dir_all(session_dir)?;
-
-    // Record pre-clear command event into the field before archiving.
-    let pre_clear_ev = Event::new(
-        Actor::Human,
-        None,
-        Kind::Command {
-            cmd: "/clear".to_string(),
-            exit: 0,
-            out_summary: format!("Archiving session to {session_id}"),
-        },
-    );
-    let _ = io::append_event(field_path, &pre_clear_ev);
-
-    let archive_path = session_dir.join("field.jsonl");
-    std::fs::copy(field_path, &archive_path)?;
-    std::fs::write(field_path, "")?;
-
+) -> Vec<Event> {
     let mut post_events = Vec::with_capacity(3 + roster.len());
 
     // Record post-clear command event into the fresh field.
@@ -431,11 +409,58 @@ pub(super) fn perform_clear_field(
     }
 
     post_events.extend(crate::model::post_clear_reboots(roster));
+    post_events
+}
 
-    if let Err(e) = io::append_events(field_path, &post_events) {
+/// Persist a `/clear` operation to disk: archive `field_path` into `session_dir/field.jsonl`
+/// (including a pre-clear audit event) and atomically replace `field_path` with `post_events`.
+pub(super) fn perform_clear_field_with_events(
+    field_path: &std::path::Path,
+    session_dir: &std::path::Path,
+    session_id: &str,
+    post_events: &[Event],
+) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(session_dir)?;
+
+    // Record pre-clear command event into the field before archiving.
+    let pre_clear_ev = Event::new(
+        Actor::Human,
+        None,
+        Kind::Command {
+            cmd: "/clear".to_string(),
+            exit: 0,
+            out_summary: format!("Archiving session to {session_id}"),
+        },
+    );
+    let _ = io::append_event(field_path, &pre_clear_ev);
+
+    let archive_path = session_dir.join("field.jsonl");
+    std::fs::copy(field_path, &archive_path)?;
+
+    if let Err(e) = io::replace_events(field_path, post_events) {
         eprintln!("chamber: failed to write post-clear seed events: {e}");
+        return Err(e);
     }
 
+    Ok(())
+}
+
+/// Archive the current field to `session_dir`, reset `field_path`, and seed the new field
+/// with a post-clear `/clear` command event, the default mode seed, and resident reboots.
+///
+/// Both pre-clear and post-clear command events are recorded to make `/clear` observable
+/// in the Event Log (preserving auditability in both the archived and newly active fields).
+#[cfg(test)]
+pub(super) fn perform_clear_field(
+    field_path: &std::path::Path,
+    session_dir: &std::path::Path,
+    session_id: &str,
+    default_mode: hadron_lattice::Mode,
+    roster: &[crate::model::RosterRow],
+    keep_context_plan: Option<String>,
+) -> Result<Vec<Event>, std::io::Error> {
+    let post_events = build_post_clear_events(session_id, default_mode, roster, keep_context_plan);
+    perform_clear_field_with_events(field_path, session_dir, session_id, &post_events)?;
     Ok(post_events)
 }
 
@@ -477,10 +502,25 @@ impl Chamber {
             "clear" => {
                 let trimmed_flag = args.trim();
                 if trimmed_flag == "--soft" {
-                    // Soft clear: reset in-memory chat view projection without resetting worktrees or archiving
-                    self.view.messages.clear();
+                    // Soft clear: reset field and in-memory chat view projection without resetting worktrees or archiving
+                    let post_events = build_post_clear_events(
+                        "soft",
+                        self.prefs.default_mode,
+                        &self.view.roster,
+                        None,
+                    );
+                    let field_path = self.path.clone();
+                    let post_events_bg = post_events.clone();
+                    self.sync_view(&post_events);
                     self.resync_lists_to_projection();
                     cx.notify();
+                    self.field_write_queue.enqueue(cx, move || {
+                        if let Err(e) = io::replace_events(&field_path, &post_events_bg) {
+                            eprintln!("chamber: failed to soft-clear session: {e}");
+                        } else {
+                            crate::rpc_client::notify_daemon_wake(&field_path);
+                        }
+                    });
                     return true;
                 }
 
@@ -503,32 +543,55 @@ impl Chamber {
                 let field_path = self.path.clone();
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
 
-                match perform_clear_field(
-                    &field_path,
-                    &session_dir,
+                let post_events = build_post_clear_events(
                     &session_id,
                     default_mode,
                     &roster,
                     plan_info,
-                ) {
-                    Err(e) => {
-                        eprintln!("chamber: failed to clear session: {e}");
-                    }
-                    Ok(events) => {
-                        self.sync_view(&events);
-                        self.resync_lists_to_projection();
-                        cx.notify();
+                );
+                self.sync_view(&post_events);
+                self.resync_lists_to_projection();
+                cx.notify();
 
-                        cx.background_executor()
-                            .spawn(async move {
-                                crate::rpc_client::notify_daemon_wake(&field_path);
-                                let _ = hadron_gluon::worktree::reset_worktrees_on_clear(&repo_root);
-                            })
-                            .detach();
-
-                        self.reload_archives_in_background(cx);
+                let (done_tx, done_rx) = std::sync::mpsc::channel::<bool>();
+                self.field_write_queue.enqueue(cx, move || {
+                    match perform_clear_field_with_events(
+                        &field_path,
+                        &session_dir,
+                        &session_id,
+                        &post_events,
+                    ) {
+                        Err(e) => {
+                            eprintln!("chamber: failed to clear session: {e}");
+                            let _ = done_tx.send(false);
+                        }
+                        Ok(()) => {
+                            crate::rpc_client::notify_daemon_wake(&field_path);
+                            let _ = done_tx.send(true);
+                        }
                     }
-                }
+                });
+
+                let sessions_dir = self.sessions_dir();
+                cx.spawn(async move |this, cx| {
+                    let archived_and_sessions = cx
+                        .background_executor()
+                        .spawn(async move {
+                            let ok = done_rx.recv().unwrap_or(false);
+                            let _ = hadron_gluon::worktree::reset_worktrees_on_clear(&repo_root);
+                            ok.then(|| crate::model::load_archives_and_sessions(&sessions_dir))
+                        })
+                        .await;
+                    if let Some((archived_messages, sessions)) = archived_and_sessions {
+                        let _ = this.update(cx, |chamber, cx| {
+                            chamber.archived_messages = archived_messages;
+                            chamber.sessions = sessions;
+                            chamber.cached_stats.borrow_mut().clear();
+                            cx.notify();
+                        });
+                    }
+                })
+                .detach();
                 true
             }
             // The skill commands. Each posts an ordinary human message whose text
@@ -1177,6 +1240,14 @@ impl Chamber {
                 };
                 let chosen_dir = sessions_dir.join(&session.id);
                 let chosen_field = chosen_dir.join("field.jsonl");
+                let mut resumed_events = match io::read_events(&chosen_field) {
+                    Ok(evs) => evs,
+                    Err(e) => {
+                        eprintln!("chamber: failed to read session {}: {e}", session.id);
+                        return true;
+                    }
+                };
+                resumed_events.extend(crate::model::post_clear_reboots(&self.view.roster));
 
                 // Archive the current live field first — same shape `/clear` uses.
                 let archive_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -1189,10 +1260,10 @@ impl Chamber {
                     eprintln!("chamber: failed to archive field.jsonl: {e}");
                     return true;
                 }
-                // Reopen the chosen session as live, then drop its archive directory —
-                // it is no longer an archived session, it IS the live one, and must not
-                // be double-counted by `load_archived_messages`.
-                if let Err(e) = std::fs::copy(&chosen_field, &self.path) {
+                // Reopen the chosen session as live (atomically replacing `self.path` and
+                // invalidating `field_cache`), then drop its archive directory so it is not
+                // double-counted by `load_archived_messages`.
+                if let Err(e) = io::replace_events(&self.path, &resumed_events) {
                     eprintln!("chamber: failed to resume session {}: {e}", session.id);
                     return true;
                 }
@@ -1200,20 +1271,12 @@ impl Chamber {
                     eprintln!("chamber: resumed session {} but failed to drop its archive dir: {e}", session.id);
                 }
 
-                // The resumed history's residents still hold whatever ACP context they
-                // carried before the swap — restart them into the reopened field, same
-                // rule `/clear` follows (see `post_clear_reboots`).
-                for ev in crate::model::post_clear_reboots(&self.view.roster) {
-                    if let Err(e) = io::append_event(&self.path, &ev) {
-                        eprintln!("chamber: failed to append post-resume reboot: {e}");
-                    }
-                }
-                let events = io::read_events(&self.path).unwrap_or_default();
-                self.sync_view(&events);
+                self.field_write_queue.bump_epoch();
+                self.sync_view(&resumed_events);
                 // `/resume` is a KNOWN wholesale swap — same reasoning as `/clear` above,
                 // force the unconditional resync rather than trust the append heuristic.
                 self.resync_lists_to_projection();
-                self.reload_archives();
+                self.reload_archives_in_background(cx);
                 cx.notify();
                 true
             }
@@ -1259,9 +1322,8 @@ impl Chamber {
             // both read and just posted the gate's own notice into. See
             // `text::gate_status_body`.
             "gate-status" => {
-                let events = io::read_events(&self.path).unwrap_or_default();
                 let body = crate::text::gate_status_body(
-                    &events,
+                    &self.events,
                     chrono::Utc::now(),
                     hadron_gluon::merge::GATE_TEST_DEADLINE,
                 );
@@ -1399,9 +1461,7 @@ impl Chamber {
                         Some(QuarkId::new(worker_id)),
                         Kind::PermissionGrant { approved, remember },
                     );
-                    if let Err(e) = io::append_event(&self.path, &ev) {
-                        eprintln!("chamber: failed to append permission grant: {e}");
-                    }
+                    self.append_and_reload(ev, cx);
                 } else {
                     eprintln!("chamber: target worker not found on roster: {worker_name}");
                     self.post_chat_message(
@@ -1410,9 +1470,6 @@ impl Chamber {
                         cx,
                     );
                 }
-                let events = io::read_events(&self.path).unwrap_or_default();
-                self.sync_view(&events);
-                cx.notify();
                 true
             }
             "limit" => {
@@ -1477,10 +1534,6 @@ impl Chamber {
                         cx,
                     );
                 }
-
-                let events = io::read_events(&self.path).unwrap_or_default();
-                self.sync_view(&events);
-                cx.notify();
                 true
             }
             "reset-energy" => {
@@ -1490,28 +1543,30 @@ impl Chamber {
                     None => std::path::PathBuf::from(".hadron"),
                 };
                 let ledger_path = hadron_lattice::ledger::resolve_sqlite_db_path(&hadron_dir.join("ledger.db"));
-                let reset_label = if target.is_empty() || target.eq_ignore_ascii_case("all") {
-                    if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
-                        let _ = conn.execute("DELETE FROM usage", []);
-                    }
-                    "all seats".to_string()
+                let (reset_label, target_quark_id) = if target.is_empty() || target.eq_ignore_ascii_case("all") {
+                    ("all seats".to_string(), None)
                 } else {
                     let real_id = super::mentions::seat_by_mention(&self.view.roster, target)
                         .map(|r| r.id.clone())
                         .unwrap_or_else(|| target.to_string());
-                    if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
-                        let _ = conn.execute("DELETE FROM usage WHERE quark_id = ?1", [&real_id]);
-                    }
-                    format!("`{real_id}`")
+                    (format!("`{real_id}`"), Some(real_id))
                 };
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Ok(conn) = rusqlite::Connection::open(&ledger_path) {
+                            if let Some(real_id) = target_quark_id {
+                                let _ = conn.execute("DELETE FROM usage WHERE quark_id = ?1", [&real_id]);
+                            } else {
+                                let _ = conn.execute("DELETE FROM usage", []);
+                            }
+                        }
+                    })
+                    .detach();
                 self.post_chat_message(
                     Actor::Gluon,
                     format!("Reset token usage ledger for {reset_label}."),
                     cx,
                 );
-                let events = io::read_events(&self.path).unwrap_or_default();
-                self.sync_view(&events);
-                cx.notify();
                 true
             }
             // The human has already typed the full lesson — nothing left to interpret,
@@ -1850,8 +1905,14 @@ impl Chamber {
             }
             "sessions" => {
                 let sessions_dir = self.sessions_dir();
-                let sessions = crate::model::list_sessions(&sessions_dir);
-                let body = crate::text::sessions_body(&sessions);
+                let owned;
+                let sessions = if !self.sessions.is_empty() {
+                    &self.sessions
+                } else {
+                    owned = crate::model::list_sessions(&sessions_dir);
+                    &owned
+                };
+                let body = crate::text::sessions_body(sessions);
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
@@ -1868,7 +1929,7 @@ impl Chamber {
                         }
                     }
                 }
-                self.reload_archives();
+                self.reload_archives_in_background(cx);
                 let body = format!("Cleared {cleared} archived session(s). Token usage ledger was preserved.");
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
@@ -1896,9 +1957,7 @@ impl Chamber {
                     );
                     return true;
                 }
-                let events = io::read_events(&self.path).unwrap_or_default();
-                let messages = crate::model::project(&events).messages;
-                let body = crate::text::search_body(&messages, query);
+                let body = crate::text::search_body(&self.view.messages, query);
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
@@ -1950,13 +2009,13 @@ impl Chamber {
                     );
                     return true;
                 }
-                let (label, field_path) = if session_arg.is_empty() {
-                    ("current".to_string(), self.path.clone())
+                let (label, messages) = if session_arg.is_empty() {
+                    ("current".to_string(), self.view.messages.clone())
                 } else {
-                    (session_arg.to_string(), self.sessions_dir().join(session_arg).join("field.jsonl"))
+                    let field_path = self.sessions_dir().join(session_arg).join("field.jsonl");
+                    let events = io::read_events(&field_path).unwrap_or_default();
+                    (session_arg.to_string(), crate::model::project(&events).messages)
                 };
-                let events = io::read_events(&field_path).unwrap_or_default();
-                let messages = crate::model::project(&events).messages;
                 if messages.iter().filter(|m| m.is_chat()).count() == 0 {
                     eprintln!("chamber: `/export {session_arg}` — no messages found for `{label}`");
                     self.post_chat_message(
@@ -3813,15 +3872,13 @@ impl Chamber {
     pub(super) fn append_and_reload(&mut self, ev: Event, cx: &mut Context<Self>) {
         let path = self.path.clone();
         let ev_bg = ev.clone();
-        cx.background_executor()
-            .spawn(async move {
-                if let Err(e) = io::append_event(&path, &ev_bg) {
-                    eprintln!("chamber: failed to append event: {e}");
-                } else {
-                    crate::rpc_client::notify_daemon_wake(&path);
-                }
-            })
-            .detach();
+        self.field_write_queue.enqueue(cx, move || {
+            if let Err(e) = io::append_event(&path, &ev_bg) {
+                eprintln!("chamber: failed to append event: {e}");
+            } else {
+                crate::rpc_client::notify_daemon_wake(&path);
+            }
+        });
         let mut next = self.events.clone();
         next.push(ev);
         self.sync_view(&next);
@@ -3836,15 +3893,13 @@ impl Chamber {
         }
         let path = self.path.clone();
         let evs_bg = evs.clone();
-        cx.background_executor()
-            .spawn(async move {
-                if let Err(e) = io::append_events(&path, &evs_bg) {
-                    eprintln!("chamber: failed to append events: {e}");
-                } else {
-                    crate::rpc_client::notify_daemon_wake(&path);
-                }
-            })
-            .detach();
+        self.field_write_queue.enqueue(cx, move || {
+            if let Err(e) = io::append_events(&path, &evs_bg) {
+                eprintln!("chamber: failed to append events: {e}");
+            } else {
+                crate::rpc_client::notify_daemon_wake(&path);
+            }
+        });
         let mut next = self.events.clone();
         next.extend(evs);
         self.sync_view(&next);

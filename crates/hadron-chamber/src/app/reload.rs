@@ -139,9 +139,160 @@ impl WorkspaceScan {
     }
 }
 
+#[derive(Clone, Default)]
+pub(super) struct FieldWriteQueue {
+    epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pending: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<Box<dyn FnOnce() + Send + 'static>>>>,
+    draining: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl std::fmt::Debug for FieldWriteQueue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FieldWriteQueue")
+            .field("epoch", &self.current_epoch())
+            .field("pending", &self.has_pending_writes())
+            .finish()
+    }
+}
+
+impl FieldWriteQueue {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(super) fn current_epoch(&self) -> u64 {
+        self.epoch.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(super) fn bump_epoch(&self) -> u64 {
+        self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+
+    pub(super) fn has_pending_writes(&self) -> bool {
+        self.pending.load(std::sync::atomic::Ordering::SeqCst) > 0
+    }
+
+    /// Enqueue a local field disk mutation in strict FIFO order on the background executor.
+    /// Increments `epoch` immediately on the UI thread so any already-in-flight `FieldPoll`
+    /// carrying an older epoch cannot overwrite the optimistic in-memory `self.events`.
+    pub(super) fn enqueue<F>(&self, cx: &mut Context<super::Chamber>, op: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.bump_epoch();
+        self.pending.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut q) = self.queue.lock() {
+            q.push_back(Box::new(op));
+        }
+        if self
+            .draining
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+        {
+            let queue = self.queue.clone();
+            let pending = self.pending.clone();
+            let draining = self.draining.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    Self::drain_loop(&queue, &pending, &draining);
+                })
+                .detach();
+        }
+    }
+
+    fn drain_loop(
+        queue: &std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<Box<dyn FnOnce() + Send + 'static>>>>,
+        pending: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        draining: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        loop {
+            loop {
+                let next = queue.lock().ok().and_then(|mut q| q.pop_front());
+                let Some(job) = next else {
+                    break;
+                };
+                job();
+                pending.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            draining.store(false, std::sync::atomic::Ordering::SeqCst);
+            let still_has_items = queue.lock().ok().is_some_and(|q| !q.is_empty());
+            if !still_has_items
+                || draining
+                    .compare_exchange(
+                        false,
+                        true,
+                        std::sync::atomic::Ordering::SeqCst,
+                        std::sync::atomic::Ordering::SeqCst,
+                    )
+                    .is_err()
+            {
+                break;
+            }
+        }
+    }
+
+    /// Read `field.jsonl` for a background `FieldPoll` only when no local UI write is queued
+    /// or executing, and verify the write epoch did not advance during the read.
+    pub(super) fn read_events_if_quiescent(
+        &self,
+        path: &std::path::Path,
+    ) -> (Option<Vec<Event>>, Option<u64>) {
+        if self.has_pending_writes() {
+            return (None, None);
+        }
+        let epoch_before = self.current_epoch();
+        if self.has_pending_writes() {
+            return (None, None);
+        }
+        let events = io::read_events(path)
+            .ok()
+            .or_else(|| crate::rpc_client::poll_field_via_rpc(path, 0, 0).map(|(evs, _)| evs));
+        let epoch_after = self.current_epoch();
+        if epoch_before != epoch_after || self.has_pending_writes() {
+            return (None, None);
+        }
+        (events, Some(epoch_after))
+    }
+
+    pub(super) fn is_poll_fresh(&self, poll_epoch: Option<u64>) -> bool {
+        !self.has_pending_writes() && poll_epoch == Some(self.current_epoch())
+    }
+}
+
+/// Pure decision helper for [`super::Chamber::reload_if_changed`]: whether a background
+/// `FieldPoll` snapshot should replace the chamber's in-memory `local_events` and `view`.
+pub(super) fn should_sync_polled_events(
+    local_events: &[Event],
+    view_message_len: usize,
+    polled_events: &[Event],
+    poll_is_fresh: bool,
+) -> bool {
+    if !poll_is_fresh {
+        return false;
+    }
+    let stale_behind_local_append = !polled_events.is_empty()
+        && polled_events.len() < local_events.len()
+        && local_events.get(polled_events.len() - 1).map(|e| e.id)
+            == polled_events.last().map(|e| e.id);
+    if stale_behind_local_append {
+        return false;
+    }
+    polled_events.len() != view_message_len
+        || polled_events.len() != local_events.len()
+        || polled_events.first().map(|e| e.id) != local_events.first().map(|e| e.id)
+        || polled_events.last().map(|e| e.id) != local_events.last().map(|e| e.id)
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct FieldPoll {
     pub(super) events: Option<Vec<Event>>,
+    pub(super) field_epoch: Option<u64>,
     pub(super) team_before: Team,
     pub(super) global_before: Team,
     pub(super) repo_team: Option<Team>,
@@ -161,6 +312,7 @@ impl FieldPoll {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn gather(
         path: &std::path::Path,
+        field_write_queue: &FieldWriteQueue,
         repo_team_path: &std::path::Path,
         team_before: Team,
         global_before: Team,
@@ -174,9 +326,7 @@ impl FieldPoll {
         prev_branch_fingerprint: Option<&str>,
         active_plan_hint: Option<&str>,
     ) -> Self {
-        let events = io::read_events(path)
-            .ok()
-            .or_else(|| crate::rpc_client::poll_field_via_rpc(path, 0, 0).map(|(evs, _)| evs));
+        let (events, field_epoch) = field_write_queue.read_events_if_quiescent(path);
         let read_strict = |p: &std::path::Path| -> Option<Team> {
             if !p.exists() {
                 return Some(Team::default());
@@ -239,6 +389,7 @@ impl FieldPoll {
 
         Self {
             events,
+            field_epoch,
             team_before,
             global_before,
             repo_team,
@@ -336,6 +487,7 @@ impl super::Chamber {
                 Some((cached_rel, cached_body)) if cached_rel == &rel_path => {
                     Some(cached_body.clone())
                 }
+                _ if is_wsl => None,
                 _ => {
                     let loaded = crate::sys::read_workspace_file(&repo, &rel_path);
                     if let Some(ref body) = loaded {
@@ -436,48 +588,50 @@ impl super::Chamber {
         poll: FieldPoll,
         cx: &mut Context<Self>,
     ) {
-        // Only reproject on a successful read — a transient read error must not
-        // blank the current view (which would flash to empty, then repopulate).
-        if let Some(events) = poll.events {
-            let mut changed = false;
+        let mut changed = false;
 
-            // The team files are edited out-of-band, not only through this window: the
-            // daemon re-seats from team.json, and a quark is adopted/removed by writing
-            // team.json (or the shared catalogue) directly. Poll them the same dumb way
-            // the field is polled, so an externally added/removed quark shows in the
-            // roster + Settings at once — instead of only after it first authors an
-            // event (event-seeding), which is why a new quark used to "appear after
-            // mention". A no-op after this window's own save: the reload matches what
-            // was just written, so `!=` is false and nothing reprojects.
-            let mut team_changed = false;
-            if self.team == poll.team_before && self.global == poll.global_before {
-                if let (Some(repo_team), Some(global_team)) = (poll.repo_team, poll.global_team) {
-                    if repo_team != self.team || global_team != self.global {
-                        self.team = repo_team;
-                        self.global = global_team;
-                        self.providers =
-                            configured_providers(&resolve_team(&self.team, &self.global));
-                        team_changed = true;
-                        changed = true;
-                    }
+        // The team files are edited out-of-band, not only through this window: the
+        // daemon re-seats from team.json, and a quark is adopted/removed by writing
+        // team.json (or the shared catalogue) directly. Poll them the same dumb way
+        // the field is polled, so an externally added/removed quark shows in the
+        // roster + Settings at once — instead of only after it first authors an
+        // event (event-seeding), which is why a new quark used to "appear after
+        // mention". A no-op after this window's own save: the reload matches what
+        // was just written, so `!=` is false and nothing reprojects.
+        let mut team_changed = false;
+        if self.team == poll.team_before && self.global == poll.global_before {
+            if let (Some(repo_team), Some(global_team)) = (poll.repo_team, poll.global_team) {
+                if repo_team != self.team || global_team != self.global {
+                    self.team = repo_team;
+                    self.global = global_team;
+                    self.providers =
+                        configured_providers(&resolve_team(&self.team, &self.global));
+                    team_changed = true;
+                    changed = true;
                 }
             }
+        }
 
-            if poll.is_over_budget != self.nucleus_over_budget {
-                self.nucleus_over_budget = poll.is_over_budget;
-                changed = true;
-            }
-            if poll.custom_skill_ids != self.cached_skill_ids {
-                self.cached_skill_ids = poll.custom_skill_ids;
-                changed = true;
-            }
+        if poll.is_over_budget != self.nucleus_over_budget {
+            self.nucleus_over_budget = poll.is_over_budget;
+            changed = true;
+        }
+        if poll.custom_skill_ids != self.cached_skill_ids {
+            self.cached_skill_ids = poll.custom_skill_ids;
+            changed = true;
+        }
 
-            let stale_behind_local_append = !events.is_empty()
-                && events.len() < self.events.len()
-                && self.events.get(events.len() - 1).map(|e| e.id)
-                    == events.last().map(|e| e.id);
-
-            if !stale_behind_local_append && events.len() != self.view.messages.len() {
+        // Only reproject on a successful, fresh read — a transient read error or an
+        // in-flight poll that raced with a local UI write/clear must not clobber the
+        // current view.
+        if let Some(events) = poll.events {
+            let poll_is_fresh = self.field_write_queue.is_poll_fresh(poll.field_epoch);
+            if should_sync_polled_events(
+                &self.events,
+                self.view.messages.len(),
+                &events,
+                poll_is_fresh,
+            ) {
                 self.sync_view(&events);
                 self.chat_list_state
                     .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
@@ -488,8 +642,15 @@ impl super::Chamber {
                 // The message list is unchanged (same events) but the resolved team is
                 // not — refresh the view so the new roster/Settings render. No
                 // message-count change, so `sync_view` degenerates to a zero-delta splice.
-                self.sync_view(&events);
+                let local = self.events.clone();
+                self.sync_view(&local);
             }
+        } else if team_changed {
+            let local = self.events.clone();
+            self.sync_view(&local);
+        }
+
+        if true {
             // The file tree is a live view of the disk, not a boot-time snapshot, and
             // autocomplete mentions must stay live regardless of which rail tab is up —
             // so the scan runs every tick. It just no longer runs *here*: it is three
@@ -825,8 +986,10 @@ fn find_plan_mention_in_text_with_plans(
         }) {
             return Some(rel.clone());
         }
-        if let Some(resolved) = resolve_plan_path(repo, &p) {
-            return Some(resolved);
+        if !hadron_lattice::wsl::is_wsl_unc_path(repo) {
+            if let Some(resolved) = resolve_plan_path(repo, &p) {
+                return Some(resolved);
+            }
         }
     }
 
@@ -1611,5 +1774,75 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let jobs = gather_overdue_schedule_jobs(temp.path());
         assert!(jobs.is_empty());
+    }
+
+    #[test]
+    fn should_sync_polled_events_rejects_stale_poll_after_clear() {
+        let old_session: Vec<Event> = (0..10)
+            .map(|i| Event::new(Actor::Human, None, Kind::Message { body: format!("msg {i}") }))
+            .collect();
+        let post_clear = vec![
+            Event::new(
+                Actor::Human,
+                None,
+                Kind::Command {
+                    cmd: "/clear".into(),
+                    exit: 0,
+                    out_summary: "reset".into(),
+                },
+            ),
+            Event::new(Actor::Human, None, Kind::ModeSet { mode: Mode::Bypass }),
+        ];
+
+        // When an in-flight FieldPoll captured `old_session` before `/clear` bumped the write
+        // epoch (`poll_is_fresh == false`), `should_sync_polled_events` MUST reject it so the
+        // old chat never flashes back for 1 second after `/clear`.
+        assert!(!should_sync_polled_events(
+            &post_clear,
+            post_clear.len(),
+            &old_session,
+            false
+        ));
+    }
+
+    #[test]
+    fn should_sync_polled_events_rejects_stale_poll_behind_local_append() {
+        let e1 = Event::new(Actor::Human, None, Kind::Message { body: "first".into() });
+        let e2 = Event::new(Actor::Human, None, Kind::Message { body: "second".into() });
+        let local = vec![e1.clone(), e2];
+        let polled = vec![e1];
+
+        assert!(!should_sync_polled_events(&local, local.len(), &polled, true));
+    }
+
+    #[test]
+    fn should_sync_polled_events_syncs_when_local_events_desynced_from_view() {
+        let e1 = Event::new(Actor::Human, None, Kind::Message { body: "first".into() });
+        let e2 = Event::new(Actor::Human, None, Kind::Message { body: "second".into() });
+        let polled = vec![e1, e2];
+
+        // Even if `view_message_len` already equals `polled.len()`, an empty `local_events`
+        // must sync so the first local append does not wipe prior chat history.
+        assert!(should_sync_polled_events(&[], 2, &polled, true));
+    }
+
+    #[test]
+    fn field_write_queue_epoch_and_quiescent_read_guard() {
+        let temp = tempfile::tempdir().unwrap();
+        let field_path = temp.path().join("field.jsonl");
+        let ev = Event::new(Actor::Human, None, Kind::Message { body: "hello".into() });
+        io::append_event(&field_path, &ev).unwrap();
+
+        let q = FieldWriteQueue::new();
+        assert_eq!(q.current_epoch(), 0);
+        let (read_evs, epoch) = q.read_events_if_quiescent(&field_path);
+        assert_eq!(epoch, Some(0));
+        assert_eq!(read_evs.unwrap().len(), 1);
+        assert!(q.is_poll_fresh(Some(0)));
+
+        // Bumping epoch invalidates any poll from epoch 0.
+        q.bump_epoch();
+        assert!(!q.is_poll_fresh(Some(0)));
+        assert!(q.is_poll_fresh(Some(1)));
     }
 }
