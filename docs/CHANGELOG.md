@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.45] - 2026-11-05
+
+### Added
+- **Segmented `Processes` Modal (`LiveProcess` vs `StandbyQuark`), Runner Backing Badges & `/proc` Worktree Attribution (`hadron-chamber`, `hadron-lattice`)**:
+  - Added `enrich_cmdline_with_worktree_and_env` in `crates/hadron-lattice/src/sys/inspect.rs` to append `[trees/<id>]` tags from `/proc/<pid>/cwd` symlinks and `HADRON_WSL_TAG=hadron:<id>` environment variables in `parse_proc_pid_dir`, and seeded `collect_process_tree` with worktree-tagged processes so WSL runner trees spawned from a Windows host are discovered (`crates/hadron-lattice/src/sys/inspect.rs`).
+  - Added `ProcessSection::{LiveProcess, StandbyQuark}` and `quark_backing_badge` in `crates/hadron-chamber/src/model/mod.rs`, matched root Quark PIDs by worktree paths and `HADRON_WSL_TAG`, and partitioned `Chamber::process_overlay` (`crates/hadron-chamber/src/app/render/overlays.rs`) into `LIVE OS PROCESSES` and `STANDBY QUARK SEATS` sections with explicit runner backing badges (`in-daemon`, `on-demand · idle`, `standby · no process`, `disabled · no process`) when no OS PID is attached (`crates/hadron-chamber/src/model/mod.rs`, `crates/hadron-chamber/src/model/tests.rs`, `crates/hadron-chamber/src/app/render/overlays.rs`).
+
 ## [0.33.44] - 2026-11-05
 
 ### Added

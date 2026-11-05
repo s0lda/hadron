@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.45",
+        date: Some("2026-11-05"),
+        added: &[
+            "Segmented Processes Modal (LiveProcess vs StandbyQuark), Runner Backing Badges & /proc Worktree Attribution: Added enrich_cmdline_with_worktree_and_env in hadron-lattice::sys::inspect to tag processes via /proc/<pid>/cwd and HADRON_WSL_TAG and seed WSL worktree roots in collect_process_tree; added ProcessSection and quark_backing_badge in hadron-chamber::model and partitioned process_overlay into LIVE OS PROCESSES and STANDBY QUARK SEATS sections with truthful runner backing badges",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.44",
         date: Some("2026-11-05"),
         added: &[
