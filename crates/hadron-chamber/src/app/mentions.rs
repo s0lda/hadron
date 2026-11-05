@@ -593,20 +593,92 @@ pub(super) fn resolve_mention_names_with_human(
             }
 
             let mut raw_token = String::new();
-            while let Some(&(_, nc)) = chars.peek() {
-                if !nc.is_whitespace()
-                    && nc != '<'
-                    && nc != '>'
-                    && nc != '"'
-                    && nc != '\''
-                    && nc != '`'
-                    && nc != '['
-                    && nc != '{'
-                {
-                    raw_token.push(nc);
-                    chars.next();
-                } else {
-                    break;
+            let mut trailing = String::new();
+            let mut consumed_bytes = 0usize;
+
+            if rest.starts_with('"') || rest.starts_with('\'') {
+                let quote_char = rest.chars().next().unwrap();
+                let after_quote = &rest[quote_char.len_utf8()..];
+                if let Some(end_q) = after_quote.find(|ch| ch == quote_char || ch == '\n') {
+                    if after_quote.as_bytes().get(end_q) == Some(&(quote_char as u8)) {
+                        let content = &after_quote[..end_q];
+                        raw_token = content.to_string();
+                        consumed_bytes = quote_char.len_utf8() + end_q + quote_char.len_utf8();
+                    }
+                }
+            }
+
+            if raw_token.is_empty() {
+                let line_rest = rest.split('\n').next().unwrap_or(rest);
+                let stop_idx = line_rest
+                    .find(|ch| matches!(ch, '`' | '[' | ']' | '{' | '}' | '<' | '>'))
+                    .unwrap_or(line_rest.len());
+                let candidate_line = &line_rest[..stop_idx];
+
+                let mut best_match: Option<(String, String, usize)> = None;
+                let mut current_sub = String::new();
+
+                for (w_idx, word) in candidate_line.split(' ').enumerate() {
+                    if w_idx > 0 {
+                        current_sub.push(' ');
+                    }
+                    current_sub.push_str(word);
+
+                    let mut test_token = current_sub.as_str();
+                    let mut test_trailing = String::new();
+                    while !test_token.is_empty() {
+                        let last_char = test_token.chars().next_back().unwrap();
+                        if matches!(last_char, ',' | ';' | '!' | '?' | ')' | ']' | '}' | '>' | '\'' | '"') {
+                            test_trailing.insert(0, last_char);
+                            test_token = &test_token[..test_token.len() - last_char.len_utf8()];
+                        } else if last_char == '.' {
+                            let rest_str = &test_token[..test_token.len() - 1];
+                            if rest_str.contains('.') {
+                                test_trailing.insert(0, last_char);
+                                test_token = rest_str;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if test_token.is_empty() {
+                        continue;
+                    }
+
+                    let (path_str, _, _) = parse_line_fragment(test_token);
+                    let starts_path = path_str.starts_with('/')
+                        || path_str.starts_with('~')
+                        || path_str.starts_with("./")
+                        || path_str.starts_with("../")
+                        || (path_str.starts_with('.') && path_str.len() > 1);
+                    let has_slash = path_str.contains('/') || path_str.contains('\\');
+
+                    let exists_on_disk = if path_str.starts_with('/') {
+                        std::path::Path::new(path_str).exists()
+                    } else if let Some(root) = repo_root {
+                        root.join(path_str).exists()
+                    } else {
+                        false
+                    };
+
+                    let is_file_m = is_file_mention(test_token, repo_root);
+
+                    if exists_on_disk || ((has_slash || starts_path) && is_file_m) {
+                        best_match = Some((test_token.to_string(), test_trailing, current_sub.len()));
+                    }
+
+                    if w_idx == 0 && !has_slash && !starts_path && !is_file_m {
+                        break;
+                    }
+                }
+
+                if let Some((tok, trail, len)) = best_match {
+                    raw_token = tok;
+                    trailing = trail;
+                    consumed_bytes = len;
                 }
             }
 
@@ -616,25 +688,16 @@ pub(super) fn resolve_mention_names_with_human(
                 continue;
             }
 
-            let mut token = raw_token.as_str();
-            let mut trailing = String::new();
-            while !token.is_empty() {
-                let last_char = token.chars().next_back().unwrap();
-                if matches!(last_char, ',' | ';' | '!' | '?' | ')' | ']' | '}' | '>' | '\'' | '"') {
-                    trailing.insert(0, last_char);
-                    token = &token[..token.len() - last_char.len_utf8()];
-                } else if last_char == '.' {
-                    let rest_str = &token[..token.len() - 1];
-                    if rest_str.contains('.') {
-                        trailing.insert(0, last_char);
-                        token = rest_str;
-                    } else {
-                        break;
-                    }
+            let target_idx = idx + 1 + consumed_bytes;
+            while let Some(&(curr_idx, _)) = chars.peek() {
+                if curr_idx < target_idx {
+                    chars.next();
                 } else {
                     break;
                 }
             }
+
+            let token = raw_token.as_str();
 
             if is_file_mention(token, repo_root) {
                 let (path_str, line_frag, line_display) = parse_line_fragment(token);
@@ -658,7 +721,8 @@ pub(super) fn resolve_mention_names_with_human(
                     std::path::Path::new("/").join(path_str)
                 };
 
-                let url = format!("file://{}{}", abs_path.display(), line_frag);
+                let encoded_path = encode_file_url_path(&abs_path.display().to_string());
+                let url = format!("file://{encoded_path}{line_frag}");
                 let title = token.replace('"', "&quot;");
                 let hex = crate::theme::file_link_hex();
                 out.push_str(&format!("[<span style=\"color: {hex}\">{display_name}</span>]({url} \"{title}\")"));
@@ -675,6 +739,19 @@ pub(super) fn resolve_mention_names_with_human(
 
         out.push(c);
         prev_char = Some(c);
+    }
+    out
+}
+
+fn encode_file_url_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 16);
+    for c in path.chars() {
+        match c {
+            ' ' => out.push_str("%20"),
+            '(' => out.push_str("%28"),
+            ')' => out.push_str("%29"),
+            _ => out.push(c),
+        }
     }
     out
 }
@@ -723,6 +800,56 @@ mod tests {
     use super::*;
     use crate::model::RosterRow;
     use hadron_lattice::QuarkState;
+
+    #[test]
+    fn file_mentions_with_spaces_resolve_to_encoded_markdown_links() {
+        let root = std::path::Path::new("/workspace");
+        let hex = crate::theme::file_link_hex();
+
+        // Mention with spaces in filename
+        let resolved = resolve_mention_names(
+            "See @assets/screenshots/Screenshot 2026-11-04 203117.png for details.",
+            &[],
+            Some(root),
+        );
+        assert_eq!(
+            resolved,
+            format!(
+                "See [<span style=\"color: {hex}\">Screenshot 2026-11-04 203117.png</span>](file:///workspace/assets/screenshots/Screenshot%202026-11-04%20203117.png \"assets/screenshots/Screenshot 2026-11-04 203117.png\") for details."
+            )
+        );
+
+        // Parentheses and spaces in URL path
+        let resolved_parens = resolve_mention_names(
+            "Check @assets/screenshots/Screenshot (1) 2026.png!",
+            &[],
+            Some(root),
+        );
+        assert_eq!(
+            resolved_parens,
+            format!(
+                "Check [<span style=\"color: {hex}\">Screenshot (1) 2026.png</span>](file:///workspace/assets/screenshots/Screenshot%20%281%29%202026.png \"assets/screenshots/Screenshot (1) 2026.png\")!"
+            )
+        );
+
+        // Quoted mention with spaces
+        let resolved_quoted = resolve_mention_names(
+            "Look at @\"assets/screenshots/Screenshot 2026-11-04 203117.png\"",
+            &[],
+            Some(root),
+        );
+        assert_eq!(
+            resolved_quoted,
+            format!(
+                "Look at [<span style=\"color: {hex}\">Screenshot 2026-11-04 203117.png</span>](file:///workspace/assets/screenshots/Screenshot%202026-11-04%20203117.png \"assets/screenshots/Screenshot 2026-11-04 203117.png\")"
+            )
+        );
+
+        // Test click target decoding via sys::file_url_target
+        let (target_path, line) = crate::sys::file_url_target("file:///workspace/assets/screenshots/Screenshot%202026-11-04%20203117.png").unwrap();
+        assert_eq!(target_path, std::path::PathBuf::from("/workspace/assets/screenshots/Screenshot 2026-11-04 203117.png"));
+        assert_eq!(line, None);
+    }
 
     #[test]
     fn test_parse_plan_progress() {

@@ -1423,8 +1423,12 @@ pub fn extract_completion_query_with_skills(
     }
 
     if let Some((arg_src, query, arg_start)) = last_cmd_arg {
-        if !query.starts_with('/') && !query.contains(char::is_whitespace) {
-            return Some((CompletionTrigger::Arg(arg_src), query, arg_start));
+        if !query.starts_with('/') {
+            if arg_src == ArgSource::File {
+                return Some((CompletionTrigger::Arg(arg_src), query, arg_start));
+            } else if !query.contains(char::is_whitespace) {
+                return Some((CompletionTrigger::Arg(arg_src), query, arg_start));
+            }
         }
     }
 
@@ -1446,6 +1450,23 @@ pub fn extract_completion_query_with_skills(
             return Some((CompletionTrigger::Command, query, idx));
         }
         if c.is_whitespace() {
+            if let Some(at_rel_pos) = current_line.rfind('@') {
+                let at_idx = line_start + at_rel_pos;
+                let is_boundary = at_idx == 0
+                    || before_cursor[..at_idx]
+                        .chars()
+                        .next_back()
+                        .map_or(true, |ch| !ch.is_alphanumeric());
+                if is_boundary && at_idx < idx {
+                    let q = &before_cursor[at_idx + 1..];
+                    if (q.contains('/') || q.contains('\\') || q.starts_with('.') || q.starts_with('~'))
+                        && !q.contains('\n')
+                        && !q.contains('`')
+                    {
+                        return Some((CompletionTrigger::Mention, q.to_string(), at_idx));
+                    }
+                }
+            }
             break;
         }
     }
@@ -2717,6 +2738,15 @@ mod tests {
             Some((CompletionTrigger::Emoji, "smi".to_string(), 5))
         );
         assert_eq!(extract_completion_query("no trigger", 10), None);
+    }
+
+    #[test]
+    fn extract_completion_query_supports_file_mentions_with_spaces() {
+        let text = "Check @assets/screenshots/Screenshot 2026";
+        assert_eq!(
+            extract_completion_query(text, text.len()),
+            Some((CompletionTrigger::Mention, "assets/screenshots/Screenshot 2026".to_string(), 6))
+        );
     }
 
     /// **Multibyte cursor-offset crash guard.** Every byte offset into a string full of multi-byte
