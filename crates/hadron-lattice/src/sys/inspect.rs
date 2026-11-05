@@ -135,6 +135,55 @@ pub fn format_rss(rss_bytes: u64) -> String {
     }
 }
 
+/// Helper to extract tree id from path containing `trees/<id>` or `trees\<id>`.
+fn extract_tree_id_from_path(path: &std::path::Path) -> Option<String> {
+    let s = path.to_string_lossy();
+    let idx = s.find("trees/").or_else(|| s.find("trees\\"))?;
+    let remainder = &s[idx + 6..];
+    let id = remainder.split(['/', '\\']).next()?;
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
+/// Helper to extract tree id from NUL-separated environ bytes containing `HADRON_WSL_TAG=hadron:<id>`.
+fn extract_tree_id_from_environ(environ_bytes: &[u8]) -> Option<String> {
+    for entry in environ_bytes.split(|&b| b == 0) {
+        if entry.starts_with(b"HADRON_WSL_TAG=hadron:") {
+            let tag_bytes = &entry[b"HADRON_WSL_TAG=hadron:".len()..];
+            if let Ok(tag) = std::str::from_utf8(tag_bytes) {
+                if !tag.is_empty() {
+                    return Some(tag.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Enrich a process command line with worktree ` [trees/<id>]` tags derived from
+/// `/proc/<pid>/cwd` symlinks and `HADRON_WSL_TAG=hadron:<id>` environment variables.
+pub fn enrich_cmdline_with_worktree_and_env(
+    cmdline: &str,
+    cwd: Option<&std::path::Path>,
+    environ_bytes: Option<&[u8]>,
+) -> String {
+    let tree_id = cwd
+        .and_then(extract_tree_id_from_path)
+        .or_else(|| environ_bytes.and_then(extract_tree_id_from_environ));
+
+    if let Some(id) = tree_id {
+        let tag_slash = format!("trees/{id}");
+        let tag_backslash = format!("trees\\{id}");
+        if !cmdline.contains(&tag_slash) && !cmdline.contains(&tag_backslash) {
+            return format!("{cmdline} [trees/{id}]");
+        }
+    }
+    cmdline.to_string()
+}
+
 /// Parse a `/proc/<pid>` directory into a [`ProcessInfo`].
 fn parse_proc_pid_dir(proc_base: &std::path::Path, pid: u32) -> Option<ProcessInfo> {
     let pid_dir = proc_base.join(pid.to_string());
@@ -166,7 +215,7 @@ fn parse_proc_pid_dir(proc_base: &std::path::Path, pid: u32) -> Option<ProcessIn
         }
     }
 
-    let cmdline = match std::fs::read(pid_dir.join("cmdline")) {
+    let raw_cmdline = match std::fs::read(pid_dir.join("cmdline")) {
         Ok(bytes) if !bytes.is_empty() => {
             let args: Vec<String> = bytes
                 .split(|&b| b == 0)
@@ -181,6 +230,14 @@ fn parse_proc_pid_dir(proc_base: &std::path::Path, pid: u32) -> Option<ProcessIn
         }
         _ => comm.clone(),
     };
+
+    let cwd = std::fs::read_link(pid_dir.join("cwd")).ok();
+    let environ_bytes = std::fs::read(pid_dir.join("environ")).ok();
+    let cmdline = enrich_cmdline_with_worktree_and_env(
+        &raw_cmdline,
+        cwd.as_deref(),
+        environ_bytes.as_deref(),
+    );
 
     Some(ProcessInfo {
         pid,
@@ -321,6 +378,13 @@ pub fn collect_process_tree(root_pids: &[u32], dir: &std::path::Path) -> Vec<Pro
             queue.push_back(r);
         }
     }
+    for p in &all_procs {
+        if p.cmdline.contains("trees/") || p.cmdline.contains("trees\\") {
+            if included.insert(p.pid) {
+                queue.push_back(p.pid);
+            }
+        }
+    }
 
     let mut children_map: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
     for p in &all_procs {
@@ -410,5 +474,31 @@ mod tests {
         }
         // Non-existent PID should always be false
         assert!(!is_process_alive_named_in_dir(999_999_999, &local_dir, "hadron-gluon"));
+    }
+
+    #[test]
+    fn enrich_cmdline_with_worktree_and_env_extracts_from_cwd_and_env() {
+        let cmd = "hadron-gluon --daemon";
+        let cwd_path = std::path::PathBuf::from("/home/user/.hadron/trees/acp-agy/crates/hadron-lattice");
+        let enriched = enrich_cmdline_with_worktree_and_env(cmd, Some(&cwd_path), None);
+        assert_eq!(enriched, "hadron-gluon --daemon [trees/acp-agy]");
+
+        // Idempotency check: if cmdline already has trees/acp-agy, return unchanged
+        let already_enriched = enrich_cmdline_with_worktree_and_env(&enriched, Some(&cwd_path), None);
+        assert_eq!(already_enriched, "hadron-gluon --daemon [trees/acp-agy]");
+
+        // Windows backslash cwd check
+        let win_cwd = std::path::PathBuf::from(r"C:\dev\.hadron\trees\acp-agy\crates");
+        let enriched_win = enrich_cmdline_with_worktree_and_env("hadron.exe", Some(&win_cwd), None);
+        assert_eq!(enriched_win, "hadron.exe [trees/acp-agy]");
+
+        // Environment fallback check
+        let env_bytes = b"FOO=bar\0HADRON_WSL_TAG=hadron:cli-agy\0BAR=baz\0";
+        let enriched_env = enrich_cmdline_with_worktree_and_env("python test.py", None, Some(env_bytes));
+        assert_eq!(enriched_env, "python test.py [trees/cli-agy]");
+
+        // Unmatched path returns unchanged
+        let plain_cwd = std::path::PathBuf::from("/home/user/project");
+        assert_eq!(enrich_cmdline_with_worktree_and_env("cargo test", Some(&plain_cwd), None), "cargo test");
     }
 }
