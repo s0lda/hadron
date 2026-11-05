@@ -2080,7 +2080,7 @@ impl super::Chamber {
     /// listing the Chamber UI, Gluon daemon, adopted quark seats, PTY terminals, and
     /// child subprocesses with live OS PID/PPID/RSS telemetry and lifecycle controls.
     pub(super) fn process_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        use crate::model::ProcessKind;
+        use crate::model::{ProcessKind, ProcessSection};
 
         let rows = self.resolve_running_processes();
         let now = chrono::Utc::now();
@@ -2117,8 +2117,39 @@ impl super::Chamber {
             .map(|r| r.id.clone())
             .collect();
 
+        let (live_rows, standby_rows): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .partition(|r| r.section == ProcessSection::LiveProcess);
+
+        let sections = [
+            (
+                format!("LIVE OS PROCESSES ({})", live_rows.len()),
+                live_rows,
+            ),
+            (
+                format!(
+                    "STANDBY QUARK SEATS ({}) — NO ACTIVE OS PROCESS",
+                    standby_rows.len()
+                ),
+                standby_rows,
+            ),
+        ];
+
         let mut list = v_flex().gap_2();
-        for row in rows {
+        for (section_title, section_rows) in sections {
+            if section_rows.is_empty() {
+                continue;
+            }
+            list = list.child(
+                div()
+                    .pt_1()
+                    .px_1()
+                    .text_size(px(10.0))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_color(theme::text_muted())
+                    .child(section_title),
+            );
+            for row in section_rows {
             let roster_row = (row.kind == ProcessKind::Quark)
                 .then(|| self.view.roster.iter().find(|r| r.id == row.id))
                 .flatten();
@@ -2468,7 +2499,7 @@ impl super::Chamber {
                                                         .child(model),
                                                 )
                                             })
-                                            .when_some(pid_badge, |this, pid_str| {
+                                            .when_some(pid_badge.or(row.backing_badge), |this, pid_str| {
                                                 this.child(
                                                     div()
                                                         .px_1p5()
@@ -2522,6 +2553,7 @@ impl super::Chamber {
                             .child(row_actions),
                     ),
             );
+            }
         }
 
         let summary_strip = h_flex()

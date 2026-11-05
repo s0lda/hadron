@@ -412,6 +412,47 @@ pub enum ProcessKind {
     Subprocess,
 }
 
+/// Which section of the Process Manager modal a row belongs to.
+///
+///Separates live OS processes (`Chamber`, `Gluon`, active/PID-backed `Quark` runners,
+/// `Terminal` PTYs, and child `Subprocess` rows) from standby/inactive `Quark` seats
+/// (`Idle` or `Disabled` with no active OS process).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ProcessSection {
+    LiveProcess,
+    StandbyQuark,
+}
+
+/// Truthful runner backing badge for a Quark seat when no separate OS PID is attached.
+pub fn quark_backing_badge(r: &RosterRow, has_pid: bool) -> Option<String> {
+    if has_pid {
+        return None;
+    }
+    Some(if !r.enabled {
+        "disabled · no process".to_string()
+    } else {
+        match r.transport {
+            hadron_lattice::Transport::Http | hadron_lattice::Transport::Sdk => {
+                "in-daemon".to_string()
+            }
+            hadron_lattice::Transport::Cli => {
+                if matches!(r.state, QuarkState::Excited | QuarkState::Thinking) {
+                    "cli runner".to_string()
+                } else {
+                    "on-demand · idle".to_string()
+                }
+            }
+            hadron_lattice::Transport::Acp => {
+                if matches!(r.state, QuarkState::Excited | QuarkState::Thinking) {
+                    "acp runner".to_string()
+                } else {
+                    "standby · no process".to_string()
+                }
+            }
+        }
+    })
+}
+
 /// One row in the Process Manager overlay: the daemon, adopted quark seat, PTY terminal,
 /// or child subprocess tree entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,10 +461,12 @@ pub struct ProcessRow {
     pub label: String,
     pub status: String,
     pub kind: ProcessKind,
+    pub section: ProcessSection,
     pub pid: Option<u32>,
     pub ppid: Option<u32>,
     pub rss_bytes: Option<u64>,
     pub command: Option<String>,
+    pub backing_badge: Option<String>,
     /// Force-restart is meaningful only for a resident (ACP) seat that is
     /// currently enabled — a disabled or one-shot CLI seat holds nothing to reap.
     pub can_restart: bool,
@@ -442,10 +485,12 @@ pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<Proc
         label: "hadron-gluon (daemon)".to_string(),
         status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
         kind: ProcessKind::Gluon,
+        section: ProcessSection::LiveProcess,
         pid: None,
         ppid: None,
         rss_bytes: None,
         command: None,
+        backing_badge: None,
         can_restart: true,
         can_toggle: false,
         enabled: gluon_running,
@@ -464,19 +509,26 @@ pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<Proc
                 QuarkState::Ground => "Idle".to_string(),
             }
         };
+        let is_active = r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking);
         ProcessRow {
             id: r.id.clone(),
             label: r.display_name.clone().unwrap_or_else(|| r.id.clone()),
             status,
             kind: ProcessKind::Quark,
+            section: if is_active {
+                ProcessSection::LiveProcess
+            } else {
+                ProcessSection::StandbyQuark
+            },
             pid: None,
             ppid: None,
             rss_bytes: None,
             command: None,
+            backing_badge: quark_backing_badge(r, false),
             can_restart: r.enabled && matches!(r.transport, hadron_lattice::Transport::Acp),
             can_toggle: true,
             enabled: r.enabled,
-            can_stop_or_kill: r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking),
+            can_stop_or_kill: is_active,
         }
     }));
     rows
@@ -504,10 +556,12 @@ pub fn build_full_process_rows(
         label: "hadron-chamber (main UI)".to_string(),
         status: "Running".to_string(),
         kind: ProcessKind::Chamber,
+        section: ProcessSection::LiveProcess,
         pid: Some(chamber_pid),
         ppid: chamber_info.map(|i| i.ppid),
         rss_bytes: chamber_info.and_then(|i| i.rss_bytes),
         command: chamber_info.map(|i| i.cmdline.clone()),
+        backing_badge: None,
         can_restart: false,
         can_toggle: false,
         enabled: true,
@@ -522,10 +576,12 @@ pub fn build_full_process_rows(
         label: "hadron-gluon (daemon)".to_string(),
         status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
         kind: ProcessKind::Gluon,
+        section: ProcessSection::LiveProcess,
         pid: effective_gluon_pid,
         ppid: gluon_info.map(|i| i.ppid),
         rss_bytes: gluon_info.and_then(|i| i.rss_bytes),
         command: gluon_info.map(|i| i.cmdline.clone()),
+        backing_badge: None,
         can_restart: true,
         can_toggle: false,
         enabled: gluon_running,
@@ -549,27 +605,48 @@ pub fn build_full_process_rows(
         };
         let tree_fwd = format!("trees/{}", r.id);
         let tree_back = format!("trees\\{}", r.id);
-        let quark_proc = process_tree.iter().find(|p| {
+        let wsl_tag = format!("hadron:{}", r.id);
+        let matches_quark = |p: &&hadron_lattice::sys::inspect::ProcessInfo| {
             p.pid != chamber_pid
                 && Some(p.pid) != effective_gluon_pid
-                && (p.cmdline.contains(&tree_fwd) || p.cmdline.contains(&tree_back))
-        });
+                && (p.cmdline.contains(&tree_fwd)
+                    || p.cmdline.contains(&tree_back)
+                    || p.cmdline.contains(&wsl_tag))
+        };
+        let matching_pids: std::collections::HashSet<u32> = process_tree
+            .iter()
+            .filter(matches_quark)
+            .map(|p| p.pid)
+            .collect();
+        let quark_proc = process_tree
+            .iter()
+            .filter(matches_quark)
+            .find(|p| !matching_pids.contains(&p.ppid))
+            .or_else(|| process_tree.iter().find(matches_quark));
         if let Some(qp) = quark_proc {
             quark_pids.push(qp.pid);
         }
+        let is_active = r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking);
+        let has_pid = quark_proc.is_some();
         ProcessRow {
             id: r.id.clone(),
             label: r.display_name.clone().unwrap_or_else(|| r.id.clone()),
             status,
             kind: ProcessKind::Quark,
+            section: if has_pid || is_active {
+                ProcessSection::LiveProcess
+            } else {
+                ProcessSection::StandbyQuark
+            },
             pid: quark_proc.map(|p| p.pid),
             ppid: quark_proc.map(|p| p.ppid),
             rss_bytes: quark_proc.and_then(|p| p.rss_bytes),
             command: quark_proc.map(|p| p.cmdline.clone()),
+            backing_badge: quark_backing_badge(r, has_pid),
             can_restart: r.enabled && matches!(r.transport, hadron_lattice::Transport::Acp),
             can_toggle: true,
             enabled: r.enabled,
-            can_stop_or_kill: r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking),
+            can_stop_or_kill: is_active,
         }
     }));
 
@@ -585,10 +662,12 @@ pub fn build_full_process_rows(
             label: title.clone(),
             status: if pid.is_some() { "Running".to_string() } else { "Stopped".to_string() },
             kind: ProcessKind::Terminal,
+            section: ProcessSection::LiveProcess,
             pid,
             ppid: term_info.map(|i| i.ppid),
             rss_bytes: term_info.and_then(|i| i.rss_bytes),
             command: term_info.map(|i| i.cmdline.clone()),
+            backing_badge: None,
             can_restart: false,
             can_toggle: false,
             enabled: pid.is_some(),
@@ -616,10 +695,12 @@ pub fn build_full_process_rows(
                 label: p.name.clone(),
                 status: "Running".to_string(),
                 kind: ProcessKind::Subprocess,
+                section: ProcessSection::LiveProcess,
                 pid: Some(p.pid),
                 ppid: Some(p.ppid),
                 rss_bytes: p.rss_bytes,
                 command: Some(p.cmdline.clone()),
+                backing_badge: None,
                 can_restart: false,
                 can_toggle: false,
                 enabled: true,

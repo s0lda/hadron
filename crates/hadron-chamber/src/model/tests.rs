@@ -566,23 +566,104 @@
 
         assert_eq!(rows.len(), 5);
         assert_eq!(rows[0].kind, ProcessKind::Chamber);
+        assert_eq!(rows[0].section, ProcessSection::LiveProcess);
         assert_eq!(rows[0].pid, Some(100));
         assert_eq!(rows[0].rss_bytes, Some(1024 * 1024 * 50));
 
         assert_eq!(rows[1].kind, ProcessKind::Gluon);
+        assert_eq!(rows[1].section, ProcessSection::LiveProcess);
         assert_eq!(rows[1].pid, Some(200));
 
         assert_eq!(rows[2].kind, ProcessKind::Quark);
         assert_eq!(rows[2].id, "acp-claude");
+        assert_eq!(rows[2].section, ProcessSection::LiveProcess);
+        assert_eq!(rows[2].backing_badge.as_deref(), Some("acp runner"));
 
         assert_eq!(rows[3].kind, ProcessKind::Terminal);
         assert_eq!(rows[3].id, "pty-0");
+        assert_eq!(rows[3].section, ProcessSection::LiveProcess);
         assert_eq!(rows[3].pid, Some(12345));
 
         assert_eq!(rows[4].kind, ProcessKind::Subprocess);
         assert_eq!(rows[4].id, "pid-54321");
+        assert_eq!(rows[4].section, ProcessSection::LiveProcess);
         assert_eq!(rows[4].pid, Some(54321));
         assert_eq!(rows[4].command.as_deref(), Some("cargo test"));
+    }
+
+    #[test]
+    fn build_full_process_rows_partitions_standby_quarks_and_assigns_backing_badges() {
+        use hadron_lattice::Transport;
+        use hadron_lattice::sys::inspect::ProcessInfo;
+
+        let mut active_with_pid = roster_entry("cli-agy", Transport::Cli);
+        active_with_pid.state = QuarkState::Thinking;
+
+        let idle_acp = roster_entry("acp-claude", Transport::Acp);
+        let idle_cli = roster_entry("cli-codex", Transport::Cli);
+        let idle_http = roster_entry("http-openrouter", Transport::Http);
+        let mut disabled_seat = roster_entry("acp-gemini", Transport::Acp);
+        disabled_seat.enabled = false;
+
+        let process_tree = vec![
+            ProcessInfo {
+                pid: 100,
+                ppid: 1,
+                name: "hadron-chamber".to_string(),
+                cmdline: "/usr/bin/hadron-chamber".to_string(),
+                rss_bytes: Some(1024 * 1024 * 40),
+            },
+            ProcessInfo {
+                pid: 200,
+                ppid: 100,
+                name: "hadron-gluon".to_string(),
+                cmdline: "/usr/bin/hadron-gluon".to_string(),
+                rss_bytes: Some(1024 * 1024 * 20),
+            },
+            ProcessInfo {
+                pid: 300,
+                ppid: 200,
+                name: "agy".to_string(),
+                cmdline: "agy chat [trees/cli-agy]".to_string(),
+                rss_bytes: Some(1024 * 1024 * 80),
+            },
+        ];
+
+        let rows = build_full_process_rows(
+            100,
+            true,
+            Some(200),
+            &[active_with_pid, idle_acp, idle_cli, idle_http, disabled_seat],
+            &[],
+            &process_tree,
+        );
+
+        let by_id = |id: &str| rows.iter().find(|r| r.id == id).unwrap();
+
+        let cli_agy = by_id("cli-agy");
+        assert_eq!(cli_agy.section, ProcessSection::LiveProcess);
+        assert_eq!(cli_agy.pid, Some(300));
+        assert_eq!(cli_agy.backing_badge, None);
+
+        let acp_claude = by_id("acp-claude");
+        assert_eq!(acp_claude.section, ProcessSection::StandbyQuark);
+        assert_eq!(acp_claude.pid, None);
+        assert_eq!(acp_claude.backing_badge.as_deref(), Some("standby · no process"));
+
+        let cli_codex = by_id("cli-codex");
+        assert_eq!(cli_codex.section, ProcessSection::StandbyQuark);
+        assert_eq!(cli_codex.pid, None);
+        assert_eq!(cli_codex.backing_badge.as_deref(), Some("on-demand · idle"));
+
+        let http_or = by_id("http-openrouter");
+        assert_eq!(http_or.section, ProcessSection::StandbyQuark);
+        assert_eq!(http_or.pid, None);
+        assert_eq!(http_or.backing_badge.as_deref(), Some("in-daemon"));
+
+        let acp_gemini = by_id("acp-gemini");
+        assert_eq!(acp_gemini.section, ProcessSection::StandbyQuark);
+        assert_eq!(acp_gemini.pid, None);
+        assert_eq!(acp_gemini.backing_badge.as_deref(), Some("disabled · no process"));
     }
 
     /// The Session tab reported zeros for every quark: it decided who was a quark by
