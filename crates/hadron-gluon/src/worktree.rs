@@ -1418,6 +1418,9 @@ pub fn commit_turn_with_author(
 ) -> anyhow::Result<Option<String>> {
     reconcile_worktree_dot_hadron(&wt.path)?;
     if !is_dirty(&wt.path)? {
+        if !wt.branch.is_empty() && current_branch(&wt.path).as_deref() != Some(wt.branch.as_str()) {
+            let _ = git(&wt.path, &["checkout", "-q", "-B", &wt.branch, "HEAD"]);
+        }
         return Ok(None);
     }
     git(&wt.path, &["add", "-A"])?;
@@ -1431,6 +1434,9 @@ pub fn commit_turn_with_author(
         envs.push(("GIT_COMMITTER_EMAIL", email));
     }
     crate::snapshot::git_with_env(&wt.path, &["commit", "-q", "-m", message], &envs)?;
+    if !wt.branch.is_empty() && current_branch(&wt.path).as_deref() != Some(wt.branch.as_str()) {
+        let _ = git(&wt.path, &["checkout", "-q", "-B", &wt.branch, "HEAD"]);
+    }
     Ok(head(&wt.path))
 }
 

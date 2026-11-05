@@ -29,9 +29,10 @@ use super::*;
 /// Returns how long the silence lasted, so the error can say it.
 /// Grace window after a single `"error"` / `"error message"` step before the silence
 /// watchdog reaps the turn. `agy` CLI retries transient upstream stream `EOF` errors
-/// with a ~64s–85s backoff before `attempt 2` fires, so 30s reaped recoverable turns
-/// mid-backoff while 3 consecutive error steps still abort immediately in `cli.rs`.
-const ERROR_GRACE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+/// with a ~64s–85s backoff before `attempt 2` fires and another ~20s–80s to stream the
+/// next `PLANNER_RESPONSE` step, so 180s accommodates backoff + recovery generation while
+/// 3 consecutive error steps still abort immediately in `cli.rs`.
+const ERROR_GRACE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
 
 async fn until_silent(
     live_dir: &std::path::Path,
@@ -1696,8 +1697,8 @@ mod tests {
     async fn until_silent_triggers_fast_error_deadline_on_error_activity() {
         assert_eq!(
             ERROR_GRACE_DEADLINE,
-            std::time::Duration::from_secs(90),
-            "production error grace deadline must be 90s to accommodate agy's ~64s-85s EOF retry backoff"
+            std::time::Duration::from_secs(180),
+            "production error grace deadline must be 180s to accommodate agy's ~64s-85s EOF retry backoff plus next-step generation"
         );
         let temp = tempfile::tempdir().unwrap();
         let qid = QuarkId::new("test-quark");

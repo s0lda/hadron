@@ -762,6 +762,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
     fn attach_cancel_slot(&mut self, slot: crate::quark::CancelSlot) {
         self.cancel_slot = Some(slot);
     }
+    fn reset_session(&mut self) {
+        self.resident = false;
+    }
     async fn excite(&mut self, turn: Projection) -> anyhow::Result<TurnOutcome> {
         let mode = turn.mode;
         let cwd = turn.cwd.clone();
@@ -918,7 +921,12 @@ impl<R: CliRunner> Quark for CliQuark<R> {
                 }
                 Err(err) => {
                     let err_msg = err.to_string();
-                    if is_retryable_cli_error(&err_msg) && attempt + 1 < max_attempts {
+                    let already_exhausted_stream =
+                        err_msg.contains("quark stream failed with error steps");
+                    if !already_exhausted_stream
+                        && is_retryable_cli_error(&err_msg)
+                        && attempt + 1 < max_attempts
+                    {
                         eprintln!(
                             "CliQuark {} turn attempt {} failed with retryable error, retrying: {err_msg}",
                             self.id.as_str(),
@@ -1946,5 +1954,11 @@ mod tests {
             "graceful cancel via CancelSlot must preserve CliQuark.resident so resumed turn uses --continue"
         );
         assert!(!slot.is_filled(), "CancelSlot must be cleared after cancelled turn returns");
+
+        quark.reset_session();
+        assert!(
+            !quark.resident,
+            "Quark::reset_session on CliQuark must clear resident so /clear, /reboot, and 70%/150k context rotation start a fresh conversation"
+        );
     }
 }

@@ -141,15 +141,34 @@ pub struct ProcessRunner;
 /// aborts an in-flight turn task).
 struct ChildProcessGuard {
     pid: Option<u32>,
+    wsl_kill_target: Option<(String, String)>,
     armed: bool,
 }
 
 impl ChildProcessGuard {
-    fn new(pid: Option<u32>) -> Self {
+    fn new(pid: Option<u32>, wsl_kill_target: Option<(String, String)>) -> Self {
         if let Some(p) = pid {
             crate::proc::register(p);
         }
-        Self { pid, armed: true }
+        Self {
+            pid,
+            wsl_kill_target,
+            armed: true,
+        }
+    }
+
+    fn kill_now(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        if let Some(p) = self.pid {
+            crate::proc::unregister(p);
+            hadron_lattice::sys::process::kill_process_group(p);
+        }
+        if let Some((distro, tag)) = self.wsl_kill_target.take() {
+            reap_wsl_tagged_processes(&distro, &tag);
+        }
     }
 
     fn disarm(&mut self) {
@@ -162,13 +181,39 @@ impl ChildProcessGuard {
 
 impl Drop for ChildProcessGuard {
     fn drop(&mut self) {
-        if let Some(p) = self.pid {
+        if self.armed {
+            self.kill_now();
+        } else if let Some(p) = self.pid {
             crate::proc::unregister(p);
-            if self.armed {
-                hadron_lattice::sys::process::kill_process_group(p);
-            }
         }
     }
+}
+
+/// Reap all Linux processes inside `distro` that inherited `HADRON_WSL_TAG=<tag>`.
+/// Terminating `wsl.exe` on Windows via `taskkill` kills the host relay without
+/// signaling the Linux child tree inside WSL2, which otherwise leaves orphaned
+/// `agy` / `language_server_linux_x64` processes running for 10+ minutes.
+fn reap_wsl_tagged_processes(distro: &str, tag: &str) {
+    if tag.is_empty() {
+        return;
+    }
+    let script = concat!(
+        "for e in /proc/[0-9]*/environ; do ",
+        "p=${e#/proc/}; p=${p%/environ}; ",
+        "[ \"$p\" != \"$$\" ] && tr '\\0' '\\n' < \"$e\" 2>/dev/null | grep -qx \"HADRON_WSL_TAG=$1\" && kill -TERM \"$p\" 2>/dev/null; ",
+        "done; sleep 0.1; ",
+        "for e in /proc/[0-9]*/environ; do ",
+        "p=${e#/proc/}; p=${p%/environ}; ",
+        "[ \"$p\" != \"$$\" ] && tr '\\0' '\\n' < \"$e\" 2>/dev/null | grep -qx \"HADRON_WSL_TAG=$1\" && kill -KILL \"$p\" 2>/dev/null; ",
+        "done"
+    );
+    let mut cmd = std::process::Command::new("wsl.exe");
+    cmd.args(["-d", distro, "--exec", "sh", "-c", script, "sh", tag])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    cmd.set_process_group();
+    let _ = cmd.spawn();
 }
 
 #[async_trait]
@@ -213,10 +258,20 @@ impl CliRunner for ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        if running_via_wsl && !inv.env.is_empty() {
-            let wslenv = hadron_lattice::wsl::wslenv_for_keys(inv.env.iter().map(|(k, _)| k.as_str()));
+        let wsl_kill_target = if running_via_wsl {
+            let tag = ulid::Ulid::new().to_string();
+            child_cmd.env("HADRON_WSL_TAG", &tag);
+            let keys = inv
+                .env
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .chain(std::iter::once("HADRON_WSL_TAG"));
+            let wslenv = hadron_lattice::wsl::wslenv_for_keys(keys);
             child_cmd.env("WSLENV", wslenv);
-        }
+            wsl_parsed.as_ref().map(|(distro, _)| (distro.clone(), tag))
+        } else {
+            None
+        };
 
         child_cmd.kill_on_drop(true);
         child_cmd.as_std_mut().set_process_group();
@@ -239,7 +294,7 @@ impl CliRunner for ProcessRunner {
                 }
             })?;
 
-        let mut child_guard = ChildProcessGuard::new(child.id());
+        let mut child_guard = ChildProcessGuard::new(child.id(), wsl_kill_target);
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(inv.stdin.as_bytes()).await?;
@@ -413,10 +468,20 @@ impl CliRunner for ProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        if running_via_wsl && !inv.env.is_empty() {
-            let wslenv = hadron_lattice::wsl::wslenv_for_keys(inv.env.iter().map(|(k, _)| k.as_str()));
+        let wsl_kill_target = if running_via_wsl {
+            let tag = ulid::Ulid::new().to_string();
+            child_cmd.env("HADRON_WSL_TAG", &tag);
+            let keys = inv
+                .env
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .chain(std::iter::once("HADRON_WSL_TAG"));
+            let wslenv = hadron_lattice::wsl::wslenv_for_keys(keys);
             child_cmd.env("WSLENV", wslenv);
-        }
+            wsl_parsed.as_ref().map(|(distro, _)| (distro.clone(), tag))
+        } else {
+            None
+        };
 
         child_cmd.kill_on_drop(true);
         child_cmd.as_std_mut().set_process_group();
@@ -435,7 +500,7 @@ impl CliRunner for ProcessRunner {
                 }
             })?;
 
-        let mut child_guard = ChildProcessGuard::new(child.id());
+        let mut child_guard = ChildProcessGuard::new(child.id(), wsl_kill_target);
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(inv.stdin.as_bytes()).await?;
@@ -479,9 +544,7 @@ impl CliRunner for ProcessRunner {
             }
         };
         if aborted_early {
-            if let Some(pid) = child.id() {
-                hadron_lattice::sys::process::kill_process_group(pid);
-            }
+            child_guard.kill_now();
             let _ = child.kill().await;
         }
         let stderr = tokio::time::timeout(std::time::Duration::from_millis(500), stderr_handle)
