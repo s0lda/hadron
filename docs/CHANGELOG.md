@@ -5,6 +5,20 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.44] - 2026-11-05
+
+### Added
+- **Hadron Process Manager (`#processes` Modal Upgrade), Live Process Tree Telemetry & Windows Binary Metadata (`hadron-chamber`, `hadron-lattice`)**:
+  - Added `ProcessInfo`, `format_rss`, `inspect_process`, and `collect_process_tree` in `crates/hadron-lattice/src/sys/inspect.rs`, exposed `PtyTerminal::process_id()` in `crates/hadron-chamber/src/pty.rs`, and added `ProcessKind` (`Chamber`, `Gluon`, `Quark`, `Terminal`, `Subprocess`) and `build_full_process_rows` in `crates/hadron-chamber/src/model/mod.rs` to project the full Hadron process hierarchy (`crates/hadron-lattice/src/sys/inspect.rs`, `crates/hadron-lattice/src/sys/mod.rs`, `crates/hadron-chamber/src/pty.rs`, `crates/hadron-chamber/src/model/mod.rs`).
+  - Wired background `probe_gluon_pid` and `collect_process_tree` polling into `FieldPoll::gather` (`crates/hadron-chamber/src/app/reload.rs`) and upgraded `Chamber::process_overlay` (`crates/hadron-chamber/src/app/render/overlays.rs`) with live PID/PPID/RSS badges, total RSS and subprocess summary pills, and per-row lifecycle controls (`Start`/`Restart`/`Stop` for `hadron-gluon`, `Stop`/`Restart`/`Enable`/`Disable`/`Settings` for Quarks, `Focus`/`Kill` for PTY terminals, `Kill` for child subprocesses, and `Refresh`) (`crates/hadron-chamber/src/sys.rs`, `crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/render/overlays.rs`).
+  - Updated the main GPUI window title to `Hadron` and added per-binary Windows `VERSIONINFO` `FileDescription` / `ProductName` metadata (`Hadron`, `Hadron Gluon`, and `Hadron Forge MCP`) (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/build.rs`).
+
+### Fixed
+- **CLI Session Rotation (`CliQuark::reset_session`), WSL Child-Tree Reaping (`HADRON_WSL_TAG`), Error-Grace Watchdog & Worktree Branch Realignment (`hadron-gluon`, `hadron-chamber`)**:
+  - Implemented `Quark::reset_session` on `CliQuark` (`self.resident = false`) so `/clear`, `/reboot`, and 70% / 150k-token context rotation reset `--continue` CLI sessions instead of accumulating 200k+ uncached input tokens across multi-day conversations, and skipped redundant 3× internal retries in `CliQuark::excite` after streaming error-step exhaustion (`crates/hadron-gluon/src/adapter/cli.rs`).
+  - Tagged WSL-wrapped CLI invocations in `ProcessRunner` with `HADRON_WSL_TAG=<ulid>` via `WSLENV` and reaped matching Linux processes in `/proc/[0-9]*/environ` inside `ChildProcessGuard::kill_now` so terminating `wsl.exe` on Windows never leaves orphaned `agy` / `language_server_linux_x64` subprocess trees running inside WSL2 (`crates/hadron-gluon/src/adapter/runner.rs`).
+  - Raised `ERROR_GRACE_DEADLINE` from `90s` to `180s` in `crates/hadron-gluon/src/engine/run.rs` to accommodate `agy`'s 64–85s stream-EOF retry backoff plus next-step tool generation, realigned `wt.branch` to `HEAD` in `worktree::commit_turn_with_author` when a quark switches branches inside its worktree, and bounded multi-word `@file` mentions and WSL UNC `file://` URLs (`crates/hadron-gluon/src/engine/run.rs`, `crates/hadron-gluon/src/worktree.rs`, `crates/hadron-chamber/src/app/markdown.rs`, `crates/hadron-chamber/src/app/render/chat.rs`).
+
 ## [0.33.43] - 2026-11-04
 
 ### Fixed

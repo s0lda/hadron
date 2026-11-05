@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.44",
+        date: Some("2026-11-05"),
+        added: &[
+            "Hadron Process Manager (#processes Modal Upgrade), Live Process Tree Telemetry & Windows Binary Metadata: Added ProcessInfo, format_rss, and collect_process_tree in hadron-lattice::sys::inspect, PtyTerminal::process_id() in pty.rs, and ProcessKind + build_full_process_rows in hadron-chamber::model; polled gluon_pid and process trees in FieldPoll::gather and upgraded process_overlay to display Chamber, Gluon, Quark, Terminal, and Subprocess rows with live PID/PPID/RSS badges and Start/Stop/Restart/Focus/Kill/Refresh controls; set Hadron window title and per-binary Windows VERSIONINFO descriptions",
+        ],
+        changed: &[],
+        fixed: &[
+            "CLI Session Rotation (CliQuark::reset_session), WSL Child-Tree Reaping (HADRON_WSL_TAG), Error-Grace Watchdog & Worktree Branch Realignment: Implemented Quark::reset_session on CliQuark so /clear, /reboot, and 70%/150k context rotation reset --continue sessions, tagged WSL CLI processes with HADRON_WSL_TAG via WSLENV and reaped Linux /proc trees on turn abort, raised ERROR_GRACE_DEADLINE to 180s, realigned wt.branch to HEAD in commit_turn_with_author when a quark switches branches, and bounded multi-word @file mentions and WSL UNC file:// URLs",
+        ],
+    },
+    Release {
         version: "0.33.43",
         date: Some("2026-11-04"),
         added: &[],
