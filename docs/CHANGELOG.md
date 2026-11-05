@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.46] - 2026-11-05
+
+### Added
+- **User-Adjustable Test & Build CPU Controls (`hadron-lattice`, `hadron-forge`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added `test_low_priority: Option<bool>` (default `true` via `Team::effective_test_low_priority()`) and `test_max_threads: Option<usize>` (default `None` / auto via `Team::effective_test_max_threads()`) to `hadron_lattice::Team` and `resolve_team`, alongside `ConfigureProcessGroup::set_process_group_with_priority` (`BELOW_NORMAL_PRIORITY_CLASS` on Windows) and `lower_process_group_priority` (`libc::setpriority` `nice +10` on Unix/WSL) (`crates/hadron-lattice/src/team/mod.rs`, `crates/hadron-lattice/src/team/tests.rs`, `crates/hadron-lattice/src/sys/process.rs`).
+  - Wired lowered OS scheduling priority into `hadron_gluon::merge::run_tests_within` and `hadron_forge::exec::run_bounded`, and injected `HADRON_TEST_LOW_PRIORITY`, `CARGO_BUILD_JOBS`, `RUST_TEST_THREADS`, and `RAYON_NUM_THREADS` (plus `WSLENV` forwarding) in `hadron_gluon::worktree::shared_build_env` and `shared_build_env_for_quark` (`crates/hadron-forge/src/exec.rs`, `crates/hadron-gluon/src/merge.rs`, `crates/hadron-gluon/src/worktree.rs`).
+  - Added a dedicated **Test & Build CPU Control** card in `Settings > Executions` (`crates/hadron-chamber/src/app/settings/providers.rs`) with a toggle switch for lowered test/build process priority, pill selectors for max test/build threads (`Auto`, `1`, `2`, `4`, `8`, `16`), and direct pill selectors for max concurrent merge gates (`1`, `2`, `4`, `8`, `16`) (`crates/hadron-chamber/src/app/settings/providers.rs`).
+
 ## [0.33.45] - 2026-11-05
 
 ### Added

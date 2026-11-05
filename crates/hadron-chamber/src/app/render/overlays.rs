@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.46",
+        date: Some("2026-11-05"),
+        added: &[
+            "User-Adjustable Test & Build CPU Controls (hadron-lattice, hadron-forge, hadron-gluon, hadron-chamber): Added test_low_priority (default true) and test_max_threads (default Auto/uncapped) to Team, lowered OS scheduling priority (nice +10 on Unix/WSL, BELOW_NORMAL_PRIORITY_CLASS on Windows) in merge::run_tests_within and hadron_forge::exec::run_bounded, injected CARGO_BUILD_JOBS, RUST_TEST_THREADS, and RAYON_NUM_THREADS in worktree::shared_build_env, and added the Test & Build CPU Control card in Settings > Executions with priority toggle, thread cap pills (Auto, 1, 2, 4, 8, 16), and max concurrent merge gates pills (1, 2, 4, 8, 16)",
+        ],
+        changed: &[],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.45",
         date: Some("2026-11-05"),
         added: &[
