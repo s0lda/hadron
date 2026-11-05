@@ -323,6 +323,11 @@ pub async fn run_tests_within(
     // `worktree::shared_build_env` for why; the quark's own subprocess gets the very
     // same env, which is the point of it living in one place.
     let build_env = crate::worktree::shared_build_env(&wt.path);
+    let low_priority = build_env
+        .iter()
+        .find(|(k, _)| k == "HADRON_TEST_LOW_PRIORITY")
+        .map(|(_, v)| v != "0" && v != "false")
+        .unwrap_or(true);
     if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(&wt.path) {
         let mut keys = Vec::with_capacity(build_env.len());
         for (k, v) in build_env {
@@ -346,7 +351,7 @@ pub async fn run_tests_within(
     // which is exactly the process that was still burning four CPU-hours after the
     // daemon that started it had given up on it.
     use hadron_lattice::sys::ConfigureProcessGroup;
-    cmd.as_std_mut().set_process_group();
+    cmd.as_std_mut().set_process_group_with_priority(low_priority);
 
     let child = match cmd.spawn() {
         Ok(c) => c,
@@ -360,6 +365,9 @@ pub async fn run_tests_within(
     // Read before the handle is consumed by `wait_with_output`.
     let pid = child.id();
     if let Some(pid) = pid {
+        if low_priority {
+            hadron_lattice::sys::lower_process_group_priority(pid);
+        }
         crate::proc::register(pid);
     }
 

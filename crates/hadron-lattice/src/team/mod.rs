@@ -113,6 +113,13 @@ pub struct Team {
     /// Whether documentation and asset-only changes bypass full test suite running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_path_docs_only: Option<bool>,
+    /// Whether test and build subprocesses run at lowered OS scheduling priority (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_low_priority: Option<bool>,
+    /// Optional cap on per-invocation test and build worker threads (`CARGO_BUILD_JOBS`,
+    /// `RUST_TEST_THREADS`, `RAYON_NUM_THREADS`). `None` or `Some(0)` = auto/uncapped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_max_threads: Option<usize>,
 }
 
 impl Default for Team {
@@ -136,6 +143,8 @@ impl Default for Team {
             max_concurrent_gates: None,
             gate_batch_size: None,
             fast_path_docs_only: None,
+            test_low_priority: None,
+            test_max_threads: None,
         }
     }
 }
@@ -265,6 +274,16 @@ impl Team {
     pub fn effective_fast_path_docs_only(&self) -> bool {
         self.fast_path_docs_only.unwrap_or(self.hadron_lab_enabled())
     }
+
+    /// Whether test and build subprocesses should run at lowered OS priority (default `true`).
+    pub fn effective_test_low_priority(&self) -> bool {
+        self.test_low_priority.unwrap_or(true)
+    }
+
+    /// Effective per-invocation thread cap for test and build commands (`None` = auto/uncapped).
+    pub fn effective_test_max_threads(&self) -> Option<usize> {
+        self.test_max_threads.filter(|&n| n > 0)
+    }
 }
 
 /// Fold a repo team together with the global catalogue into the concrete team the
@@ -372,5 +391,7 @@ pub fn resolve_team(repo: &Team, global: &Team) -> Team {
         max_concurrent_gates: repo.max_concurrent_gates.or(global.max_concurrent_gates),
         gate_batch_size: repo.gate_batch_size.or(global.gate_batch_size),
         fast_path_docs_only: repo.fast_path_docs_only.or(global.fast_path_docs_only),
+        test_low_priority: repo.test_low_priority.or(global.test_low_priority),
+        test_max_threads: repo.test_max_threads.or(global.test_max_threads),
     }
 }

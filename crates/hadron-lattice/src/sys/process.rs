@@ -92,22 +92,51 @@ pub fn terminate_gluon_in_dir(pid: u32, field_dir: &std::path::Path) {
     }
 }
 
+/// Lower the OS scheduling priority of a spawned child process and its process group.
+///
+/// On Unix, sets `nice` to `+10` (`PRIO_PGRP` and `PRIO_PROCESS`) for `pid`.
+/// On Windows, priority lowering is applied at spawn time via `BELOW_NORMAL_PRIORITY_CLASS`
+/// in [`ConfigureProcessGroup::set_process_group_with_priority`].
+pub fn lower_process_group_priority(pid: u32) {
+    #[cfg(unix)]
+    if pid > 0 {
+        unsafe {
+            let _ = libc::setpriority(libc::PRIO_PGRP, pid as libc::id_t, 10);
+            let _ = libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, 10);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
 /// Extension trait to configure process group creation cross-platform.
 pub trait ConfigureProcessGroup {
     fn set_process_group(&mut self) -> &mut Self;
+    fn set_process_group_with_priority(&mut self, low_priority: bool) -> &mut Self;
 }
 
 impl ConfigureProcessGroup for Command {
     fn set_process_group(&mut self) -> &mut Self {
+        self.set_process_group_with_priority(false)
+    }
+
+    fn set_process_group_with_priority(&mut self, low_priority: bool) -> &mut Self {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
+            let _ = low_priority;
             self.process_group(0);
         }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            self.creation_flags(0x00000200 | 0x08000000); // CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+            // CREATE_NEW_PROCESS_GROUP (0x00000200) | CREATE_NO_WINDOW (0x08000000)
+            // Optionally OR BELOW_NORMAL_PRIORITY_CLASS (0x00004000).
+            let mut flags = 0x00000200 | 0x08000000;
+            if low_priority {
+                flags |= 0x00004000;
+            }
+            self.creation_flags(flags);
         }
         self
     }

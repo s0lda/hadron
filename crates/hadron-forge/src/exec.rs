@@ -218,6 +218,19 @@ pub fn kill_process_group(pid: u32) {
 #[cfg(not(any(unix, windows)))]
 pub fn kill_process_group(_pid: u32) {}
 
+/// Parse a `HADRON_TEST_LOW_PRIORITY` environment flag string (defaults to `true` when absent).
+pub fn parse_low_priority_flag(val: Option<&str>) -> bool {
+    match val.map(|s| s.trim()) {
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("off") => false,
+        _ => true,
+    }
+}
+
+/// Whether subprocesses spawned by `hadron-forge` should run at lowered OS scheduling priority.
+pub fn low_priority_enabled() -> bool {
+    parse_low_priority_flag(std::env::var("HADRON_TEST_LOW_PRIORITY").ok().as_deref())
+}
+
 /// Run `cmd` under a wall-clock `deadline`, killing its process group on expiry.
 ///
 /// The wait happens on a worker thread via `wait_with_output`, which drains both
@@ -228,6 +241,7 @@ pub fn run_bounded(
     deadline: Duration,
     label: &str,
 ) -> std::io::Result<BoundedOutput> {
+    let low_priority = low_priority_enabled();
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -236,7 +250,11 @@ pub fn run_bounded(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x00000200);
+        let mut flags = 0x00000200; // CREATE_NEW_PROCESS_GROUP
+        if low_priority {
+            flags |= 0x00004000; // BELOW_NORMAL_PRIORITY_CLASS
+        }
+        cmd.creation_flags(flags);
     }
 
     cmd.stdin(std::process::Stdio::null())
@@ -244,6 +262,14 @@ pub fn run_bounded(
         .stderr(std::process::Stdio::piped());
     let child = cmd.spawn()?;
     let pid = child.id();
+
+    #[cfg(unix)]
+    if low_priority && pid > 0 {
+        unsafe {
+            let _ = libc::setpriority(libc::PRIO_PGRP, pid as libc::id_t, 10);
+            let _ = libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, 10);
+        }
+    }
 
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -341,7 +367,10 @@ pub fn build_exec_command(cwd: &Path, program: Program, args: &[String]) -> Comm
         ]);
         cmd.args(args);
         cmd.env("GIT_TERMINAL_PROMPT", "0");
-        cmd.env("WSLENV", "GIT_TERMINAL_PROMPT/u");
+        cmd.env(
+            "WSLENV",
+            "GIT_TERMINAL_PROMPT/u:CARGO_BUILD_JOBS/u:RUST_TEST_THREADS/u:RAYON_NUM_THREADS/u:HADRON_TEST_LOW_PRIORITY/u",
+        );
         cmd
     } else {
         let mut cmd = Command::new(program.as_str());
@@ -490,5 +519,16 @@ mod tests {
         assert_eq!(args[5], "sh");
         assert!(args.contains(&"cargo".to_string()));
         assert!(args.contains(&"check".to_string()));
+    }
+
+    #[test]
+    fn parse_low_priority_flag_defaults_true_and_honors_disable() {
+        assert!(parse_low_priority_flag(None));
+        assert!(parse_low_priority_flag(Some("")));
+        assert!(parse_low_priority_flag(Some("1")));
+        assert!(parse_low_priority_flag(Some("true")));
+        assert!(!parse_low_priority_flag(Some("0")));
+        assert!(!parse_low_priority_flag(Some("false")));
+        assert!(!parse_low_priority_flag(Some("off")));
     }
 }

@@ -1136,6 +1136,91 @@ impl super::Chamber {
         let active_gates_limit = self.team.effective_max_concurrent_gates();
         let active_batch_size = self.team.effective_gate_batch_size();
         let fast_path_docs = self.team.effective_fast_path_docs_only();
+        let test_low_priority = self.team.effective_test_low_priority();
+        let active_test_threads = self.team.effective_test_max_threads();
+
+        let mut test_threads_pills = h_flex().gap_1p5().items_center();
+        for preset in [None, Some(1usize), Some(2), Some(4), Some(8), Some(16)] {
+            let is_active = active_test_threads == preset;
+            let (id_suffix, label) = match preset {
+                None => ("auto".to_string(), "Auto".to_string()),
+                Some(n) => (n.to_string(), n.to_string()),
+            };
+            test_threads_pills = test_threads_pills.child(
+                div()
+                    .id(SharedString::from(format!("cpu-test-threads-{id_suffix}")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .bg(if is_active { theme::accent() } else { theme::bg_surface_raised() })
+                    .text_color(if is_active { theme::field_base() } else { theme::text_secondary() })
+                    .border_1()
+                    .border_color(if is_active { theme::accent() } else { theme::border() })
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.team.test_max_threads = preset;
+                        this.save_repo_team(cx);
+                        cx.notify();
+                    }))
+                    .child(label),
+            );
+        }
+
+        let mut cpu_gates_pills = h_flex().gap_1p5().items_center();
+        for preset in [1usize, 2, 4, 8, 16] {
+            let is_active = active_gates_limit == preset;
+            cpu_gates_pills = cpu_gates_pills.child(
+                div()
+                    .id(SharedString::from(format!("cpu-max-gates-{preset}")))
+                    .px_2p5()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .font_weight(if is_active { gpui::FontWeight::BOLD } else { gpui::FontWeight::MEDIUM })
+                    .bg(if is_active { theme::accent() } else { theme::bg_surface_raised() })
+                    .text_color(if is_active { theme::field_base() } else { theme::text_secondary() })
+                    .border_1()
+                    .border_color(if is_active { theme::accent() } else { theme::border() })
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.team.max_concurrent_gates = Some(preset);
+                        this.save_repo_team(cx);
+                        cx.notify();
+                    }))
+                    .child(format!("{preset}")),
+            );
+        }
+
+        let cpu_control_card = settings_card_section(
+            "Test & Build CPU Control",
+            Some(IconName::Cpu),
+            v_flex()
+                .gap_3()
+                .child(settings_field(
+                    "Lower test & build process priority",
+                    Some("Run cargo test/build and Merge Gate subprocesses at lowered OS scheduling priority (nice +10 on Unix/WSL, BELOW_NORMAL_PRIORITY_CLASS on Windows) so your desktop stays responsive."),
+                    Switch::new("test-low-priority-toggle")
+                        .checked(test_low_priority)
+                        .on_click(cx.listener(|this, checked, _window, cx| {
+                            this.team.test_low_priority = Some(*checked);
+                            this.save_repo_team(cx);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                ))
+                .child(settings_field(
+                    "Max test & build threads",
+                    Some("Cap CARGO_BUILD_JOBS, RUST_TEST_THREADS, and RAYON_NUM_THREADS per test/build invocation (Auto = uncapped default)."),
+                    test_threads_pills.into_any_element(),
+                ))
+                .child(settings_field(
+                    "Max concurrent merge gates",
+                    Some("Maximum number of Merge Gate test runs allowed in parallel (set to 1 to serialize gate verification and prevent multi-gate CPU spikes)."),
+                    cpu_gates_pills.into_any_element(),
+                )),
+        );
 
         let mut turns_pills = h_flex().gap_1p5().items_center();
         for preset in [16usize, 32, 64, 128, 256] {
@@ -1262,6 +1347,7 @@ impl super::Chamber {
             .w_full()
             .gap_4()
             .child(execution_card)
+            .child(cpu_control_card)
             .child(hadron_lab_card)
             .child(watchdog_card)
             .child(git_card)

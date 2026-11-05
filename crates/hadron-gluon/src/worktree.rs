@@ -424,6 +424,21 @@ pub fn list(repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
 /// Safe under concurrency: cargo takes a file lock on the target dir, so two quarks
 /// queue rather than corrupt each other. Best-effort — if git cannot name the main
 /// root (not a repo), the target dir is simply left to cargo's default.
+fn apply_team_resource_limits(team: &hadron_lattice::Team, env: &mut Vec<(String, String)>) {
+    let low_prio = if team.effective_test_low_priority() {
+        "1"
+    } else {
+        "0"
+    };
+    env.push(("HADRON_TEST_LOW_PRIORITY".to_string(), low_prio.to_string()));
+    if let Some(threads) = team.effective_test_max_threads() {
+        let val = threads.to_string();
+        env.push(("CARGO_BUILD_JOBS".to_string(), val.clone()));
+        env.push(("RUST_TEST_THREADS".to_string(), val.clone()));
+        env.push(("RAYON_NUM_THREADS".to_string(), val));
+    }
+}
+
 pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
     let mut env = vec![("CARGO_INCREMENTAL".to_string(), "0".to_string())];
     if let Ok(root) = crate::snapshot::main_repo_root(cwd) {
@@ -431,6 +446,8 @@ pub fn shared_build_env(cwd: &Path) -> Vec<(String, String)> {
             "CARGO_TARGET_DIR".to_string(),
             root.join("target").to_string_lossy().to_string(),
         ));
+        let team = hadron_lattice::load_team_for_repo(&root);
+        apply_team_resource_limits(&team, &mut env);
     }
     CompilerAccelerator::detect().apply_to_env(&mut env);
     env
@@ -474,6 +491,7 @@ pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, St
 
     if let Some(ref root) = main_root {
         let team = hadron_lattice::load_team_for_repo(root);
+        apply_team_resource_limits(&team, &mut env);
         if let Some(name) = team.git_author_name.as_deref().filter(|s| !s.trim().is_empty()) {
             env.push(("GIT_AUTHOR_NAME".to_string(), name.to_string()));
             env.push(("GIT_COMMITTER_NAME".to_string(), name.to_string()));
@@ -1648,6 +1666,60 @@ pub(crate) mod tests {
             env.iter().find(|(k, _)| k == "CARGO_INCREMENTAL").map(|(_, v)| v.as_str()),
             Some("0")
         );
+    }
+
+    #[test]
+    fn shared_build_env_applies_team_cpu_thread_cap_and_low_priority() {
+        let repo = git_repo();
+        let wt = ensure(repo.path(), &q("opus"), "01CPU").unwrap();
+
+        // Default team: low priority enabled ("1"), thread caps omitted (Auto).
+        let default_env = shared_build_env(&wt.path);
+        assert_eq!(
+            default_env
+                .iter()
+                .find(|(k, _)| k == "HADRON_TEST_LOW_PRIORITY")
+                .map(|(_, v)| v.as_str()),
+            Some("1")
+        );
+        assert!(default_env.iter().all(|(k, _)| k != "CARGO_BUILD_JOBS"));
+        assert!(default_env.iter().all(|(k, _)| k != "RUST_TEST_THREADS"));
+
+        // Configure explicit thread cap and disable low priority in .hadron/team.json.
+        let mut team = hadron_lattice::Team::default();
+        team.test_low_priority = Some(false);
+        team.test_max_threads = Some(4);
+        hadron_lattice::save_team(&repo.path().join(".hadron/team.json"), &team).unwrap();
+
+        for env in [
+            shared_build_env(&wt.path),
+            shared_build_env_for_quark(&wt.path, "opus"),
+        ] {
+            assert_eq!(
+                env.iter()
+                    .find(|(k, _)| k == "HADRON_TEST_LOW_PRIORITY")
+                    .map(|(_, v)| v.as_str()),
+                Some("0")
+            );
+            assert_eq!(
+                env.iter()
+                    .find(|(k, _)| k == "CARGO_BUILD_JOBS")
+                    .map(|(_, v)| v.as_str()),
+                Some("4")
+            );
+            assert_eq!(
+                env.iter()
+                    .find(|(k, _)| k == "RUST_TEST_THREADS")
+                    .map(|(_, v)| v.as_str()),
+                Some("4")
+            );
+            assert_eq!(
+                env.iter()
+                    .find(|(k, _)| k == "RAYON_NUM_THREADS")
+                    .map(|(_, v)| v.as_str()),
+                Some("4")
+            );
+        }
     }
 
     /// A merged branch is swept; an unmerged one SURVIVES. The second half is the

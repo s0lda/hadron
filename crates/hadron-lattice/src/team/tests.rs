@@ -1404,6 +1404,45 @@ fn hadron_lab_config_serde_and_effective_helpers() {
 }
 
 #[test]
+fn test_cpu_resource_controls_serde_and_resolve() {
+    let mut team = Team::default();
+    assert!(team.effective_test_low_priority());
+    assert_eq!(team.effective_test_max_threads(), None);
+
+    team.test_max_threads = Some(0);
+    assert_eq!(team.effective_test_max_threads(), None, "0 is treated as uncapped");
+
+    team.test_low_priority = Some(false);
+    team.test_max_threads = Some(4);
+    assert!(!team.effective_test_low_priority());
+    assert_eq!(team.effective_test_max_threads(), Some(4));
+
+    let json = serde_json::to_string(&team).unwrap();
+    let back: Team = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.test_low_priority, Some(false));
+    assert_eq!(back.test_max_threads, Some(4));
+
+    let global = Team {
+        test_low_priority: Some(false),
+        test_max_threads: Some(2),
+        ..Team::default()
+    };
+    let repo_inherit = Team::default();
+    let resolved_inherit = resolve_team(&repo_inherit, &global);
+    assert_eq!(resolved_inherit.test_low_priority, Some(false));
+    assert_eq!(resolved_inherit.test_max_threads, Some(2));
+
+    let repo_override = Team {
+        test_low_priority: Some(true),
+        test_max_threads: Some(8),
+        ..Team::default()
+    };
+    let resolved_override = resolve_team(&repo_override, &global);
+    assert_eq!(resolved_override.test_low_priority, Some(true));
+    assert_eq!(resolved_override.test_max_threads, Some(8));
+}
+
+#[test]
 fn team_schema_v0_and_v1_migration_v2_roundtrip_and_forward_guard() {
     let v0_json = r#"{"quarks":[{"id":"cli-agy","provider":"agy","model":"gemini-3-pro","flavor":"orchestrator","roles":["architect"],"exclusive":true}],"nucleus_index_budget_kb":64}"#;
     let (team, migrated) = Team::from_versioned_json(v0_json).unwrap();
