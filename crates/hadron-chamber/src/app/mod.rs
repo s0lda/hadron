@@ -2439,7 +2439,10 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         }
 
         let window_options = WindowOptions {
-            titlebar: Some(TitleBar::title_bar_options()),
+            titlebar: Some(gpui::TitlebarOptions {
+                title: Some("Hadron".into()),
+                ..TitleBar::title_bar_options()
+            }),
             window_decorations: Some(WindowDecorations::Client),
             // Transparent so the rounded corner cut-outs composite over the desktop
             // (see window_frame). The old fear — "transparent recomposites every repaint
@@ -2453,6 +2456,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
 
         cx.spawn(async move |cx| {
             cx.open_window(window_options, move |window, cx| {
+                window.set_window_title("Hadron");
                 let chamber = cx.new(|cx| {
                     Chamber::new(
                         view.clone(),
@@ -2705,5 +2709,20 @@ mod tests {
         // term_dims subtracts 2 * TERM_PAD from width and height
         let (cols, rows) = term_dims((2.0 * TERM_PAD + 10.0 * TERM_CELL_W, 2.0 * TERM_PAD + 5.0 * TERM_CELL_H));
         assert_eq!((cols, rows), (10, 5));
+    }
+
+    #[test]
+    fn chamber_window_title_and_windows_bin_descriptions_are_distinct() {
+        let opts = gpui::TitlebarOptions {
+            title: Some("Hadron".into()),
+            ..TitleBar::title_bar_options()
+        };
+        assert_eq!(opts.title.as_deref(), Some("Hadron"));
+
+        let build_rs = include_str!("../../build.rs");
+        assert!(build_rs.contains(r#"("hadron", "Hadron", "hadron.exe")"#));
+        assert!(build_rs.contains(r#"("hadron-gluon", "Hadron Gluon", "hadron-gluon.exe")"#));
+        assert!(build_rs.contains(r#"("hadron-forge-mcp", "Hadron Forge MCP", "hadron-forge-mcp.exe")"#));
+        assert!(build_rs.contains("cargo:rustc-link-arg-bin="));
     }
 }
