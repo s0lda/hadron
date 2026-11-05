@@ -248,6 +248,11 @@ pub fn terminal_tab_title(cwd: &Path, custom_shell: Option<&str>, index: usize) 
 }
 
 impl PtyTerminal {
+    /// Return the OS process ID of the child shell process, if available.
+    pub fn process_id(&self) -> Option<u32> {
+        self._child.process_id()
+    }
+
     #[allow(dead_code)]
     /// Spawn default shell on a fresh PTY sized `cols × rows`, rooted at `cwd`.
     pub fn new(cwd: &Path, cols: usize, rows: usize) -> Result<Self, String> {

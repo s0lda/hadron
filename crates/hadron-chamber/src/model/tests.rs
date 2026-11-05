@@ -522,6 +522,69 @@
         assert!(!rows[2].can_restart, "a disabled seat holds nothing resident to reap");
     }
 
+    #[test]
+    fn build_full_process_rows_lists_all_process_kinds_and_subprocesses() {
+        use hadron_lattice::Transport;
+        use hadron_lattice::sys::inspect::ProcessInfo;
+
+        let mut resident = roster_entry("acp-claude", Transport::Acp);
+        resident.state = QuarkState::Excited;
+
+        let terminals = vec![(0, "wsl #1".to_string(), Some(12345))];
+        let process_tree = vec![
+            ProcessInfo {
+                pid: 100,
+                ppid: 1,
+                name: "hadron-chamber".to_string(),
+                cmdline: "/usr/bin/hadron-chamber".to_string(),
+                rss_bytes: Some(1024 * 1024 * 50),
+            },
+            ProcessInfo {
+                pid: 200,
+                ppid: 100,
+                name: "hadron-gluon".to_string(),
+                cmdline: "/usr/bin/hadron-gluon".to_string(),
+                rss_bytes: Some(1024 * 1024 * 20),
+            },
+            ProcessInfo {
+                pid: 12345,
+                ppid: 100,
+                name: "wsl.exe".to_string(),
+                cmdline: "wsl.exe -d Ubuntu".to_string(),
+                rss_bytes: Some(1024 * 1024 * 10),
+            },
+            ProcessInfo {
+                pid: 54321,
+                ppid: 12345,
+                name: "cargo".to_string(),
+                cmdline: "cargo test".to_string(),
+                rss_bytes: Some(1024 * 1024 * 15),
+            },
+        ];
+
+        let rows = build_full_process_rows(100, true, Some(200), &[resident], &terminals, &process_tree);
+
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].kind, ProcessKind::Chamber);
+        assert_eq!(rows[0].pid, Some(100));
+        assert_eq!(rows[0].rss_bytes, Some(1024 * 1024 * 50));
+
+        assert_eq!(rows[1].kind, ProcessKind::Gluon);
+        assert_eq!(rows[1].pid, Some(200));
+
+        assert_eq!(rows[2].kind, ProcessKind::Quark);
+        assert_eq!(rows[2].id, "acp-claude");
+
+        assert_eq!(rows[3].kind, ProcessKind::Terminal);
+        assert_eq!(rows[3].id, "pty-0");
+        assert_eq!(rows[3].pid, Some(12345));
+
+        assert_eq!(rows[4].kind, ProcessKind::Subprocess);
+        assert_eq!(rows[4].id, "pid-54321");
+        assert_eq!(rows[4].pid, Some(54321));
+        assert_eq!(rows[4].command.as_deref(), Some("cargo test"));
+    }
+
     /// The Session tab reported zeros for every quark: it decided who was a quark by
     /// testing `from` for an `@` prefix, and `actor_str` renders a quark as its bare
     /// id. The filter matched nothing, so every statistic silently read as 0 — the

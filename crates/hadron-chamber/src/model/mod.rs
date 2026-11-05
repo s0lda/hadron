@@ -403,17 +403,27 @@ pub fn any_quark_mid_turn(roster: &[RosterRow]) -> bool {
     roster.iter().any(|r| matches!(r.state, QuarkState::Excited | QuarkState::Thinking))
 }
 
-/// One row in the Process Manager overlay: the daemon, or one adopted quark seat,
-/// with a human status line and which of the codebase's *existing* control
-/// mechanisms apply (`Kind::Reboot` for a resident ACP seat, the `Seat.enabled`
-/// toggle for any adopted seat) — not a fabricated OS-level kill switch, which
-/// this view has no wiring for (the chamber never holds a quark's child PID; the
-/// daemon does).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ProcessKind {
+    Chamber,
+    Gluon,
+    Quark,
+    Terminal,
+    Subprocess,
+}
+
+/// One row in the Process Manager overlay: the daemon, adopted quark seat, PTY terminal,
+/// or child subprocess tree entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessRow {
     pub id: String,
     pub label: String,
     pub status: String,
+    pub kind: ProcessKind,
+    pub pid: Option<u32>,
+    pub ppid: Option<u32>,
+    pub rss_bytes: Option<u64>,
+    pub command: Option<String>,
     /// Force-restart is meaningful only for a resident (ACP) seat that is
     /// currently enabled — a disabled or one-shot CLI seat holds nothing to reap.
     pub can_restart: bool,
@@ -421,20 +431,25 @@ pub struct ProcessRow {
     /// quark; not the daemon, which the chamber has no start/stop path for).
     pub can_toggle: bool,
     pub enabled: bool,
+    pub can_stop_or_kill: bool,
 }
 
-/// Builds the Process Manager's row list: the `hadron-gluon` daemon first (its
-/// running state is a live flock probe the caller supplies — only the OS knows),
-/// then every *adopted* roster seat. A not-adopted quark holds no process at
-/// all, so — unlike the roster pane, which greys it out — this omits it entirely.
+/// Builds the Process Manager's basic row list: the `hadron-gluon` daemon first,
+/// then every *adopted* roster seat.
 pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<ProcessRow> {
     let mut rows = vec![ProcessRow {
         id: "gluon".to_string(),
         label: "hadron-gluon (daemon)".to_string(),
         status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
+        kind: ProcessKind::Gluon,
+        pid: None,
+        ppid: None,
+        rss_bytes: None,
+        command: None,
         can_restart: true,
         can_toggle: false,
         enabled: gluon_running,
+        can_stop_or_kill: gluon_running,
     }];
     rows.extend(roster.iter().filter(|r| r.adopted).map(|r| {
         let status = if !r.enabled {
@@ -453,11 +468,166 @@ pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<Proc
             id: r.id.clone(),
             label: r.display_name.clone().unwrap_or_else(|| r.id.clone()),
             status,
+            kind: ProcessKind::Quark,
+            pid: None,
+            ppid: None,
+            rss_bytes: None,
+            command: None,
             can_restart: r.enabled && matches!(r.transport, hadron_lattice::Transport::Acp),
             can_toggle: true,
             enabled: r.enabled,
+            can_stop_or_kill: r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking),
         }
     }));
+    rows
+}
+
+/// Builds the Process Manager's complete hierarchy: Hadron main UI, daemon,
+/// adopted Quarks, active PTY terminals, and child subprocesses.
+pub fn build_full_process_rows(
+    chamber_pid: u32,
+    gluon_running: bool,
+    gluon_pid: Option<u32>,
+    roster: &[RosterRow],
+    terminals: &[(usize, String, Option<u32>)],
+    process_tree: &[hadron_lattice::sys::inspect::ProcessInfo],
+) -> Vec<ProcessRow> {
+    let info_map: HashMap<u32, &hadron_lattice::sys::inspect::ProcessInfo> =
+        process_tree.iter().map(|p| (p.pid, p)).collect();
+
+    let mut rows = Vec::new();
+
+    // 1. Chamber Main UI
+    let chamber_info = info_map.get(&chamber_pid);
+    rows.push(ProcessRow {
+        id: "chamber".to_string(),
+        label: "hadron-chamber (main UI)".to_string(),
+        status: "Running".to_string(),
+        kind: ProcessKind::Chamber,
+        pid: Some(chamber_pid),
+        ppid: chamber_info.map(|i| i.ppid),
+        rss_bytes: chamber_info.and_then(|i| i.rss_bytes),
+        command: chamber_info.map(|i| i.cmdline.clone()),
+        can_restart: false,
+        can_toggle: false,
+        enabled: true,
+        can_stop_or_kill: false,
+    });
+
+    // 2. Gluon Daemon
+    let effective_gluon_pid = gluon_pid.filter(|_| gluon_running);
+    let gluon_info = effective_gluon_pid.and_then(|pid| info_map.get(&pid));
+    rows.push(ProcessRow {
+        id: "gluon".to_string(),
+        label: "hadron-gluon (daemon)".to_string(),
+        status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
+        kind: ProcessKind::Gluon,
+        pid: effective_gluon_pid,
+        ppid: gluon_info.map(|i| i.ppid),
+        rss_bytes: gluon_info.and_then(|i| i.rss_bytes),
+        command: gluon_info.map(|i| i.cmdline.clone()),
+        can_restart: true,
+        can_toggle: false,
+        enabled: gluon_running,
+        can_stop_or_kill: gluon_running,
+    });
+
+    // 3. Adopted Quark seats
+    let mut quark_pids = Vec::new();
+    rows.extend(roster.iter().filter(|r| r.adopted).map(|r| {
+        let status = if !r.enabled {
+            "Disabled".to_string()
+        } else {
+            match r.state {
+                QuarkState::Excited => "Excited".to_string(),
+                QuarkState::Thinking => "Thinking".to_string(),
+                QuarkState::Waiting => "Waiting".to_string(),
+                QuarkState::Blocked => "Blocked".to_string(),
+                QuarkState::Error => "Error".to_string(),
+                QuarkState::Ground => "Idle".to_string(),
+            }
+        };
+        let tree_fwd = format!("trees/{}", r.id);
+        let tree_back = format!("trees\\{}", r.id);
+        let quark_proc = process_tree.iter().find(|p| {
+            p.pid != chamber_pid
+                && Some(p.pid) != effective_gluon_pid
+                && (p.cmdline.contains(&tree_fwd) || p.cmdline.contains(&tree_back))
+        });
+        if let Some(qp) = quark_proc {
+            quark_pids.push(qp.pid);
+        }
+        ProcessRow {
+            id: r.id.clone(),
+            label: r.display_name.clone().unwrap_or_else(|| r.id.clone()),
+            status,
+            kind: ProcessKind::Quark,
+            pid: quark_proc.map(|p| p.pid),
+            ppid: quark_proc.map(|p| p.ppid),
+            rss_bytes: quark_proc.and_then(|p| p.rss_bytes),
+            command: quark_proc.map(|p| p.cmdline.clone()),
+            can_restart: r.enabled && matches!(r.transport, hadron_lattice::Transport::Acp),
+            can_toggle: true,
+            enabled: r.enabled,
+            can_stop_or_kill: r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking),
+        }
+    }));
+
+    // 4. Terminal rows
+    let mut terminal_pids = Vec::new();
+    for &(ix, ref title, pid) in terminals {
+        if let Some(p) = pid {
+            terminal_pids.push(p);
+        }
+        let term_info = pid.and_then(|p| info_map.get(&p));
+        rows.push(ProcessRow {
+            id: format!("pty-{ix}"),
+            label: title.clone(),
+            status: if pid.is_some() { "Running".to_string() } else { "Stopped".to_string() },
+            kind: ProcessKind::Terminal,
+            pid,
+            ppid: term_info.map(|i| i.ppid),
+            rss_bytes: term_info.and_then(|i| i.rss_bytes),
+            command: term_info.map(|i| i.cmdline.clone()),
+            can_restart: false,
+            can_toggle: false,
+            enabled: pid.is_some(),
+            can_stop_or_kill: true,
+        });
+    }
+
+    // 5. Child Subprocess rows
+    let mut known_pids = std::collections::HashSet::new();
+    known_pids.insert(chamber_pid);
+    if let Some(gp) = effective_gluon_pid {
+        known_pids.insert(gp);
+    }
+    for qp in quark_pids {
+        known_pids.insert(qp);
+    }
+    for tp in terminal_pids {
+        known_pids.insert(tp);
+    }
+
+    for p in process_tree {
+        if !known_pids.contains(&p.pid) {
+            rows.push(ProcessRow {
+                id: format!("pid-{}", p.pid),
+                label: p.name.clone(),
+                status: "Running".to_string(),
+                kind: ProcessKind::Subprocess,
+                pid: Some(p.pid),
+                ppid: Some(p.ppid),
+                rss_bytes: p.rss_bytes,
+                command: Some(p.cmdline.clone()),
+                can_restart: false,
+                can_toggle: false,
+                enabled: true,
+                can_stop_or_kill: true,
+            });
+        }
+    }
+
     rows
 }
 
