@@ -305,6 +305,8 @@ pub(super) struct FieldPoll {
     pub(super) latest_prompt_cost:
         Option<(String, hadron_lattice::prompt_cost::PromptBreakdown)>,
     pub(super) gluon_now_running: bool,
+    pub(super) gluon_pid: Option<u32>,
+    pub(super) hadron_processes: Option<Vec<hadron_lattice::sys::inspect::ProcessInfo>>,
     pub(super) rpc_endpoint: Option<hadron_lattice::wire::RpcEndpointMetadata>,
 }
 
@@ -325,6 +327,8 @@ impl FieldPoll {
         verified_git_ready: bool,
         prev_branch_fingerprint: Option<&str>,
         active_plan_hint: Option<&str>,
+        scan_processes: bool,
+        terminal_pids: &[u32],
     ) -> Self {
         let (events, field_epoch) = field_write_queue.read_events_if_quiescent(path);
         let read_strict = |p: &std::path::Path| -> Option<Team> {
@@ -384,7 +388,21 @@ impl FieldPoll {
         let prompt_cost_dir = hadron_lattice::prompt_cost::prompt_cost_dir(path);
         let latest_prompt_cost =
             hadron_lattice::prompt_cost::load_latest(&prompt_cost_dir, roster_ids);
-        let gluon_now_running = super::Chamber::probe_gluon_running(path);
+        let gluon_pid = crate::sys::probe_gluon_pid(path);
+        let gluon_now_running = gluon_pid.is_some() || super::Chamber::probe_gluon_running(path);
+        let hadron_processes = if scan_processes {
+            let mut roots = vec![std::process::id()];
+            if let Some(gpid) = gluon_pid {
+                roots.push(gpid);
+            }
+            for &tpid in terminal_pids {
+                roots.push(tpid);
+            }
+            let field_dir = hadron_lattice::hadron_dir_of(path);
+            Some(hadron_lattice::sys::inspect::collect_process_tree(&roots, &field_dir))
+        } else {
+            None
+        };
         let rpc_endpoint = crate::rpc_client::active_endpoint(path);
 
         Self {
@@ -401,6 +419,8 @@ impl FieldPoll {
             gate_activities,
             latest_prompt_cost,
             gluon_now_running,
+            gluon_pid,
+            hadron_processes,
             rpc_endpoint,
         }
     }
@@ -793,6 +813,18 @@ impl super::Chamber {
                 self.last_gluon_running = poll.gluon_now_running;
                 self.gluon_stopped_notice = !went_running;
                 changed = true;
+            }
+            if poll.gluon_pid != self.last_gluon_pid {
+                self.last_gluon_pid = poll.gluon_pid;
+                changed = true;
+            }
+            if let Some(procs) = poll.hadron_processes {
+                if procs != self.last_hadron_processes {
+                    self.last_hadron_processes = procs;
+                    if self.process_manager_open {
+                        changed = true;
+                    }
+                }
             }
             if poll.rpc_endpoint != self.rpc_endpoint {
                 self.rpc_endpoint = poll.rpc_endpoint;

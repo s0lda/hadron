@@ -3772,12 +3772,14 @@ impl Chamber {
                 match res {
                     Ok(pid) => {
                         chamber.last_gluon_running = true;
+                        chamber.last_gluon_pid = Some(pid);
                         chamber.gluon_stopped_notice = false;
                         chamber.toast_manager.push(
                             ToastKind::Success,
                             format!("Started hadron-gluon daemon (PID {pid})"),
                             Some(3),
                         );
+                        chamber.refresh_hadron_processes(cx);
                     }
                     Err(e) => {
                         chamber.toast_manager.push(
@@ -3787,6 +3789,133 @@ impl Chamber {
                         );
                     }
                 }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Stop the `hadron-gluon` daemon for the current workspace on a background thread.
+    pub(super) fn stop_gluon_daemon(&mut self, cx: &mut Context<Self>) {
+        let field_path = self.path.clone();
+        cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_spawn(async move { crate::sys::stop_gluon_daemon(&field_path) })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                match res {
+                    Ok(true) => {
+                        chamber.last_gluon_running = false;
+                        chamber.last_gluon_pid = None;
+                        chamber.toast_manager.push(
+                            ToastKind::Info,
+                            "Stopped hadron-gluon daemon".to_string(),
+                            Some(3),
+                        );
+                        chamber.refresh_hadron_processes(cx);
+                    }
+                    Ok(false) => {
+                        chamber.last_gluon_running = false;
+                        chamber.last_gluon_pid = None;
+                    }
+                    Err(e) => {
+                        chamber.toast_manager.push(
+                            ToastKind::Error,
+                            format!("Failed to stop hadron-gluon: {e}"),
+                            Some(5),
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Terminate a Hadron child subprocess tree (`pid`) on a background thread and refresh
+    /// the Process Manager snapshot.
+    pub(super) fn kill_hadron_subprocess(&mut self, pid: u32, label: String, cx: &mut Context<Self>) {
+        if pid == std::process::id() {
+            return;
+        }
+        self.last_hadron_processes.retain(|p| p.pid != pid);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_spawn(async move {
+                hadron_lattice::sys::process::kill_process_group(pid);
+            })
+            .await;
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.toast_manager.push(
+                    ToastKind::Info,
+                    format!("Terminated process {label} (PID {pid})"),
+                    Some(3),
+                );
+                chamber.refresh_hadron_processes(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Focus a PTY terminal tab in the right inspector rail from the Process Manager.
+    pub(super) fn focus_terminal_from_processes(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.process_manager_open = false;
+        self.prefs.inspector_collapsed = false;
+        self.right_rail_tab = RightRailTab::Terminal;
+        self.select_terminal(index, cx);
+    }
+
+    /// Terminate and remove the PTY terminal tab at `index` from the Process Manager.
+    pub(super) fn close_terminal_from_processes(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.terminals.len() {
+            let removed = self.terminals.remove(index);
+            if let Some(pid) = removed.term.as_ref().and_then(|pty| pty.process_id()) {
+                self.last_hadron_processes.retain(|p| p.pid != pid);
+            }
+        }
+        if self.terminals.is_empty() {
+            self.active_terminal_index = 0;
+        } else if index < self.active_terminal_index {
+            self.active_terminal_index = self.active_terminal_index.saturating_sub(1);
+        } else if self.active_terminal_index >= self.terminals.len() {
+            self.active_terminal_index = self.terminals.len() - 1;
+        }
+        self.refresh_hadron_processes(cx);
+        cx.notify();
+    }
+
+    /// Refresh `last_gluon_pid` and `last_hadron_processes` asynchronously on the
+    /// background executor (never on the UI thread).
+    pub(super) fn refresh_hadron_processes(&mut self, cx: &mut Context<Self>) {
+        let field_path = self.path.clone();
+        let terminal_pids: Vec<u32> = self
+            .terminals
+            .iter()
+            .filter_map(|t| t.term.as_ref().and_then(|pty| pty.process_id()))
+            .collect();
+        cx.spawn(async move |this, cx| {
+            let (gluon_pid, procs) = cx
+                .background_executor()
+                .spawn(async move {
+                    let gpid = crate::sys::probe_gluon_pid(&field_path);
+                    let mut roots = vec![std::process::id()];
+                    if let Some(gp) = gpid {
+                        roots.push(gp);
+                    }
+                    roots.extend(terminal_pids);
+                    let field_dir = hadron_lattice::hadron_dir_of(&field_path);
+                    let tree =
+                        hadron_lattice::sys::inspect::collect_process_tree(&roots, &field_dir);
+                    (gpid, tree)
+                })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.last_gluon_pid = gluon_pid;
+                if gluon_pid.is_some() {
+                    chamber.last_gluon_running = true;
+                }
+                chamber.last_hadron_processes = procs;
                 cx.notify();
             });
         })
@@ -4042,6 +4171,9 @@ impl Chamber {
     /// Toggle the Process Manager overlay (pinned Roster rail button, above Settings).
     pub(super) fn toggle_process_manager(&mut self, cx: &mut Context<Self>) {
         self.process_manager_open = toggle_process_manager_open(self.process_manager_open);
+        if self.process_manager_open {
+            self.refresh_hadron_processes(cx);
+        }
         cx.notify();
     }
 

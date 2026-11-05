@@ -2043,22 +2043,34 @@ impl super::Chamber {
         }
     }
 
-    /// Live rows for the Process Manager overlay: the daemon's real running state
-    /// (a flock probe — only the OS knows) plus every adopted roster seat. See
-    /// [`crate::model::build_process_rows`] for the pure row-building logic.
+    /// Live rows for the Process Manager overlay: Chamber UI, Gluon daemon,
+    /// adopted quark seats, active PTY terminals, and child subprocesses.
     pub(super) fn resolve_running_processes(&self) -> Vec<crate::model::ProcessRow> {
-        crate::model::build_process_rows(self.last_gluon_running, &self.view.roster)
+        let terminals: Vec<(usize, String, Option<u32>)> = self
+            .terminals
+            .iter()
+            .enumerate()
+            .map(|(ix, t)| {
+                let pid = t.term.as_ref().and_then(|pty| pty.process_id());
+                (ix, t.title.clone(), pid)
+            })
+            .collect();
+        crate::model::build_full_process_rows(
+            std::process::id(),
+            self.last_gluon_running,
+            self.last_gluon_pid,
+            &self.view.roster,
+            &terminals,
+            &self.last_hadron_processes,
+        )
     }
 
     /// The Process Manager overlay: a dim backdrop (click to dismiss) behind a card
-    /// listing the daemon and every adopted quark seat, each with its live status
-    /// and whichever *real* control action applies — force-restart (`Kind::Reboot`,
-    /// [`Self::reboot_quark`]) for an enabled resident ACP seat, and the
-    /// enable/disable toggle ([`Self::toggle_quark_enabled`]) every adopted seat
-    /// already has in Settings. Deliberately no OS-level "Kill": the chamber is a
-    /// separate process from the daemon and never sees a quark's child PID, so a
-    /// kill switch here would have nothing real to act on.
+    /// listing the Chamber UI, Gluon daemon, adopted quark seats, PTY terminals, and
+    /// child subprocesses with live OS PID/PPID/RSS telemetry and lifecycle controls.
     pub(super) fn process_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::model::ProcessKind;
+
         let rows = self.resolve_running_processes();
         let now = chrono::Utc::now();
 
@@ -2083,51 +2095,76 @@ impl super::Chamber {
                             .is_some())
             })
             .count();
+        let subprocess_count = rows
+            .iter()
+            .filter(|r| matches!(r.kind, ProcessKind::Terminal | ProcessKind::Subprocess))
+            .count();
+        let total_rss_bytes: u64 = rows.iter().filter_map(|r| r.rss_bytes).sum();
         let restartable_acp_ids: Vec<String> = rows
             .iter()
-            .filter(|r| r.id != "gluon" && r.can_restart)
+            .filter(|r| r.kind == ProcessKind::Quark && r.can_restart)
             .map(|r| r.id.clone())
             .collect();
 
         let mut list = v_flex().gap_2();
         for row in rows {
-            let roster_row = self.view.roster.iter().find(|r| r.id == row.id);
+            let roster_row = (row.kind == ProcessKind::Quark)
+                .then(|| self.view.roster.iter().find(|r| r.id == row.id))
+                .flatten();
             let activity = self.last_live_activities.get(&row.id).and_then(|a| a.as_ref());
-            let is_gating = self
-                .last_gate_activities
-                .iter()
-                .any(|g| g.quark.as_str() == row.id);
+            let is_gating = row.kind == ProcessKind::Quark
+                && self
+                    .last_gate_activities
+                    .iter()
+                    .any(|g| g.quark.as_str() == row.id);
 
-            // Determine dot color & presence label using Hadron SSOT halo dot logic (matching Roster)
-            let (dot, status_label) = if row.id == "gluon" {
-                if row.status == "Running" {
-                    (theme::halo_idle(), "Running".to_string())
-                } else {
-                    (theme::halo_error(), "Stopped".to_string())
+            let (dot, status_label) = match row.kind {
+                ProcessKind::Chamber | ProcessKind::Subprocess => {
+                    (theme::halo_idle(), row.status.clone())
                 }
-            } else if let Some(r) = roster_row {
-                let effective_state = effective_presence_state(
-                    r.state,
-                    r.adopted,
-                    r.enabled,
-                    activity.is_some(),
-                );
-                if r.enabled {
-                    (
-                        theme::halo_dot(effective_state),
-                        theme::presence_label(effective_state).to_string(),
-                    )
-                } else if !r.adopted {
-                    (theme::presence_disabled().into(), "available".to_string())
-                } else {
-                    (theme::presence_disabled().into(), "disabled".to_string())
+                ProcessKind::Gluon | ProcessKind::Terminal => {
+                    if row.status == "Running" {
+                        (theme::halo_idle(), "Running".to_string())
+                    } else {
+                        (theme::halo_error(), "Stopped".to_string())
+                    }
                 }
-            } else {
-                (theme::presence_disabled().into(), row.status.clone())
+                ProcessKind::Quark => {
+                    if let Some(r) = roster_row {
+                        let effective_state = effective_presence_state(
+                            r.state,
+                            r.adopted,
+                            r.enabled,
+                            activity.is_some(),
+                        );
+                        if r.enabled {
+                            (
+                                theme::halo_dot(effective_state),
+                                theme::presence_label(effective_state).to_string(),
+                            )
+                        } else if !r.adopted {
+                            (theme::presence_disabled().into(), "available".to_string())
+                        } else {
+                            (theme::presence_disabled().into(), "disabled".to_string())
+                        }
+                    } else {
+                        (theme::presence_disabled().into(), row.status.clone())
+                    }
+                }
             };
 
-            let avatar_or_icon = if row.id == "gluon" {
-                div()
+            let avatar_or_icon = match row.kind {
+                ProcessKind::Chamber => div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(28.0))
+                    .rounded_full()
+                    .bg(theme::bg_surface_raised())
+                    .text_color(theme::accent())
+                    .child(Icon::new(IconName::WindowMaximize).small())
+                    .into_any_element(),
+                ProcessKind::Gluon => div()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -2136,16 +2173,39 @@ impl super::Chamber {
                     .bg(theme::bg_surface_raised())
                     .text_color(theme::accent())
                     .child(Icon::new(IconName::Cpu).small())
-                    .into_any_element()
-            } else {
-                let resolved = self.resolve_identity(&row.id);
-                identity_avatar(&resolved, 28.0).into_any_element()
+                    .into_any_element(),
+                ProcessKind::Terminal => div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(28.0))
+                    .rounded_full()
+                    .bg(theme::bg_surface_raised())
+                    .text_color(theme::text_secondary())
+                    .child(Icon::new(IconName::SquareTerminal).small())
+                    .into_any_element(),
+                ProcessKind::Subprocess => div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(28.0))
+                    .rounded_full()
+                    .bg(theme::bg_surface_raised())
+                    .text_color(theme::text_muted())
+                    .child(Icon::new(IconName::Network).small())
+                    .into_any_element(),
+                ProcessKind::Quark => {
+                    let resolved = self.resolve_identity(&row.id);
+                    identity_avatar(&resolved, 28.0).into_any_element()
+                }
             };
 
-            let transport_code = if row.id == "gluon" {
-                "DAEMON"
-            } else {
-                roster_row.map(|r| r.transport.code()).unwrap_or("SEAT")
+            let transport_code = match row.kind {
+                ProcessKind::Chamber => "UI",
+                ProcessKind::Gluon => "DAEMON",
+                ProcessKind::Terminal => "PTY",
+                ProcessKind::Subprocess => "CHILD",
+                ProcessKind::Quark => roster_row.map(|r| r.transport.code()).unwrap_or("SEAT"),
             };
 
             let model_label = roster_row
@@ -2155,84 +2215,170 @@ impl super::Chamber {
             let is_orchestrator = roster_row
                 .is_some_and(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator));
 
-            let subtitle = if row.id == "gluon" {
-                activity
+            let pid_badge = row.pid.map(|pid| match row.ppid.filter(|&ppid| ppid > 0) {
+                Some(ppid) => format!("PID {pid} (PPID {ppid})"),
+                None => format!("PID {pid}"),
+            });
+            let rss_badge = row
+                .rss_bytes
+                .filter(|&b| b > 0)
+                .map(hadron_lattice::sys::format_rss);
+
+            let subtitle = match row.kind {
+                ProcessKind::Chamber => row
+                    .command
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| Some("Hadron Chamber GPUI desktop host".to_string())),
+                ProcessKind::Gluon => activity
                     .map(|a| a.detail.trim().to_string())
                     .filter(|s| !s.is_empty())
+                    .or_else(|| row.command.clone().filter(|s| !s.is_empty()))
                     .or_else(|| {
                         Some(if row.enabled {
                             "Swarm Engine, Router & Merge Gate".to_string()
                         } else {
                             "Daemon process not running".to_string()
                         })
-                    })
-            } else if is_gating {
-                Some("Running Merge Gate verification...".to_string())
-            } else if let Some(act) = activity {
-                let elapsed = act
-                    .started
-                    .or(Some(act.at))
-                    .map(|st| (now - st).num_seconds().max(0))
-                    .unwrap_or(0);
-                let detail = act.detail.trim();
-                let label = if detail.is_empty() { "thinking" } else { detail };
-                Some(format!("{label} ({elapsed}s)"))
-            } else {
-                None
+                    }),
+                ProcessKind::Terminal | ProcessKind::Subprocess => {
+                    row.command.clone().filter(|s| !s.is_empty())
+                }
+                ProcessKind::Quark => {
+                    if is_gating {
+                        Some("Running Merge Gate verification...".to_string())
+                    } else if let Some(act) = activity {
+                        let elapsed = act
+                            .started
+                            .or(Some(act.at))
+                            .map(|st| (now - st).num_seconds().max(0))
+                            .unwrap_or(0);
+                        let detail = act.detail.trim();
+                        let label = if detail.is_empty() { "thinking" } else { detail };
+                        Some(format!("{label} ({elapsed}s)"))
+                    } else {
+                        row.command.clone().filter(|s| !s.is_empty())
+                    }
+                }
             };
 
             let mut row_actions = h_flex().items_center().gap_1p5();
-            if row.can_restart {
-                let id = row.id.clone();
-                let is_gluon = id == "gluon";
-                let label = if is_gluon && !row.enabled { "Start" } else { "Restart" };
-                row_actions = row_actions.child(
-                    text_button(SharedString::from(format!("proc-restart-{}", row.id)), label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if is_gluon {
-                                this.restart_gluon_daemon(cx);
-                            } else {
+            match row.kind {
+                ProcessKind::Chamber => {}
+                ProcessKind::Gluon => {
+                    let start_label = if row.enabled { "Restart" } else { "Start" };
+                    row_actions = row_actions.child(
+                        text_button("proc-restart-gluon", start_label).on_click(cx.listener(
+                            |this, _, _, cx| this.restart_gluon_daemon(cx),
+                        )),
+                    );
+                    if row.can_stop_or_kill {
+                        row_actions = row_actions.child(
+                            text_button("proc-stop-gluon", "Stop").on_click(cx.listener(
+                                |this, _, _, cx| this.stop_gluon_daemon(cx),
+                            )),
+                        );
+                    }
+                }
+                ProcessKind::Quark => {
+                    if row.can_stop_or_kill {
+                        let id = row.id.clone();
+                        row_actions = row_actions.child(
+                            text_button(SharedString::from(format!("proc-stop-{}", row.id)), "Stop")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.reboot_quark(&id, cx);
+                                })),
+                        );
+                    }
+                    if row.can_restart {
+                        let id = row.id.clone();
+                        row_actions = row_actions.child(
+                            text_button(
+                                SharedString::from(format!("proc-restart-{}", row.id)),
+                                "Restart",
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
                                 this.reboot_quark(&id, cx);
-                            }
-                        })),
-                );
-            }
-            if row.can_toggle {
-                let id = row.id.clone();
-                let label = if row.enabled { "Disable" } else { "Enable" };
-                row_actions = row_actions.child(
-                    text_button(SharedString::from(format!("proc-toggle-{}", row.id)), label).on_click(
-                        cx.listener(move |this, _, _, cx| this.toggle_quark_enabled(&id, cx)),
-                    ),
-                );
-            }
-            if row.id != "gluon" {
-                let id_for_settings = row.id.clone();
-                row_actions = row_actions.child(
-                    div()
-                        .id(SharedString::from(format!("proc-settings-{}", row.id)))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(px(24.0))
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme::border())
-                        .bg(theme::bg_base())
-                        .text_color(theme::text_secondary())
-                        .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
-                        .cursor_pointer()
-                        .child(Icon::new(IconName::Settings).xsmall())
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.process_manager_open = false;
-                            this.settings_open = true;
-                            this.select_settings_target(
-                                SettingsTarget::Quark(id_for_settings.clone()),
-                                window,
-                                cx,
+                            })),
+                        );
+                    }
+                    if row.can_toggle {
+                        let id = row.id.clone();
+                        let label = if row.enabled { "Disable" } else { "Enable" };
+                        row_actions = row_actions.child(
+                            text_button(
+                                SharedString::from(format!("proc-toggle-{}", row.id)),
+                                label,
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_quark_enabled(&id, cx);
+                            })),
+                        );
+                    }
+                    let id_for_settings = row.id.clone();
+                    row_actions = row_actions.child(
+                        div()
+                            .id(SharedString::from(format!("proc-settings-{}", row.id)))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(24.0))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme::border())
+                            .bg(theme::bg_base())
+                            .text_color(theme::text_secondary())
+                            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+                            .cursor_pointer()
+                            .child(Icon::new(IconName::Settings).xsmall())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.process_manager_open = false;
+                                this.settings_open = true;
+                                this.select_settings_target(
+                                    SettingsTarget::Quark(id_for_settings.clone()),
+                                    window,
+                                    cx,
+                                );
+                            })),
+                    );
+                }
+                ProcessKind::Terminal => {
+                    if let Some(ix) = row.id.strip_prefix("pty-").and_then(|s| s.parse::<usize>().ok()) {
+                        row_actions = row_actions
+                            .child(
+                                text_button(
+                                    SharedString::from(format!("proc-focus-{}", row.id)),
+                                    "Focus",
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.focus_terminal_from_processes(ix, cx);
+                                })),
+                            )
+                            .child(
+                                text_button(
+                                    SharedString::from(format!("proc-kill-{}", row.id)),
+                                    "Kill",
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.close_terminal_from_processes(ix, cx);
+                                })),
                             );
-                        })),
-                );
+                    }
+                }
+                ProcessKind::Subprocess => {
+                    if let Some(pid) = row.pid {
+                        let label = row.label.clone();
+                        row_actions = row_actions.child(
+                            text_button(
+                                SharedString::from(format!("proc-kill-{}", row.id)),
+                                "Kill",
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.kill_hadron_subprocess(pid, label.clone(), cx);
+                            })),
+                        );
+                    }
+                }
             }
 
             list = list.child(
@@ -2310,6 +2456,30 @@ impl super::Chamber {
                                                         .max_w(px(150.0))
                                                         .child(model),
                                                 )
+                                            })
+                                            .when_some(pid_badge, |this, pid_str| {
+                                                this.child(
+                                                    div()
+                                                        .px_1p5()
+                                                        .py_0p5()
+                                                        .rounded_sm()
+                                                        .bg(theme::bg_base())
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::text_muted())
+                                                        .child(pid_str),
+                                                )
+                                            })
+                                            .when_some(rss_badge, |this, rss_str| {
+                                                this.child(
+                                                    div()
+                                                        .px_1p5()
+                                                        .py_0p5()
+                                                        .rounded_sm()
+                                                        .bg(theme::bg_base())
+                                                        .text_size(px(10.0))
+                                                        .text_color(theme::text_secondary())
+                                                        .child(rss_str),
+                                                )
                                             }),
                                     )
                                     .when_some(subtitle, |this, sub| {
@@ -2352,6 +2522,7 @@ impl super::Chamber {
                 h_flex()
                     .items_center()
                     .gap_1p5()
+                    .flex_wrap()
                     .child(
                         div()
                             .px_2p5()
@@ -2384,6 +2555,37 @@ impl super::Chamber {
                             .text_color(theme::text_secondary())
                             .child(format!("{active_seats_count} Active Seats")),
                     )
+                    .when(subprocess_count > 0, |this| {
+                        this.child(
+                            div()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_full()
+                                .bg(theme::tab_bar_bg())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .child(format!("{subprocess_count} Subprocesses")),
+                        )
+                    })
+                    .when(total_rss_bytes > 0, |this| {
+                        this.child(
+                            div()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_full()
+                                .bg(theme::tab_bar_bg())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_secondary())
+                                .child(format!(
+                                    "Total RSS: {}",
+                                    hadron_lattice::sys::format_rss(total_rss_bytes)
+                                )),
+                        )
+                    })
                     .when(excited_count > 0, |this| {
                         this.child(
                             div()
@@ -2399,23 +2601,33 @@ impl super::Chamber {
                         )
                     }),
             )
-            .when(!restartable_acp_ids.is_empty(), |this| {
-                let ids = restartable_acp_ids.clone();
-                this.child(
-                    text_button("proc-restart-all-acp", "Restart All ACP").on_click(cx.listener(
-                        move |this, _, _, cx| {
-                            for id in &ids {
-                                this.reboot_quark(id, cx);
-                            }
-                        },
-                    )),
-                )
-            });
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        text_button("proc-refresh", "Refresh").on_click(cx.listener(
+                            |this, _, _, cx| this.refresh_hadron_processes(cx),
+                        )),
+                    )
+                    .when(!restartable_acp_ids.is_empty(), |this| {
+                        let ids = restartable_acp_ids.clone();
+                        this.child(
+                            text_button("proc-restart-all-acp", "Restart All ACP").on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    for id in &ids {
+                                        this.reboot_quark(id, cx);
+                                    }
+                                }),
+                            ),
+                        )
+                    }),
+            );
 
         let card = v_flex()
             .occlude()
-            .w(px(580.0))
-            .max_h(px(600.0))
+            .w(px(680.0))
+            .max_h(px(640.0))
             .p_4()
             .gap_3()
             .rounded(INNER_RADIUS)
@@ -2441,7 +2653,7 @@ impl super::Chamber {
                                 div()
                                     .text_xs()
                                     .text_color(theme::text_muted())
-                                    .child("Daemon & Quark Seat Control"),
+                                    .child("Chamber, Daemon, Quark Seats, Terminals & Subprocess Tree"),
                             ),
                     )
                     .child(

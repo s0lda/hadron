@@ -694,6 +694,8 @@ struct Chamber {
     /// not on every tick gluon happens to still be down. Starts optimistic (running)
     /// since the chamber normally auto-spawns the daemon on launch.
     pub(super) last_gluon_running: bool,
+    pub(super) last_gluon_pid: Option<u32>,
+    pub(super) last_hadron_processes: Vec<hadron_lattice::sys::inspect::ProcessInfo>,
     pub(super) rpc_endpoint: Option<hadron_lattice::wire::RpcEndpointMetadata>,
     /// Whether the "gluon stopped" banner is currently shown. Set on the
     /// running→stopped edge, cleared on stopped→running or manual dismiss.
@@ -1453,6 +1455,11 @@ impl Chamber {
                 };
                 let roster_ids: Vec<String> =
                     chamber.view.roster.iter().map(|r| r.id.clone()).collect();
+                let terminal_pids: Vec<u32> = chamber
+                    .terminals
+                    .iter()
+                    .filter_map(|t| t.term.as_ref().and_then(|pty| pty.process_id()))
+                    .collect();
                 let verified_git_ready = chamber.git_ready && chamber.git_ready_verified;
                 Some((
                     chamber.path.clone(),
@@ -1468,6 +1475,8 @@ impl Chamber {
                     chamber.last_plan_path.clone(),
                     verified_git_ready,
                     chamber.field_write_queue.clone(),
+                    chamber.process_manager_open,
+                    terminal_pids,
                 ))
             }) {
                 Ok(Some(s)) => s,
@@ -1480,6 +1489,7 @@ impl Chamber {
                 || state.9
                 || tick_count.is_multiple_of(5)
                 || matches!(state.6, RightRailTab::Git | RightRailTab::Mission);
+            let scan_processes = state.13 || tick_count.is_multiple_of(5);
             tick_count = tick_count.wrapping_add(1);
             if do_workspace_scan && state.7 {
                 last_health_scan = Some(std::time::Instant::now());
@@ -1503,6 +1513,8 @@ impl Chamber {
                         state.11,
                         state.8.as_deref(),
                         state.10.as_deref(),
+                        scan_processes,
+                        &state.14,
                     )
                 })
                 .await;
@@ -1942,6 +1954,8 @@ impl Chamber {
             last_prompt_cost,
             last_live_timer_sec: None,
             last_gluon_running: true,
+            last_gluon_pid: None,
+            last_hadron_processes: Vec::new(),
             rpc_endpoint,
             nucleus_over_budget: if workspace_mode == WorkspaceMode::Selector || is_wsl {
                 false
