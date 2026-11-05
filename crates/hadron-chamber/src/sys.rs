@@ -693,13 +693,13 @@ pub fn file_url_target(url: &str) -> Option<(std::path::PathBuf, Option<u32>)> {
         .and_then(|f| f.parse::<u32>().ok())
         .filter(|n| *n > 0);
 
-    let decoded = percent_decode(path_raw);
+    let decoded = hadron_lattice::sys::paths::strip_unc_prefix(&percent_decode(path_raw));
     let normalized = if decoded.starts_with(r"\\wsl.localhost\")
         || decoded.starts_with(r"\\wsl$\")
         || decoded.starts_with("//wsl.localhost/")
         || decoded.starts_with("//wsl$/")
     {
-        decoded
+        decoded.replace('/', "\\")
     } else if decoded.starts_with("wsl.localhost/") || decoded.starts_with("wsl$/") {
         format!(r"\\{}", decoded.replace('/', "\\"))
     } else if let Some(after_slash) = decoded.strip_prefix('/') {
@@ -1602,6 +1602,20 @@ mod tests {
     fn a_percent_encoded_path_is_decoded() {
         let (path, _) = file_url_target("file:///tmp/my%20notes.md").unwrap();
         assert_eq!(path, Path::new("/tmp/my notes.md"));
+    }
+
+    #[test]
+    fn wsl_unc_and_verbatim_paths_with_encoded_spaces_decode_and_normalize() {
+        let (path, _) = file_url_target(
+            r"file://\\?\UNC\wsl.localhost\Ubuntu\home\user\project\assets/screenshots/Screenshot%202026-11-04%20203117.png",
+        )
+        .unwrap();
+        assert_eq!(
+            path,
+            Path::new(
+                r"\\wsl.localhost\Ubuntu\home\user\project\assets\screenshots\Screenshot 2026-11-04 203117.png"
+            )
+        );
     }
 
     /// The hard requirement: a web link must fall through to the browser, never

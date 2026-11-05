@@ -628,7 +628,16 @@ pub(super) fn resolve_mention_names_with_human(
                     let mut test_trailing = String::new();
                     while !test_token.is_empty() {
                         let last_char = test_token.chars().next_back().unwrap();
-                        if matches!(last_char, ',' | ';' | '!' | '?' | ')' | ']' | '}' | '>' | '\'' | '"') {
+                        if last_char == ')' {
+                            let prefix = &test_token[..test_token.len() - 1];
+                            let opens = prefix.chars().filter(|&c| c == '(').count();
+                            let closes = prefix.chars().filter(|&c| c == ')').count();
+                            if opens > closes {
+                                break;
+                            }
+                            test_trailing.insert(0, last_char);
+                            test_token = prefix;
+                        } else if matches!(last_char, ',' | ';' | '!' | '?' | ']' | '}' | '>' | '\'' | '"') {
                             test_trailing.insert(0, last_char);
                             test_token = &test_token[..test_token.len() - last_char.len_utf8()];
                         } else if last_char == '.' {
@@ -645,7 +654,7 @@ pub(super) fn resolve_mention_names_with_human(
                     }
 
                     if test_token.is_empty() {
-                        continue;
+                        break;
                     }
 
                     let (path_str, _, _) = parse_line_fragment(test_token);
@@ -665,13 +674,26 @@ pub(super) fn resolve_mention_names_with_human(
                     };
 
                     let is_file_m = is_file_mention(test_token, repo_root);
+                    let ends_with_ext = has_recognized_extension(path_str);
 
-                    if exists_on_disk || ((has_slash || starts_path) && is_file_m) {
-                        best_match = Some((test_token.to_string(), test_trailing, current_sub.len()));
-                    }
-
-                    if w_idx == 0 && !has_slash && !starts_path && !is_file_m {
-                        break;
+                    if w_idx == 0 {
+                        if is_file_m || exists_on_disk {
+                            best_match = Some((test_token.to_string(), test_trailing.clone(), current_sub.len()));
+                        } else if !has_slash && !starts_path {
+                            break;
+                        }
+                        if (ends_with_ext && !exists_on_disk) || !test_trailing.is_empty() || (!has_slash && !starts_path) {
+                            break;
+                        }
+                    } else {
+                        if exists_on_disk || ((has_slash || starts_path) && ends_with_ext) {
+                            best_match = Some((test_token.to_string(), test_trailing.clone(), current_sub.len()));
+                            if !exists_on_disk || !test_trailing.is_empty() {
+                                break;
+                            }
+                        } else if !test_trailing.is_empty() {
+                            break;
+                        }
                     }
                 }
 
@@ -679,6 +701,12 @@ pub(super) fn resolve_mention_names_with_human(
                     raw_token = tok;
                     trailing = trail;
                     consumed_bytes = len;
+                } else {
+                    let first_word = candidate_line.split_whitespace().next().unwrap_or("");
+                    if !first_word.is_empty() {
+                        raw_token = first_word.to_string();
+                        consumed_bytes = first_word.len();
+                    }
                 }
             }
 
@@ -766,6 +794,19 @@ fn parse_line_fragment(token: &str) -> (&str, String, String) {
         return (p, format!("#{frag}"), format!("#{frag}"));
     }
     (token, String::new(), String::new())
+}
+
+fn has_recognized_extension(path_str: &str) -> bool {
+    let leaf = path_str.rsplit(['/', '\\', ' ']).next().unwrap_or(path_str);
+    if let Some((stem, ext)) = leaf.rsplit_once('.') {
+        !stem.is_empty()
+            && !ext.is_empty()
+            && ext.len() <= 10
+            && ext.chars().all(|c| c.is_ascii_alphanumeric())
+            && ext.chars().any(|c| c.is_ascii_alphabetic())
+    } else {
+        false
+    }
 }
 
 fn is_file_mention(token: &str, repo_root: Option<&std::path::Path>) -> bool {
