@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.49",
+        date: Some("2026-11-06"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Accent-Colored Quark @mentions Distinct from File Links (hadron-chamber): Resolved @human, @quark, and @alias mentions in push_mention_link now render as bold inline code (**`@name`**) instead of hadron://mention/ links, and markdown_style's inline_code highlight uses theme::accent() on bg_elevated so quark mentions use the active accent color while file mentions stay blue file:// links",
+        ],
+    },
+    Release {
         version: "0.33.48",
         date: Some("2026-11-06"),
         added: &[
@@ -29,7 +38,7 @@ const RELEASES: &[Release] = &[
             "Shared Orchestrator Badge & Configured Nucleus Budget (hadron-chamber, hadron-forge, hadron-lattice, hadron-gluon): widgets::orchestrator_badge is shared by the Roster and Processes overlay, and the configured nucleus_index_budget_kb from .hadron/team.json is resolved in the nucleus linters, doctor_body, and quark prompts/skills",
         ],
         fixed: &[
-            "/command & @mention Coloring on Upstream gpui-component (hadron-chamber): Resolved @human, @quark, and @alias mentions and bare /commands now render as bold accent-colored inline code while file mentions remain blue file:// links (code spans and paths like src/app.rs or /home/user untouched), markdown_style's inline_code highlight is theme::accent() on bg_elevated, and handle_chat_link_click ignores hadron:// URLs",
+            "/command & @mention Coloring on Upstream gpui-component (hadron-chamber): Resolved @human, @quark, and @alias mentions now render as bold hadron://mention/ links and bare /commands as bold amber inline code (code spans and paths like src/app.rs or /home/user untouched), markdown_style's inline_code highlight is theme::file_link() on bg_elevated, and handle_chat_link_click ignores hadron:// URLs",
         ],
     },
     Release {
