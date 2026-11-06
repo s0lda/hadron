@@ -1887,6 +1887,28 @@ pub(super) fn stat_tile_with_note(
         )
 }
 
+/// Shared Swarm Orchestrator icon badge (`IconName::Network`) used in Roster and Process Manager.
+pub(super) fn orchestrator_badge(id: impl Into<SharedString>) -> impl IntoElement {
+    h_flex()
+        .id(id.into())
+        .items_center()
+        .justify_center()
+        .px_1()
+        .py_0p5()
+        .rounded_md()
+        .bg(theme::accent().opacity(0.12))
+        .border_1()
+        .border_color(theme::accent().opacity(0.35))
+        .text_color(theme::accent())
+        .child(Icon::new(IconName::Network).xsmall())
+        .tooltip(|window, cx| {
+            Tooltip::new(
+                "Swarm Orchestrator (leads research, planning, dispatch, and escalation)",
+            )
+            .build(window, cx)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

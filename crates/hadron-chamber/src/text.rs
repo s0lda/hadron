@@ -868,10 +868,13 @@ pub fn doctor_body(repo_root: &std::path::Path, roster: &[crate::model::RosterRo
     // 2. Nucleus index budget check
     let index_path = repo_root.join(".hadron").join("nucleus").join("index.md");
     let index_bytes = std::fs::metadata(&index_path).map(|m| m.len()).unwrap_or(0);
-    let nucleus_status = if index_bytes <= 32768 {
-        format!("[ok] `index.md` size is {} B (within 32 KB budget)", index_bytes)
+    let team = hadron_lattice::load_team_for_repo(repo_root);
+    let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&team);
+    let budget_kb = budget_bytes / 1024;
+    let nucleus_status = if (index_bytes as usize) <= budget_bytes {
+        format!("[ok] `index.md` size is {index_bytes} B (within {budget_kb} KB budget)")
     } else {
-        format!("[fail] `index.md` size is {} B (exceeds 32 KB budget!)", index_bytes)
+        format!("[fail] `index.md` size is {index_bytes} B (exceeds {budget_kb} KB budget!)")
     };
     out.push_str(&format!("- **Nucleus**: {}\n", nucleus_status));
 
@@ -3101,6 +3104,26 @@ mod tests {
 
         let body_dead = health_body(None, false, std::path::Path::new("/repo"), 0);
         assert!(body_dead.contains("none (stopped)"));
+    }
+
+    #[test]
+    fn doctor_body_respects_configured_nucleus_budget_in_team_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hadron = tmp.path().join(".hadron");
+        let nucleus = hadron.join("nucleus");
+        std::fs::create_dir_all(&nucleus).unwrap();
+        std::fs::write(
+            hadron.join("team.json"),
+            r#"{"schema_version":2,"nucleus_index_budget_kb":64}"#,
+        )
+        .unwrap();
+        std::fs::write(nucleus.join("index.md"), "a".repeat(40 * 1024)).unwrap();
+
+        let report = doctor_body(tmp.path(), &[]);
+        assert!(
+            report.contains("[ok] `index.md` size is 40960 B (within 64 KB budget)"),
+            "doctor_body must use configured 64 KB budget from team.json, got:\n{report}"
+        );
     }
 
     #[test]

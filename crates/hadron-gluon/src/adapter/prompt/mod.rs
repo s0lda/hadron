@@ -351,6 +351,12 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
             p.push_str(&recalled);
             p.push_str("\n\n");
         }
+        let budget_bytes = if projection.nucleus_index_budget_bytes > 0 {
+            projection.nucleus_index_budget_bytes
+        } else {
+            crate::nucleus_status::BUDGET_BYTES
+        };
+        let budget_kb = budget_bytes / 1024;
         p.push_str(&format!(
             "This index is **shared by every quark**, and it persists across turns and \
              sessions. A lesson one of you paid for is a lesson none of you should pay for \
@@ -360,7 +366,7 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
              needs more than a line names a **note** that holds the long version. The \
              engine does NOT load the notes — you open one yourself, with your own tools, \
              on the turn its line turns out to matter.\n\n\
-             - The index lives at `{index}` — append to it (create it if it does not exist).\n\
+             - The index lives at `{index}` (configured budget: {budget_kb} KB / {budget_bytes} B) — append to it (create it if it does not exist).\n\
              - Notes live in `{notes}/` — one file per lesson, named after its slug.\n\
              - A line is `- **<slug>** — <the lesson, in one sentence>` and, if it has a \
              note, ends with ` → `{notes}/<slug>.md`. Many lessons need no note at all.\n\n\

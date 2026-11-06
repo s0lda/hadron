@@ -65,10 +65,24 @@ impl NucleusLinter {
         Self { budget_bytes }
     }
 
+    /// Creates a linter configured with the team budget resolved for `repo_root`
+    /// (`.hadron/team.json` `nucleus_index_budget_kb`, defaulting to 32 KB).
+    pub fn for_repo(repo_root: &Path) -> Self {
+        let team = crate::load_team_for_repo(repo_root);
+        Self::new(team.nucleus_index_budget_bytes())
+    }
+
     /// Run full nucleus lint against a `.hadron/nucleus` directory and its parent workspace root.
     pub fn lint(&self, nucleus_dir: impl AsRef<Path>, repo_root: Option<&Path>) -> LintReport {
         let n_dir = nucleus_dir.as_ref();
         let mut report = LintReport::default();
+        let effective_budget = if self.budget_bytes == DEFAULT_INDEX_BUDGET_BYTES {
+            repo_root
+                .map(|r| crate::load_team_for_repo(r).nucleus_index_budget_bytes())
+                .unwrap_or(self.budget_bytes)
+        } else {
+            self.budget_bytes
+        };
 
         let index_path = n_dir.join("index.md");
         let mut indexed_slugs = HashSet::new();
@@ -76,10 +90,10 @@ impl NucleusLinter {
         if index_path.is_file() {
             if let Ok(content) = fs::read_to_string(&index_path) {
                 report.index_bytes = content.len();
-                if content.len() > self.budget_bytes {
+                if content.len() > effective_budget {
                     report.issues.push(LintIssue::IndexBudgetExceeded {
                         size_bytes: content.len(),
-                        budget_bytes: self.budget_bytes,
+                        budget_bytes: effective_budget,
                     });
                 }
 

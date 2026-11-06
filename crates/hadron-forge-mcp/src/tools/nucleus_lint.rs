@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct NucleusLintArgs {
-    /// Optional index budget in KB (defaults to 32 KB)
+    /// Optional index budget override in KB (defaults to workspace .hadron/team.json nucleus_index_budget_kb, or 32 KB)
     pub budget_kb: Option<usize>,
 }
 
@@ -16,7 +16,7 @@ pub struct NucleusLintArgs {
 impl ForgeMcpServer {
     #[tool(
         name = "hadron_forge_nucleus_lint",
-        description = "Lint .hadron/nucleus/ for 32 KB budget adherence, broken pointer references, orphan notes, and note frontmatter validity"
+        description = "Lint .hadron/nucleus/ for configured index budget adherence (.hadron/team.json nucleus_index_budget_kb, default 32 KB), broken pointer references, orphan notes, and note frontmatter validity"
     )]
     pub async fn nucleus_lint(&self, Parameters(args): Parameters<NucleusLintArgs>) -> Json<ToolResponse> {
         let nucleus_root = self.nucleus_root.clone();

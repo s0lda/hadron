@@ -2284,7 +2284,7 @@ impl super::Chamber {
                 .filter(|m| !m.is_empty());
 
             let is_orchestrator = roster_row
-                .is_some_and(|r| r.flavor == Some(hadron_lattice::Flavor::Orchestrator));
+                .is_some_and(|r| r.adopted && r.flavor == Some(hadron_lattice::Flavor::Orchestrator));
 
             let pid_badge = row.pid.map(|pid| match row.ppid.filter(|&ppid| ppid > 0) {
                 Some(ppid) => format!("PID {pid} (PPID {ppid})"),
@@ -2452,6 +2452,7 @@ impl super::Chamber {
                 }
             }
 
+            let proc_orch_badge_id = format!("process-orch-badge-{}", row.id);
             list = list.child(
                 h_flex()
                     .id(SharedString::from(format!("proc-row-{}", row.id)))
@@ -2492,17 +2493,9 @@ impl super::Chamber {
                                                     .child(row.label),
                                             )
                                             .when(is_orchestrator, |this| {
-                                                this.child(
-                                                    div()
-                                                        .px_1p5()
-                                                        .py_0p5()
-                                                        .rounded_sm()
-                                                        .bg(theme::accent().opacity(0.15))
-                                                        .text_size(px(10.0))
-                                                        .font_weight(gpui::FontWeight::BOLD)
-                                                        .text_color(theme::accent())
-                                                        .child("ORCH"),
-                                                )
+                                                this.child(widgets::orchestrator_badge(
+                                                    proc_orch_badge_id,
+                                                ))
                                             })
                                             .child(
                                                 div()

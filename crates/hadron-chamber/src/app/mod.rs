@@ -1461,6 +1461,11 @@ impl Chamber {
                     .filter_map(|t| t.term.as_ref().and_then(|pty| pty.process_id()))
                     .collect();
                 let verified_git_ready = chamber.git_ready && chamber.git_ready_verified;
+                let selected_branch = chamber.git_selected_branch.clone();
+                let selected_worktree_path = chamber
+                    .git_cursor_worktree
+                    .and_then(|ix| chamber.git_worktrees.as_ref()?.get(ix))
+                    .map(|wt| wt.path.clone());
                 Some((
                     chamber.path.clone(),
                     chamber.repo_team_path(),
@@ -1477,6 +1482,8 @@ impl Chamber {
                     chamber.field_write_queue.clone(),
                     chamber.process_manager_open,
                     terminal_pids,
+                    selected_branch,
+                    selected_worktree_path,
                 ))
             }) {
                 Ok(Some(s)) => s,
@@ -1515,6 +1522,8 @@ impl Chamber {
                         state.10.as_deref(),
                         scan_processes,
                         &state.14,
+                        state.15.as_deref(),
+                        state.16.as_deref(),
                     )
                 })
                 .await;

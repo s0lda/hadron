@@ -11,7 +11,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::file::{ForgeError, Root};
 
-const DEFAULT_INDEX_BUDGET_BYTES: usize = 32 * 1024; // 32 KB
+const DEFAULT_INDEX_BUDGET_BYTES: usize = hadron_lattice::DEFAULT_NUCLEUS_INDEX_BUDGET_BYTES;
+
+/// Resolve the active `index.md` byte budget from an explicit `budget_kb` override or
+/// the workspace's `.hadron/team.json` (`nucleus_index_budget_kb`), falling back to
+/// [`DEFAULT_INDEX_BUDGET_BYTES`] (32 KB).
+pub fn resolve_nucleus_budget_bytes(
+    nucleus_dir: &std::path::Path,
+    budget_kb: Option<usize>,
+) -> usize {
+    if let Some(kb) = budget_kb.filter(|&k| k > 0) {
+        return kb * 1024;
+    }
+    if let Some(hadron_dir) = nucleus_dir.parent() {
+        let team_path = hadron_dir.join("team.json");
+        if team_path.is_file() {
+            return hadron_lattice::load_team(&team_path).nucleus_index_budget_bytes();
+        }
+        if let Some(repo_root) = hadron_dir.parent() {
+            let repo_team = repo_root.join(".hadron").join("team.json");
+            if repo_team.is_file() {
+                return hadron_lattice::load_team_for_repo(repo_root).nucleus_index_budget_bytes();
+            }
+        }
+    }
+    let direct_team = nucleus_dir.join("team.json");
+    if direct_team.is_file() {
+        return hadron_lattice::load_team(&direct_team).nucleus_index_budget_bytes();
+    }
+    DEFAULT_INDEX_BUDGET_BYTES
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteLintError {
@@ -106,7 +135,7 @@ pub fn lint_nucleus(
     let index_path = root_path.join("index.md");
     let notes_dir = root_path.join("notes");
 
-    let index_budget_bytes = budget_kb.map(|k| k * 1024).unwrap_or(DEFAULT_INDEX_BUDGET_BYTES);
+    let index_budget_bytes = resolve_nucleus_budget_bytes(root_path, budget_kb);
 
     let (index_bytes, index_content) = if index_path.exists() {
         let bytes = std::fs::read(&index_path).map_err(|e| ForgeError::Io(e.to_string()))?;
@@ -304,5 +333,38 @@ mod tests {
         let report = lint_nucleus(&root, None).unwrap();
         assert!(!report.ok);
         assert!(!report.frontmatter_errors.is_empty());
+    }
+
+    #[test]
+    fn lint_nucleus_respects_team_json_configured_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let hadron_dir = dir.path().join(".hadron");
+        let nucleus_dir = hadron_dir.join("nucleus");
+        let notes_dir = nucleus_dir.join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(
+            hadron_dir.join("team.json"),
+            r#"{"schema_version":2,"nucleus_index_budget_kb":64}"#,
+        )
+        .unwrap();
+        // Write a 40 KB index (exceeds default 32 KB, within configured 64 KB)
+        let mut idx = String::new();
+        for i in 0..550 {
+            idx.push_str(&format!(
+                "- [sample-lesson](notes/sample-lesson.md) — Hook line number {i:04} padded to seventy chars\n"
+            ));
+        }
+        assert!(idx.len() > 32 * 1024 && idx.len() < 64 * 1024);
+        std::fs::write(nucleus_dir.join("index.md"), &idx).unwrap();
+        std::fs::write(
+            notes_dir.join("sample-lesson.md"),
+            "---\nname: sample-lesson\ndescription: Retrieval key\nmetadata:\n  type: project\n---\nLesson content.\n",
+        )
+        .unwrap();
+
+        let root = Root::new(&nucleus_dir);
+        let report = lint_nucleus(&root, None).unwrap();
+        assert_eq!(report.index_budget_bytes, 64 * 1024);
+        assert!(report.ok, "40 KB index must pass under configured 64 KB budget: {}", report.summary);
     }
 }

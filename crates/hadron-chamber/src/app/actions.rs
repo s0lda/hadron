@@ -2824,6 +2824,9 @@ impl Chamber {
             self.right_rail_tab = RightRailTab::Git;
         }
         self.git_subtab = subtab;
+        if matches!(subtab, GitSubtab::Worktrees | GitSubtab::Branches) {
+            self.refresh_git_worktrees(cx);
+        }
         cx.notify();
     }
 

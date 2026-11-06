@@ -226,27 +226,9 @@ impl super::Chamber {
                     .when(
                         r.adopted && r.flavor == Some(hadron_lattice::Flavor::Orchestrator),
                         |this| {
-                        this.child(
-                            h_flex()
-                                .id(SharedString::from(format!("orch-badge-{}", r.id)))
-                                .items_center()
-                                .justify_center()
-                                .px_1()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(theme::accent().opacity(0.12))
-                                .border_1()
-                                .border_color(theme::accent().opacity(0.35))
-                                .text_color(theme::accent())
-                                .child(Icon::new(IconName::Network).xsmall())
-                                .tooltip(|window, cx| {
-                                    Tooltip::new(
-                                        "Swarm Orchestrator (leads research, planning, dispatch, and escalation)",
-                                    )
-                                    .build(window, cx)
-                                }),
-                        )
-                    })
+                            this.child(widgets::orchestrator_badge(format!("orch-badge-{}", r.id)))
+                        },
+                    )
                     .child(
                         div()
                             .text_xs()

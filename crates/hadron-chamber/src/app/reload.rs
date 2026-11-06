@@ -13,6 +13,7 @@ pub(super) struct WorkspaceScan {
     pub(super) git_remote_branches: Option<Vec<crate::vcs::BranchInfo>>,
     pub(super) git_worktrees: Option<Vec<crate::vcs::WorktreeInfo>>,
     pub(super) git_log_graph: Option<String>,
+    pub(super) selected_branch_diff: Option<(String, Option<Vec<crate::vcs::FileDiff>>)>,
     pub(super) repo_health: Option<hadron_gatekeeper::RepoHealthReport>,
     pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
     pub(super) plan_paths: Vec<(std::time::SystemTime, String)>,
@@ -63,6 +64,8 @@ impl WorkspaceScan {
         verified_git_ready: bool,
         prev_branch_fingerprint: Option<&str>,
         active_plan_hint: Option<&str>,
+        selected_branch: Option<&str>,
+        selected_worktree_path: Option<&str>,
     ) -> Option<Self> {
         let files = crate::sys::list_workspace_files(repo_root, file_tree_expanded);
         let git_ready = if verified_git_ready && repo_root.join(".git").exists() {
@@ -93,6 +96,22 @@ impl WorkspaceScan {
             } else {
                 (None, None, None, None, None)
             };
+        let selected_branch_diff = if scan_diff {
+            let rotated_branch = selected_worktree_path.and_then(|wt_path| {
+                git_worktrees
+                    .as_deref()
+                    .and_then(|wts| wts.iter().find(|wt| wt.path == wt_path))
+                    .and_then(|wt| wt.branch.clone())
+            });
+            let active_branch = rotated_branch
+                .or_else(|| selected_branch.map(str::to_string));
+            active_branch.map(|b| {
+                let diff = crate::vcs::branch_diff(repo_root, "main", &b);
+                (b, diff)
+            })
+        } else {
+            None
+        };
         let repo_health = if scan_health {
             Some(hadron_gatekeeper::RepoMonitor::check_repo(repo_root))
         } else {
@@ -129,6 +148,7 @@ impl WorkspaceScan {
             git_remote_branches,
             git_worktrees,
             git_log_graph,
+            selected_branch_diff,
             repo_health,
             remote_tracking,
             plan_paths,
@@ -329,6 +349,8 @@ impl FieldPoll {
         active_plan_hint: Option<&str>,
         scan_processes: bool,
         terminal_pids: &[u32],
+        selected_branch: Option<&str>,
+        selected_worktree_path: Option<&str>,
     ) -> Self {
         let (events, field_epoch) = field_write_queue.read_events_if_quiescent(path);
         let read_strict = |p: &std::path::Path| -> Option<Team> {
@@ -366,6 +388,8 @@ impl FieldPoll {
                 verified_git_ready,
                 prev_branch_fingerprint,
                 active_plan_hint,
+                selected_branch,
+                selected_worktree_path,
             )
         } else {
             None
@@ -765,6 +789,19 @@ impl super::Chamber {
                         self.rebuild_graph_rows();
                     }
                     changed = true;
+                }
+
+                if let Some((branch, diff)) = scan.selected_branch_diff {
+                    if self.git_selected_branch.is_some() {
+                        if self.git_selected_branch.as_deref() != Some(branch.as_str()) {
+                            self.git_selected_branch = Some(branch);
+                            changed = true;
+                        }
+                        if self.git_branch_diff != diff {
+                            self.git_branch_diff = diff;
+                            changed = true;
+                        }
+                    }
                 }
 
                 if let Some(health) = scan.repo_health {

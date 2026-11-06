@@ -156,6 +156,8 @@ impl super::Chamber {
                                 });
                             })
                             .detach();
+                        } else if matches!(this.git_subtab, GitSubtab::Worktrees | GitSubtab::Branches) {
+                            this.refresh_git_worktrees(cx);
                         }
                         cx.notify();
                     }))
@@ -977,7 +979,80 @@ impl super::Chamber {
         wt.branch.clone()
     }
 
+    /// Refresh worktrees, local/remote branches, and the active selected branch/worktree diff
+    /// asynchronously on the background executor.
+    pub(crate) fn refresh_git_worktrees(&mut self, cx: &mut Context<Self>) {
+        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        let selected_branch = self.git_selected_branch.clone();
+        let selected_wt_path = self
+            .git_cursor_worktree
+            .and_then(|ix| self.git_worktrees.as_ref()?.get(ix))
+            .map(|wt| wt.path.clone());
+        cx.spawn(async move |this, cx| {
+            let (fp, branches, remote_branches, worktrees, branch_diff_update) = cx
+                .background_executor()
+                .spawn(async move {
+                    let fp = crate::vcs::branch_fingerprint(&root);
+                    let branches = crate::vcs::list_branches(&root, "main");
+                    let remote_branches = crate::vcs::list_remote_branches(&root, "main");
+                    let worktrees = crate::vcs::list_worktrees(&root);
+                    let rotated_branch = selected_wt_path.as_deref().and_then(|wt_path| {
+                        worktrees
+                            .iter()
+                            .find(|wt| wt.path == wt_path)
+                            .and_then(|wt| wt.branch.clone())
+                    });
+                    let active_branch = rotated_branch.or(selected_branch);
+                    let branch_diff_update = active_branch.map(|b| {
+                        let diff = crate::vcs::branch_diff(&root, "main", &b);
+                        (b, diff)
+                    });
+                    (fp, branches, remote_branches, worktrees, branch_diff_update)
+                })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.git_branch_fingerprint = Some(fp);
+                chamber.git_branches = Some(branches);
+                chamber.git_remote_branches = Some(remote_branches);
+                chamber.git_worktrees = Some(worktrees);
+                if let Some((b, diff)) = branch_diff_update {
+                    if chamber.git_selected_branch.is_some() {
+                        chamber.git_selected_branch = Some(b);
+                        chamber.git_branch_diff = diff;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn git_worktrees_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let refresh_btn = div()
+            .id("git-worktrees-refresh-btn")
+            .px_2p5()
+            .py_0p5()
+            .rounded_full()
+            .bg(theme::tab_bar_bg())
+            .border_1()
+            .border_color(theme::glass_highlight())
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(theme::text_muted())
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::bg_surface_raised()).text_color(theme::text()))
+            .child("↻ Refresh")
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.refresh_git_worktrees(cx);
+            }));
+
+        let toolbar = h_flex()
+            .w_full()
+            .justify_end()
+            .items_center()
+            .pb_2()
+            .child(refresh_btn);
+
         let rows: gpui::AnyElement = match &self.git_worktrees {
             None => Self::muted("Loading worktrees...").into_any_element(),
             Some(worktrees) if worktrees.is_empty() => {
@@ -1065,7 +1140,7 @@ impl super::Chamber {
             }
         };
 
-        rows
+        v_flex().w_full().gap_1().child(toolbar).child(rows)
     }
 
     /// Whether a branch (by name) has landed in `main` — looked up in the already-loaded

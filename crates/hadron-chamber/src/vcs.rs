@@ -47,9 +47,20 @@ pub fn working_diff(repo_root: &Path) -> Option<Vec<FileDiff>> {
 
 /// What a branch adds over its merge-base with `base` (`git diff base...branch`,
 /// three-dot) — the "what would land if this merged" view, not the raw two-endpoint
-/// delta. A branch already merged (or `base` itself) yields no files, which the panel
-/// renders as "no changes relative to <base>" rather than an error.
+/// delta. When `branch` (other than `base`) is checked out in a worktree, includes
+/// uncommitted working-tree changes and untracked files in that worktree so in-flight
+/// quark edits appear in `Git > Worktrees` before the turn commits.
 pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<FileDiff>> {
+    if branch != base {
+        if let Some(wt) = list_worktrees(repo_root)
+            .into_iter()
+            .find(|wt| wt.branch.as_deref() == Some(branch))
+        {
+            if let Some(diffs) = worktree_diff(repo_root, &wt.path, base) {
+                return Some(diffs);
+            }
+        }
+    }
     let out = hadron_lattice::wsl::git_command(repo_root)
         .args(["diff", &format!("{base}...{branch}")])
         .output()
@@ -59,6 +70,69 @@ pub fn branch_diff(repo_root: &Path, base: &str, branch: &str) -> Option<Vec<Fil
     }
     let raw = String::from_utf8_lossy(&out.stdout);
     Some(parse_diff(&raw))
+}
+
+/// Diff a worktree at `wt_path` against its merge-base with `base`, combining
+/// committed branch changes, staged/unstaged working-tree edits, and untracked files.
+pub fn worktree_diff(repo_root: &Path, wt_path: &str, base: &str) -> Option<Vec<FileDiff>> {
+    let mb_out = hadron_lattice::wsl::git_command(repo_root)
+        .args(["-C", wt_path, "merge-base", base, "HEAD"])
+        .output()
+        .ok()?;
+    let merge_base = if mb_out.status.success() {
+        let mb = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&mb_out.stdout))
+            .trim()
+            .to_string();
+        if mb.is_empty() {
+            base.to_string()
+        } else {
+            mb
+        }
+    } else {
+        base.to_string()
+    };
+
+    let diff_out = hadron_lattice::wsl::git_command(repo_root)
+        .args(["-C", wt_path, "diff", &merge_base])
+        .output()
+        .ok()?;
+    if !diff_out.status.success() {
+        return None;
+    }
+    let mut diffs = parse_diff(&String::from_utf8_lossy(&diff_out.stdout));
+
+    if let Ok(untracked_out) = hadron_lattice::wsl::git_command(repo_root)
+        .args(["-C", wt_path, "ls-files", "--others", "--exclude-standard"])
+        .output()
+    {
+        if untracked_out.status.success() {
+            let untracked_raw = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(
+                &untracked_out.stdout,
+            ));
+            for rel in untracked_raw.lines().map(str::trim).filter(|s| !s.is_empty()) {
+                if rel == ".hadron" || rel.starts_with(".hadron/") || rel.starts_with(".hadron\\")
+                {
+                    continue;
+                }
+                if diffs.iter().any(|d| d.path == rel) {
+                    continue;
+                }
+                if let Ok(no_idx) = hadron_lattice::wsl::git_command(repo_root)
+                    .args(["-C", wt_path, "diff", "--no-index", "--", "/dev/null", rel])
+                    .output()
+                {
+                    if matches!(no_idx.status.code(), Some(0) | Some(1)) {
+                        for mut fd in parse_diff(&String::from_utf8_lossy(&no_idx.stdout)) {
+                            fd.path = rel.to_string();
+                            diffs.push(fd);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(diffs)
 }
 
 /// How many commits the branch/worktree at `wt_path` is ahead of `base`.
@@ -416,9 +490,9 @@ pub fn parse_branches(
         .collect()
 }
 
-/// Raw ref fingerprint for local and remote branch heads to detect changes cheaply.
+/// Raw ref and worktree fingerprint for local/remote branch heads and worktree checkouts.
 pub fn branch_fingerprint(repo_root: &Path) -> String {
-    run_git(
+    let refs = run_git(
         repo_root,
         &[
             "for-each-ref",
@@ -426,7 +500,9 @@ pub fn branch_fingerprint(repo_root: &Path) -> String {
             "refs/heads/",
             "refs/remotes/",
         ],
-    )
+    );
+    let wts = run_git(repo_root, &["worktree", "list", "--porcelain"]);
+    format!("{refs}\n---\n{wts}")
 }
 
 /// Every local branch, with `merged` set against `target` (e.g. `"main"`).
@@ -2965,6 +3041,48 @@ index a1b2c3d..e4f5g6h 100644
             Some("= 0.23.45"),
             Some("0.23.46"),
         ));
+    }
+
+    #[test]
+    fn branch_diff_includes_uncommitted_and_untracked_worktree_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        run_git(repo, &["init", "-b", "main"]);
+        run_git(repo, &["config", "user.name", "Test"]);
+        run_git(repo, &["config", "user.email", "test@example.com"]);
+        std::fs::write(repo.join("tracked.txt"), "line1\n").unwrap();
+        run_git(repo, &["add", "tracked.txt"]);
+        run_git(repo, &["commit", "-m", "init"]);
+
+        let wt_dir = repo.join(".hadron").join("trees").join("worker");
+        std::fs::create_dir_all(wt_dir.parent().unwrap()).unwrap();
+        let branch = "quark/worker/01TEST";
+        run_git(
+            repo,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                &wt_dir.to_string_lossy(),
+                "main",
+            ],
+        );
+
+        // Make uncommitted edit + untracked file in the worktree (no commit yet)
+        std::fs::write(wt_dir.join("tracked.txt"), "line1\nline2\n").unwrap();
+        std::fs::write(wt_dir.join("new_file.rs"), "pub fn work() {}\n").unwrap();
+
+        let diffs = branch_diff(repo, "main", branch).expect("branch_diff should succeed");
+        let paths: Vec<&str> = diffs.iter().map(|d| d.path.as_str()).collect();
+        assert!(
+            paths.contains(&"tracked.txt"),
+            "uncommitted tracked file edit in worktree must appear in branch_diff: {paths:?}"
+        );
+        assert!(
+            paths.contains(&"new_file.rs"),
+            "untracked file in worktree must appear in branch_diff: {paths:?}"
+        );
     }
 }
 

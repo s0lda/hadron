@@ -17,7 +17,7 @@ Maintain the shared swarm memory under `.hadron/nucleus/` according to Standard 
 ## Curation Steps
 
 ### 1. Audit `index.md` Budget & Formatting
-- Verify total byte size of `index.md` stays comfortably within the 32 KB budget.
+- Verify total byte size of `index.md` stays comfortably within the workspace's configured budget (check via `hadron_forge_nucleus_lint` or `resolve_budget_bytes` / `.hadron/team.json` `nucleus_index_budget_kb`; defaults to 32 KB).
 - Verify every line in `index.md` conforms to the routing format: `- [<slug>](notes/<slug>.md) — <hook>`.
 
 ### 2. Prune Stale Lessons & Promote Invariants
