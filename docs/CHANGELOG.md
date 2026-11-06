@@ -5,6 +5,18 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.47] - 2026-11-06
+
+### Added
+- **In-Memory Noto Color Emoji `'m'` Charmap Probe Guard (`hadron-chamber`)**:
+  - Added `fonts::noto_color_emoji_with_m_guard`, which patches the Format 12 `cmap` subtable of the embedded `NOTO_COLOR_EMOJI` in memory (`U+006D -> glyph 1`, replacing the unused `U+0000` mapping while keeping groups sorted) so upstream `gpui_wgpu`'s `load_family` `'m'` probe no longer purges the emoji face from `fontdb`; ASCII shaping is unaffected because `pick_covering_slot` always uses the primary font for `ch <= 0x7F` (`crates/hadron-chamber/src/fonts.rs`).
+  - Wired `fonts::default_fallbacks()` onto the root Chamber and Project Selector views so color emoji resolve through `FontFallbacks` (`crates/hadron-chamber/src/app/render/mod.rs`, `crates/hadron-chamber/src/app/render/selector.rs`).
+
+### Changed
+- **Upstream `TextView::on_link_click` & Removal of `gpui` / `gpui-component` Fork Patches (`hadron-chamber`, deps)**:
+  - Replaced the forked `set_link_handler` with upstream `TextView::on_link_click`, routed through `app::handle_chat_link_click` across chat and log views; `file://` URLs resolve against the active workspace via `resolve_link_for_active_workspace` and open in the configured editor, falling back to `open_path_or_url` (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/widgets.rs`).
+  - Removed the `s0lda/zed` and `s0lda/gpui-component` `[patch]` overrides from `Cargo.toml` and `Cargo.lock`; `gpui` and `gpui-component` now build directly from `zed-industries/zed` and `longbridge/gpui-component` (`Cargo.toml`, `Cargo.lock`, `docs/architecture/system-diagrams.md`).
+
 ## [0.33.46] - 2026-11-05
 
 ### Added

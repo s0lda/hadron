@@ -34,7 +34,7 @@ hadron/
 
 ## External Dependencies & GUI Components
 
-- **`gpui-component`**: The desktop widget library by Longbridge ([longbridge/gpui-component](https://github.com/longbridge/gpui-component)). Hadron uses a targeted fork ([s0lda/gpui-component](https://github.com/s0lda/gpui-component)), consumed via the `[patch]` section in `Cargo.toml` to support custom text mark styling for @mentions.
+- **`gpui-component`**: The desktop widget library by Longbridge ([longbridge/gpui-component](https://github.com/longbridge/gpui-component)). Hadron consumes it, together with `gpui` from [zed-industries/zed](https://github.com/zed-industries/zed), directly from upstream git (revisions pinned in `Cargo.lock`) with no `[patch]` fork overrides; chat and log link clicks are wired through upstream `TextView::on_link_click` (`app::handle_chat_link_click`).
 
 ---
 

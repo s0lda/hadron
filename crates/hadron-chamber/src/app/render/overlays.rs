@@ -20,6 +20,17 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.47",
+        date: Some("2026-11-06"),
+        added: &[
+            "In-Memory Noto Color Emoji 'm' Charmap Probe Guard (hadron-chamber): Added fonts::noto_color_emoji_with_m_guard, which patches the embedded Noto Color Emoji Format 12 cmap in memory (U+006D -> glyph 1) so upstream gpui_wgpu's 'm' probe no longer purges the emoji face from fontdb, and wired fonts::default_fallbacks() onto the root Chamber and Project Selector views",
+        ],
+        changed: &[
+            "Upstream TextView::on_link_click & Removal of gpui / gpui-component Fork Patches (hadron-chamber, deps): Replaced the forked set_link_handler with upstream TextView::on_link_click via app::handle_chat_link_click across chat and log views (file:// URLs resolve against the active workspace and open in the configured editor), and removed the s0lda/zed and s0lda/gpui-component [patch] overrides from Cargo.toml and Cargo.lock",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.46",
         date: Some("2026-11-05"),
         added: &[
