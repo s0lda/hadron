@@ -5,6 +5,23 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.48] - 2026-11-06
+
+### Added
+- **Live Worktree Diffs & Refresh (`hadron-chamber`)**:
+  - `vcs::branch_diff` now includes uncommitted and untracked worktree changes, the selected worktree diff is polled in the background `WorkspaceScan::gather`, and **Git > Worktrees** gains a Refresh button (`crates/hadron-chamber/src/vcs.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/render/git.rs`).
+
+### Changed
+- **Shared Orchestrator Badge & Configured Nucleus Budget (`hadron-chamber`, `hadron-forge`, `hadron-lattice`, `hadron-gluon`)**:
+  - `widgets::orchestrator_badge` (`IconName::Network`) is shared by the Roster and the Processes overlay (`crates/hadron-chamber/src/app/widgets.rs`, `crates/hadron-chamber/src/app/render/roster.rs`, `crates/hadron-chamber/src/app/render/overlays.rs`).
+  - The configured `nucleus_index_budget_kb` from `.hadron/team.json` is resolved in the nucleus linters, `doctor_body`, and quark prompts/skills instead of a fixed budget (`crates/hadron-forge/src/nucleus_lint.rs`, `crates/hadron-lattice/src/nucleus_lint.rs`, `crates/hadron-gluon/src/adapter/prompt/mod.rs`).
+
+### Fixed
+- **`/command` & `@mention` Coloring on Upstream `gpui-component` (`hadron-chamber`)**:
+  - Restored the coloring lost when the `s0lda/gpui-component` fork was removed: upstream `TextView` paints foreground color only on links and inline code, so `resolve_mention_names_with_human` now rewrites resolved `@human`, `@quark`, and `@alias` mentions to bold `[**@name**](hadron://mention/name)` links and bare `/command` tokens to bold inline code (`` **`/cmd`** ``), skipping code spans, fenced blocks, and paths such as `src/app.rs`, `/home/user`, and `/etc.conf` (`crates/hadron-chamber/src/app/mentions.rs`).
+  - Set the `markdown_style` `inline_code` highlight to amber `theme::file_link()` on `theme::bg_elevated()` (`crates/hadron-chamber/src/app/widgets.rs`).
+  - `handle_chat_link_click` now ignores `hadron://` URLs so clicking a mention never opens a browser (`crates/hadron-chamber/src/app/mod.rs`).
+
 ## [0.33.47] - 2026-11-06
 
 ### Added
