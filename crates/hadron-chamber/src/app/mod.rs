@@ -2302,9 +2302,9 @@ impl Chamber {
         t.tokens.tab_bar_segmented = gpui::Hsla::from(bg_surf_raised).into();
         t.danger = theme::error().into();
         t.danger_foreground = theme::text().into();
-        t.link = theme::link().into();
-        t.link_hover = theme::link_hover().into();
-        t.link_active = theme::link_active().into();
+        t.link = theme::file_link().into();
+        t.link_hover = theme::file_link().into();
+        t.link_active = theme::file_link().into();
         t.scrollbar_show = ScrollbarShow::Hover;
         t.scrollbar = gpui::rgba(0x00000000).into();
         t.scrollbar_thumb = gpui::rgba(0xffffff40).into();

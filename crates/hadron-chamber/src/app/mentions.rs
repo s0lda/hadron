@@ -424,10 +424,10 @@ pub(super) fn format_markdown_callouts(text: &str) -> String {
 /// so that users can open referenced files with one click from chat while hovering shows
 /// the full path in a tooltip.
 ///
-/// Resolved `@mention`s and bare `/command`s become bold inline code (`**\`@name\`**`
-/// and `**\`/cmd\`**`) so upstream `TextView` paints them with the theme accent colour
-/// (`style.inline_code`) instead of link blue (`cx.theme().link`), which is reserved for
-/// clickable file and web links.
+/// Resolved `@mention`s become pink `<mark>` pill badges, bare `/command`s become bold
+/// inline code (`**\`/cmd\`**`, painted with `style.inline_code` / `theme::accent()`), and
+/// file links use `cx.theme().link` (`theme::file_link()`, yellow/amber), giving inline
+/// code, quark mentions, and file mentions three distinct colours on upstream `TextView`.
 ///
 /// Code blocks (fenced ``` and inline `...`) are passed through unmodified.
 #[cfg(test)]
@@ -792,13 +792,21 @@ pub(super) fn resolve_mention_names_with_human(
     out
 }
 
-/// A resolved `@mention` as bold inline code (`**\`@{shown}\`**`). Upstream `TextView`
-/// paints foreground colour only on links (`cx.theme().link`, blue) and inline code
-/// (`style.inline_code`, `theme::accent()`), so rendering mentions as bold inline code
-/// colours them with the active accent instead of file-link blue while selecting the text
-/// still yields `@{shown}`.
+/// A resolved `@mention` as an inline pink pill badge (`<b/><![CDATA[><mark color="#f472b640"><b>@{shown}</b></mark><!--]]>`).
+/// Upstream `TextView::markdown` has three distinct span colour slots:
+/// - `style.inline_code` (`theme::accent()`, purple `#a87ffb` on `#1f1f1f`) for `` `code` `` and `/command`s,
+/// - `cx.theme().link` (`theme::file_link()`, yellow `#e5c07b`) for clickable `@file` links, and
+/// - `TextMark::highlight` (`<mark color="#f472b640">`) for `@mention` pill badges.
+///
+/// Wrapping `<mark>` inside `<b/><![CDATA[>...<!--]]>` keeps `markdown-rs` from splitting
+/// `<mark>...</mark>` into three separate `Node::Html` siblings or treating a line-leading
+/// mention as block `HtmlFlow`, while `html5ever` discards `<![CDATA[>` and `<!--]]>` as
+/// comments and produces an inline bold highlighted `@Name` run whose plain `selected_text()`
+/// is `@{shown}`.
 fn push_mention_link(out: &mut String, shown: &str) {
-    out.push_str(&format!("**`@{shown}`**"));
+    out.push_str(&format!(
+        "<b/><![CDATA[><mark color=\"#f472b640\"><b>@{shown}</b></mark><!--]]>"
+    ));
 }
 
 /// Byte length of the `/command` name at the start of `rest` (the text just past the
@@ -1123,9 +1131,9 @@ Some table notes.
         }
     }
 
-    /// The bold inline-code span a resolved `@name` is rewritten to.
+    /// The inline pink `<mark>` pill badge a resolved `@name` is rewritten to.
     fn mention(name: &str) -> String {
-        format!("**`@{name}`**")
+        format!("<b/><![CDATA[><mark color=\"#f472b640\"><b>@{name}</b></mark><!--]]>")
     }
 
     /// Upstream `TextView` colours only links and inline code, so resolved `@mention`s

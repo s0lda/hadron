@@ -1789,11 +1789,11 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>, word_wrap: bool) -> gpui
         cb.overflow.x = Some(gpui::Overflow::Scroll);
     }
     style.code_block = cb;
-    // Inline code, resolved `@mention`s (rewritten to `` **`@name`** ``), and `/command`
-    // tokens (rewritten to `` **`/cmd`** `` by `mentions::resolve_mention_names_with_human`):
-    // upstream `TextView` colours only links (`cx.theme().link`, blue) and inline code,
-    // so this paints quark mentions and commands with the active accent colour while file
-    // and web links stay blue.
+    // Inline code and `/command` tokens (rewritten to `` **`/cmd`** `` by
+    // `mentions::resolve_mention_names_with_human`): upstream `TextView` paints inline
+    // code with `theme::accent()` (purple `#a87ffb` on `#1f1f1f`), clickable `@file`
+    // links with `cx.theme().link` (`theme::file_link()`, yellow `#e5c07b`), and
+    // resolved `@mention`s with a pink `<mark color="#f472b640">` pill highlight.
     style.inline_code = gpui::HighlightStyle {
         color: Some(theme::accent().into()),
         background_color: Some(theme::bg_elevated().into()),
