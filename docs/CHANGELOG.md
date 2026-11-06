@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.50] - 2026-11-06
+
+### Fixed
+- **Distinct Colors for Inline Code, Quark Mentions, and File Mentions (`hadron-chamber`)**:
+  - Rendered resolved `@mention`s as pink `<mark color="#f472b640">` pill badges in `push_mention_link` without breaking markdown parser node boundaries (`crates/hadron-chamber/src/app/mentions.rs`).
+  - Set `gpui_component` Theme link color to amber `theme::file_link()` (`#e5c07b`) in `sync_gpui_theme` while keeping inline code purple (`theme::accent()`, `#a87ffb`) in `markdown_style` (`crates/hadron-chamber/src/app/mod.rs`, `crates/hadron-chamber/src/app/widgets.rs`).
+
 ## [0.33.49] - 2026-11-06
 
 ### Fixed

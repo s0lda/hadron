@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.50",
+        date: Some("2026-11-06"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Distinct Colors for Inline Code, Quark Mentions, and File Mentions (hadron-chamber): Resolved @mentions render as pink pill badges, file links use amber theme::file_link(), and inline code/commands use purple theme::accent()",
+        ],
+    },
+    Release {
         version: "0.33.49",
         date: Some("2026-11-06"),
         added: &[],
