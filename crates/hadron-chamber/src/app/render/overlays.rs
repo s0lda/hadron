@@ -29,7 +29,7 @@ const RELEASES: &[Release] = &[
             "Shared Orchestrator Badge & Configured Nucleus Budget (hadron-chamber, hadron-forge, hadron-lattice, hadron-gluon): widgets::orchestrator_badge is shared by the Roster and Processes overlay, and the configured nucleus_index_budget_kb from .hadron/team.json is resolved in the nucleus linters, doctor_body, and quark prompts/skills",
         ],
         fixed: &[
-            "/command & @mention Coloring on Upstream gpui-component (hadron-chamber): Resolved @human, @quark, and @alias mentions now render as bold hadron://mention/ links and bare /commands as bold amber inline code (code spans and paths like src/app.rs or /home/user untouched), markdown_style's inline_code highlight is theme::file_link() on bg_elevated, and handle_chat_link_click ignores hadron:// URLs",
+            "/command & @mention Coloring on Upstream gpui-component (hadron-chamber): Resolved @human, @quark, and @alias mentions and bare /commands now render as bold accent-colored inline code while file mentions remain blue file:// links (code spans and paths like src/app.rs or /home/user untouched), markdown_style's inline_code highlight is theme::accent() on bg_elevated, and handle_chat_link_click ignores hadron:// URLs",
         ],
     },
     Release {

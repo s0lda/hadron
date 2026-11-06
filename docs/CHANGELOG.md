@@ -18,9 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **`/command` & `@mention` Coloring on Upstream `gpui-component` (`hadron-chamber`)**:
-  - Restored the coloring lost when the `s0lda/gpui-component` fork was removed: upstream `TextView` paints foreground color only on links and inline code, so `resolve_mention_names_with_human` now rewrites resolved `@human`, `@quark`, and `@alias` mentions to bold `[**@name**](hadron://mention/name)` links and bare `/command` tokens to bold inline code (`` **`/cmd`** ``), skipping code spans, fenced blocks, and paths such as `src/app.rs`, `/home/user`, and `/etc.conf` (`crates/hadron-chamber/src/app/mentions.rs`).
-  - Set the `markdown_style` `inline_code` highlight to amber `theme::file_link()` on `theme::bg_elevated()` (`crates/hadron-chamber/src/app/widgets.rs`).
-  - `handle_chat_link_click` now ignores `hadron://` URLs so clicking a mention never opens a browser (`crates/hadron-chamber/src/app/mod.rs`).
+  - Restored the coloring lost when the `s0lda/gpui-component` fork was removed: upstream `TextView` paints foreground color only on links and inline code, so `resolve_mention_names_with_human` now rewrites resolved `@human`, `@quark`, and `@alias` mentions (`` **`@name`** ``) and bare `/command` tokens (`` **`/cmd`** ``) to bold inline code while keeping `@file` mentions as blue `file://` links, skipping code spans, fenced blocks, and paths such as `src/app.rs`, `/home/user`, and `/etc.conf` (`crates/hadron-chamber/src/app/mentions.rs`).
+  - Set the `markdown_style` `inline_code` highlight to `theme::accent()` on `theme::bg_elevated()` so quark mentions use the active accent color instead of link blue (`crates/hadron-chamber/src/app/widgets.rs`).
+  - `handle_chat_link_click` ignores `hadron://` URLs as a defence-in-depth guard (`crates/hadron-chamber/src/app/mod.rs`).
 
 ## [0.33.47] - 2026-11-06
 

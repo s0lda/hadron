@@ -424,8 +424,10 @@ pub(super) fn format_markdown_callouts(text: &str) -> String {
 /// so that users can open referenced files with one click from chat while hovering shows
 /// the full path in a tooltip.
 ///
-/// Resolved `@mention`s become bold `hadron://mention/…` links and bare `/command`s become
-/// bold inline code, because upstream `TextView` colours only links and inline code.
+/// Resolved `@mention`s and bare `/command`s become bold inline code (`**\`@name\`**`
+/// and `**\`/cmd\`**`) so upstream `TextView` paints them with the theme accent colour
+/// (`style.inline_code`) instead of link blue (`cx.theme().link`), which is reserved for
+/// clickable file and web links.
 ///
 /// Code blocks (fenced ``` and inline `...`) are passed through unmodified.
 #[cfg(test)]
@@ -790,12 +792,13 @@ pub(super) fn resolve_mention_names_with_human(
     out
 }
 
-/// A resolved `@mention` as a bold link. Upstream `TextView` paints foreground colour
-/// only on links and inline code, so the link is what colours it (`cx.theme().link`);
-/// selecting the text still yields `@{shown}`, and `handle_chat_link_click` ignores
-/// the `hadron://` URL.
+/// A resolved `@mention` as bold inline code (`**\`@{shown}\`**`). Upstream `TextView`
+/// paints foreground colour only on links (`cx.theme().link`, blue) and inline code
+/// (`style.inline_code`, `theme::accent()`), so rendering mentions as bold inline code
+/// colours them with the active accent instead of file-link blue while selecting the text
+/// still yields `@{shown}`.
 fn push_mention_link(out: &mut String, shown: &str) {
-    out.push_str(&format!("[**@{shown}**](hadron://mention/{})", encode_file_url_path(shown)));
+    out.push_str(&format!("**`@{shown}`**"));
 }
 
 /// Byte length of the `/command` name at the start of `rest` (the text just past the
@@ -1120,14 +1123,14 @@ Some table notes.
         }
     }
 
-    /// The bold `hadron://mention/…` link a resolved `@name` is rewritten to.
+    /// The bold inline-code span a resolved `@name` is rewritten to.
     fn mention(name: &str) -> String {
-        format!("[**@{name}**](hadron://mention/{name})")
+        format!("**`@{name}`**")
     }
 
     /// Upstream `TextView` colours only links and inline code, so resolved `@mention`s
-    /// (quarks, routing aliases) become bold links and bare `/command`s become bold inline
-    /// code; an unresolved non-file `@word` and plain text pass through untouched.
+    /// (quarks, routing aliases) and bare `/command`s become bold inline code painted with
+    /// `theme::accent()`; an unresolved non-file `@word` and plain text pass through untouched.
     #[test]
     fn mentions_and_commands_render_as_coloured_markdown() {
         assert_eq!(resolve_mention_names("Nothing to colour here.", &[], None), "Nothing to colour here.");
