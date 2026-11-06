@@ -104,7 +104,7 @@ impl Render for Chamber {
         let repl = self.repl_overlay_open.then(|| self.repl_overlay(window, cx));
         let project_switcher = self.project_switcher_open.then(|| self.project_switcher_overlay(window, cx));
 
-        let content = v_flex()
+        let mut content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &gpui_component::input::Copy, window, cx| {
@@ -205,6 +205,7 @@ impl Render for Chamber {
             .children(repl)
             .children(project_switcher)
             .children(toasts);
+        content.text_style().font_fallbacks = Some(crate::fonts::default_fallbacks());
 
         let wrapped_content = crate::window_frame::window_frame(window, cx, content);
 

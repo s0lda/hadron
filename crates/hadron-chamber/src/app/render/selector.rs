@@ -49,7 +49,7 @@ impl super::Chamber {
                 .into_any_element(),
         };
 
-        v_flex()
+        let mut root = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .relative()
@@ -251,7 +251,9 @@ impl super::Chamber {
                     ),
             )
             .children(changelog)
-            .children(toasts)
+            .children(toasts);
+        root.text_style().font_fallbacks = Some(crate::fonts::default_fallbacks());
+        root
     }
 
     pub(crate) fn open_project_path(

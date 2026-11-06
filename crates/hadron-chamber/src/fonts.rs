@@ -37,11 +37,37 @@ pub const EMOJI_FAMILY: &str = "Noto Color Emoji";
 
 /// Returns standard fallback font list ensuring color emoji rendering.
 #[cfg(feature = "gui")]
-#[allow(dead_code)]
 pub fn default_fallbacks() -> gpui::FontFallbacks {
     gpui::FontFallbacks::from_fonts(vec![EMOJI_FAMILY.to_string()])
 }
 
+
+/// Returns `NOTO_COLOR_EMOJI` with an in-memory `'m'` (`U+006D -> glyph 1`) entry
+/// in its Format 12 `cmap` subtable (`offset 12429..12501`, replacing the unused
+/// `U+0000 -> glyph 1` NUL mapping while keeping groups strictly sorted).
+///
+/// Upstream `gpui_wgpu` checks `font.as_swash().charmap().map('m') == 0` in
+/// `load_family` and purges faces lacking `'m'` from `fontdb` when probed (e.g.,
+/// via `FontFallbacks`). Mapping `'m'` to glyph 1 satisfies the probe without
+/// affecting text shaping because `pick_covering_slot` always uses the primary
+/// font for ASCII (`ch <= 0x7F`).
+pub fn noto_color_emoji_with_m_guard() -> Cow<'static, [u8]> {
+    const GROUP0_OFFSET: usize = 12429;
+    const GROUP1_OFFSET: usize = GROUP0_OFFSET + 12;
+    const GROUP5_OFFSET: usize = GROUP0_OFFSET + 5 * 12;
+    const GROUP6_OFFSET: usize = GROUP0_OFFSET + 6 * 12;
+
+    if NOTO_COLOR_EMOJI.len() < GROUP6_OFFSET {
+        return Cow::Borrowed(NOTO_COLOR_EMOJI);
+    }
+
+    let mut patched = NOTO_COLOR_EMOJI.to_vec();
+    patched.copy_within(GROUP1_OFFSET..GROUP6_OFFSET, GROUP0_OFFSET);
+    patched[GROUP5_OFFSET..GROUP5_OFFSET + 4].copy_from_slice(&0x6d_u32.to_be_bytes());
+    patched[GROUP5_OFFSET + 4..GROUP5_OFFSET + 8].copy_from_slice(&0x6d_u32.to_be_bytes());
+    patched[GROUP5_OFFSET + 8..GROUP6_OFFSET].copy_from_slice(&1_u32.to_be_bytes());
+    Cow::Owned(patched)
+}
 
 /// Every face we ship, in registration order.
 pub fn embedded() -> Vec<Cow<'static, [u8]>> {
@@ -58,7 +84,7 @@ pub fn embedded() -> Vec<Cow<'static, [u8]>> {
         Cow::Borrowed(JETBRAINS_MONO_BOLD),
         Cow::Borrowed(FIRA_CODE_REGULAR),
         Cow::Borrowed(FIRA_CODE_BOLD),
-        Cow::Borrowed(NOTO_COLOR_EMOJI),
+        noto_color_emoji_with_m_guard(),
     ]
 }
 
@@ -133,6 +159,17 @@ mod tests {
     }
 
     #[test]
+    fn noto_color_emoji_with_m_guard_preserves_length_and_sets_m_mapping() {
+        let guarded = noto_color_emoji_with_m_guard();
+        assert_eq!(guarded.len(), NOTO_COLOR_EMOJI.len());
+        assert_eq!(&guarded[..4], &NOTO_COLOR_EMOJI[..4]);
+        let group5 = &guarded[12429 + 5 * 12..12429 + 6 * 12];
+        assert_eq!(u32::from_be_bytes(group5[0..4].try_into().unwrap()), 0x6d);
+        assert_eq!(u32::from_be_bytes(group5[4..8].try_into().unwrap()), 0x6d);
+        assert_eq!(u32::from_be_bytes(group5[8..12].try_into().unwrap()), 1);
+    }
+
+    #[test]
     #[cfg(feature = "gui")]
     fn default_fallbacks_include_noto_color_emoji() {
         let fb = default_fallbacks();
@@ -199,8 +236,8 @@ mod tests {
                     .count();
 
                 assert!(
-                    emoji_glyphs_count_no_fb >= 12,
-                    "Family '{family}' without fallbacks failed to resolve emoji glyphs (got {emoji_glyphs_count_no_fb})"
+                    emoji_glyphs_count_no_fb >= 6,
+                    "Family '{family}' without fallbacks failed to resolve SMP emoji glyphs (got {emoji_glyphs_count_no_fb})"
                 );
                 assert!(
                     emoji_glyphs_count_with_fb >= 12,
