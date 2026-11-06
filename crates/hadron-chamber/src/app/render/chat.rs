@@ -1942,6 +1942,7 @@ impl super::Chamber {
                     .selectable(true)
                     .style(markdown_style(self.prefs.ui_font_size, self.prefs.code_block_word_wrap))
                     .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions())
+                    .on_link_click(crate::app::handle_chat_link_click)
                     .code_block_actions(|code_block, _window, _cx| {
                         let code = code_block.code();
                         gpui_component::clipboard::Clipboard::new("code-copy")

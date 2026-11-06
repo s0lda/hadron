@@ -12,7 +12,7 @@ default-members = ["crates/hadron-chamber"]
 # published manifest is effectively permanent, and a broken URL is worse than a
 # missing field (neither is required by `cargo publish`).
 #
-# `rust-version` measured 2026-09-30 (issue #2): pinned `gpui_util` (s0lda/zed@84ce4d78)
+# `rust-version` measured 2026-09-30 (issue #2): pinned `gpui_util` (zed-industries/zed@b2d9c2e122)
 # calls `[T]::as_array`, which was stabilized in Rust 1.93.0 (`core_slice_as_array`,
 # rust-lang/rust#133508). Older toolchains fail with E0658 during dependency build.
 [workspace.package]
@@ -34,28 +34,4 @@ opt-level = 2
 # it *is* one of our own crates' inline generics.
 [profile.dev]
 opt-level = 1
-
-# `gpui-component`'s `TextMark` can express a highlight (a *background*) but has no
-# foreground colour, so a mention could only ever be a tinted block, never coloured
-# text. This fork branches from the same commit we already pinned and adds
-# `TextMark::color`, parsed from `<span style="color: …">`. It is a small, upstreamable
-# patch, not a divergence — drop this section the moment longbridge takes it.
-#
-# Pinned to a `rev`, never a branch: Cargo.lock pins a rev regardless, so a branch
-# spec only hides which commit is actually in use. The URL must stay fetchable by a
-# stranger — a `file:///` path here made a fresh clone unresolvable on every machine
-# but the author's, which broke `git clone`, `cargo install --git` and CI at once.
-[patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
-gpui-component-macros = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
-gpui-component-assets = { git = "https://github.com/s0lda/gpui-component", rev = "b7bc424dfe80a3de7b8d5a8132fef7c79b447057" }
-
-[patch."https://github.com/zed-industries/zed"]
-gpui = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.2.2" }
-gpui_platform = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
-gpui_wgpu = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
-gpui_linux = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
-gpui_macros = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
-gpui_util = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
-gpui_shared_string = { git = "https://github.com/s0lda/zed", rev = "84ce4d78caec11662e13f7276f76637f379adccf", version = "=0.1.0" }
 

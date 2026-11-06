@@ -1565,7 +1565,8 @@ where
                         gpui_component::text::TextView::markdown(("log-body", ix), body_text)
                             .style(markdown_style(None, false))
                             .selectable(true)
-                            .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
+                            .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions())
+                            .on_link_click(crate::app::handle_chat_link_click),
                     ),
             )
             .into_any_element()
@@ -1644,7 +1645,8 @@ where
                         gpui_component::text::TextView::markdown(("log-body", ix), body_text)
                             .style(markdown_style(None, false))
                             .selectable(true)
-                            .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions()),
+                            .markdown_extensions(crate::mermaid::plugin::chamber_markdown_extensions())
+                            .on_link_click(crate::app::handle_chat_link_click),
                     ),
             )
             .into_any_element()

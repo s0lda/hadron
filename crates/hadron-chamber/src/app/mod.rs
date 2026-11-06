@@ -2313,6 +2313,47 @@ impl Chamber {
     }
 }
 
+static LINK_WORKSPACE_PATH: std::sync::OnceLock<std::sync::Mutex<Option<PathBuf>>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn set_link_workspace_path(path: PathBuf) {
+    let lock = LINK_WORKSPACE_PATH.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut guard) = lock.lock() {
+        *guard = Some(path);
+    }
+}
+
+pub(crate) fn resolve_link_for_active_workspace(url: &str) -> Option<(PathBuf, Option<u32>)> {
+    let workspace = LINK_WORKSPACE_PATH
+        .get()
+        .and_then(|m| m.lock().ok())
+        .and_then(|g| g.clone());
+    crate::sys::resolve_file_url_for_workspace(url, workspace.as_deref())
+}
+
+/// Link click handler wired to `TextView::on_link_click` across chat and log views.
+///
+/// Routes `file://` URLs through [`crate::sys::resolve_file_url_for_workspace`] and opens
+/// them in the configured editor (`chamber.json`), falling back to `open_path_or_url`
+/// for web links or if editor launch fails.
+pub(crate) fn handle_chat_link_click(
+    url: &gpui::SharedString,
+    event: &gpui::ClickEvent,
+    _window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    if event.is_right_click() {
+        return;
+    }
+    if let Some((path, line)) = resolve_link_for_active_workspace(url.as_ref()) {
+        if crate::sys::spawn_editor(&config::load().editor, &path, line).is_err() {
+            cx.open_url(url.as_ref());
+        }
+    } else {
+        crate::sys::open_path_or_url(url.as_ref());
+    }
+}
+
 /// Launch the chamber window against a field file path.
 pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>) {
     let (field_path, workspace_mode) = match field_path {
@@ -2380,17 +2421,7 @@ pub fn run(field_path: Option<String>, chamber_lock_file: Option<std::fs::File>)
         // Settings picker writes `chamber.json` on click, so reading it at click time
         // keeps ONE home for the setting instead of a second cached copy that could
         // drift. A click is rare and the file is tiny.
-        let link_workspace = field_path.clone();
-        gpui_component::text::set_link_handler(move |url| {
-            if let Some((path, line)) =
-                crate::sys::resolve_file_url_for_workspace(url, Some(&link_workspace))
-            {
-                crate::sys::spawn_editor(&config::load().editor, &path, line).is_ok()
-            } else {
-                crate::sys::open_path_or_url(url);
-                true
-            }
-        });
+        set_link_workspace_path(field_path.clone());
         Theme::change(ThemeMode::Dark, None, cx);
         // Registered BEFORE `font_family_with_a_real_bold` probes: the probe asks
         // the text system what it can already resolve, so a face added after it
@@ -2738,5 +2769,19 @@ mod tests {
         assert!(build_rs.contains(r#"("hadron-gluon", "Hadron Gluon", "hadron-gluon.exe")"#));
         assert!(build_rs.contains(r#"("hadron-forge-mcp", "Hadron Forge MCP", "hadron-forge-mcp.exe")"#));
         assert!(build_rs.contains("cargo:rustc-link-arg-bin="));
+    }
+
+    #[test]
+    fn resolve_link_for_active_workspace_routes_file_urls_and_ignores_http() {
+        set_link_workspace_path(PathBuf::from("/workspace/.hadron/field.jsonl"));
+        let resolved = resolve_link_for_active_workspace("file:///workspace/src/main.rs#L42");
+        assert_eq!(
+            resolved,
+            Some((PathBuf::from("/workspace/src/main.rs"), Some(42)))
+        );
+        assert_eq!(
+            resolve_link_for_active_workspace("https://github.com/zed-industries/zed"),
+            None
+        );
     }
 }
