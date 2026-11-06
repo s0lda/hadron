@@ -1789,6 +1789,14 @@ pub(super) fn markdown_style(ui_font_size: Option<f32>, word_wrap: bool) -> gpui
         cb.overflow.x = Some(gpui::Overflow::Scroll);
     }
     style.code_block = cb;
+    // Inline code and `/command` tokens (rewritten to `` **`/cmd`** `` by
+    // `mentions::resolve_mention_names_with_human`): upstream `TextView` colours only
+    // links and inline code, so this is the one hook that paints commands amber.
+    style.inline_code = gpui::HighlightStyle {
+        color: Some(theme::file_link().into()),
+        background_color: Some(theme::bg_elevated().into()),
+        ..Default::default()
+    };
     style
 }
 
@@ -1983,6 +1991,10 @@ mod tests {
         let custom_style = markdown_style(Some(18.0), true);
         assert_eq!(custom_style.heading_base_font_size, px(18.0));
         assert_eq!(custom_style.highlight_theme.name, "GitHub Dark (Custom)");
+
+        // Inline code (and the `/command`s rewritten to it) paints amber on bg_elevated.
+        assert_eq!(default_style.inline_code.color, Some(gpui::Hsla::from(theme::file_link())));
+        assert_eq!(default_style.inline_code.background_color, Some(gpui::Hsla::from(theme::bg_elevated())));
     }
 
     #[test]

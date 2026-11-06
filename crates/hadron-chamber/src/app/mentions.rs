@@ -424,6 +424,9 @@ pub(super) fn format_markdown_callouts(text: &str) -> String {
 /// so that users can open referenced files with one click from chat while hovering shows
 /// the full path in a tooltip.
 ///
+/// Resolved `@mention`s become bold `hadron://mention/…` links and bare `/command`s become
+/// bold inline code, because upstream `TextView` colours only links and inline code.
+///
 /// Code blocks (fenced ``` and inline `...`) are passed through unmodified.
 #[cfg(test)]
 pub(super) fn resolve_mention_names(
@@ -499,6 +502,25 @@ pub(super) fn resolve_mention_names_with_human(
             }
         }
 
+        let is_command_start = c == '/'
+            && !in_code_block
+            && !in_inline_code
+            && prev_char.map_or(true, |ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '"' | '\''));
+        if let Some(len) = is_command_start.then(|| command_token_len(&body[idx + 1..])).flatten() {
+            let cmd = &body[idx + 1..idx + 1 + len];
+            out.push_str(&format!("**`/{cmd}`**"));
+            let target_idx = idx + 1 + len;
+            while let Some(&(curr_idx, _)) = chars.peek() {
+                if curr_idx < target_idx {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            prev_char = cmd.chars().next_back();
+            continue;
+        }
+
         let is_mention_start = c == '@'
             && !in_code_block
             && !in_inline_code
@@ -514,8 +536,7 @@ pub(super) fn resolve_mention_names_with_human(
                         .next()
                         .map_or(true, |nc| !nc.is_alphanumeric() && nc != '-' && nc != '_');
                     if is_boundary {
-                        out.push('@');
-                        out.push_str(h_name);
+                        push_mention_link(&mut out, h_name);
                         let target_idx = idx + 1 + len;
                         while let Some(&(curr_idx, _)) = chars.peek() {
                             if curr_idx < target_idx {
@@ -549,8 +570,7 @@ pub(super) fn resolve_mention_names_with_human(
             }
 
             if let Some((shown, consumed)) = matched_quark {
-                out.push('@');
-                out.push_str(shown);
+                push_mention_link(&mut out, shown);
                 let target_idx = idx + 1 + consumed;
                 while let Some(&(curr_idx, _)) = chars.peek() {
                     if curr_idx < target_idx {
@@ -572,8 +592,7 @@ pub(super) fn resolve_mention_names_with_human(
                         .next()
                         .map_or(true, |nc| !nc.is_alphanumeric() && nc != '-' && nc != '_');
                     if is_boundary {
-                        out.push('@');
-                        out.push_str(alias);
+                        push_mention_link(&mut out, alias);
                         let target_idx = idx + 1 + len;
                         while let Some(&(curr_idx, _)) = chars.peek() {
                             if curr_idx < target_idx {
@@ -769,6 +788,34 @@ pub(super) fn resolve_mention_names_with_human(
         prev_char = Some(c);
     }
     out
+}
+
+/// A resolved `@mention` as a bold link. Upstream `TextView` paints foreground colour
+/// only on links and inline code, so the link is what colours it (`cx.theme().link`);
+/// selecting the text still yields `@{shown}`, and `handle_chat_link_click` ignores
+/// the `hadron://` URL.
+fn push_mention_link(out: &mut String, shown: &str) {
+    out.push_str(&format!("[**@{shown}**](hadron://mention/{})", encode_file_url_path(shown)));
+}
+
+/// Byte length of the `/command` name at the start of `rest` (the text just past the
+/// `/`): an ASCII letter then `[A-Za-z0-9_-]*`. `None` when the next character makes it
+/// a path (`/home/user`, `/etc.conf`) or would break the `**` emphasis around it (a
+/// non-ASCII letter); a sentence-ending `.` (`run /plan.`) still counts.
+fn command_token_len(rest: &str) -> Option<usize> {
+    if !rest.chars().next()?.is_ascii_alphabetic() {
+        return None;
+    }
+    let len = rest
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'))
+        .unwrap_or(rest.len());
+    let mut after = rest[len..].chars();
+    match after.next() {
+        Some('/') => None,
+        Some('.') if after.next().is_some_and(|ch| ch.is_alphanumeric()) => None,
+        Some(ch) if ch.is_alphanumeric() => None,
+        _ => Some(len),
+    }
 }
 
 fn encode_file_url_path(path: &str) -> String {
@@ -1073,25 +1120,48 @@ Some table notes.
         }
     }
 
-    /// The renderer, not this pass, colours `@mention`s and `/command`s now. Text with no
-    /// seat-id or file-mention to resolve must come out byte-for-byte identical (no HTML, no `<span>`), so
-    /// the forked markdown parser sees the bare tokens it marks natively.
+    /// The bold `hadron://mention/…` link a resolved `@name` is rewritten to.
+    fn mention(name: &str) -> String {
+        format!("[**@{name}**](hadron://mention/{name})")
+    }
+
+    /// Upstream `TextView` colours only links and inline code, so resolved `@mention`s
+    /// (quarks, routing aliases) become bold links and bare `/command`s become bold inline
+    /// code; an unresolved non-file `@word` and plain text pass through untouched.
     #[test]
-    fn text_with_nothing_to_resolve_passes_through_untouched() {
+    fn mentions_and_commands_render_as_coloured_markdown() {
+        assert_eq!(resolve_mention_names("Nothing to colour here.", &[], None), "Nothing to colour here.");
         assert_eq!(
             resolve_mention_names("Please run /plan and /grill-me today.", &[], None),
-            "Please run /plan and /grill-me today."
+            "Please run **`/plan`** and **`/grill-me`** today."
         );
-        // A quark whose id already matches the shown name is unchanged.
-        assert_eq!(
-            resolve_mention_names("Hello @opus!", &opus_roster(), None),
-            "Hello @opus!"
-        );
-        // Routing aliases and plain non-file mentions stay plain tokens.
+        assert_eq!(resolve_mention_names("Hello @opus!", &opus_roster(), None), format!("Hello {}!", mention("opus")));
         assert_eq!(
             resolve_mention_names("@team and @orchestrator and @everyone", &[], None),
-            "@team and @orchestrator and @everyone"
+            format!("{} and {} and @everyone", mention("team"), mention("orchestrator"))
         );
+    }
+
+    /// `/command` colouring must leave paths and URLs alone, honour code spans, and still
+    /// fire after `(`, `[`, quotes, at the start of text, and before sentence punctuation.
+    #[test]
+    fn commands_are_coloured_but_paths_and_code_are_not() {
+        for untouched in [
+            "see src/app.rs and /home/user and /etc.conf",
+            "visit https://example.com/plan",
+            "and/or 1/2 a / b",
+            "`/plan` stays code",
+            "```\n/plan\n```",
+            "/42 is not a command",
+        ] {
+            assert_eq!(resolve_mention_names(untouched, &[], None), untouched, "{untouched:?}");
+        }
+        assert_eq!(resolve_mention_names("/release now", &[], None), "**`/release`** now");
+        assert_eq!(
+            resolve_mention_names("(/plan) [/goal] \"/learn\" '/boost'", &[], None),
+            "(**`/plan`**) [**`/goal`**] \"**`/learn`**\" '**`/boost`**'"
+        );
+        assert_eq!(resolve_mention_names("Run /plan.", &[], None), "Run **`/plan`**.");
     }
 
     /// A mention typed or stored by its raw seat id (e.g. `@acp-claude-2`) must be rewritten
@@ -1118,22 +1188,22 @@ Some table notes.
 
         assert_eq!(
             resolve_mention_names("Hello @acp-claude-2!", &roster, None),
-            "Hello @Sonnet!"
+            format!("Hello {}!", mention("Sonnet"))
         );
         // Trailing words after the mention are preserved.
         assert_eq!(
             resolve_mention_names("@acp-claude-2 please review", &roster, None),
-            "@Sonnet please review"
+            format!("{} please review", mention("Sonnet"))
         );
         // Mentioning by the display name itself is already resolved, unchanged.
         assert_eq!(
             resolve_mention_names("Hello @Sonnet!", &roster, None),
-            "Hello @Sonnet!"
+            format!("Hello {}!", mention("Sonnet"))
         );
         // Mentioning @human resolves to the human's display name when provided.
         assert_eq!(
             resolve_mention_names_with_human("Hi @human, @acp-claude-2 is ready.", &roster, None, Some("Alice")),
-            "Hi @Alice, @Sonnet is ready."
+            format!("Hi {}, {} is ready.", mention("Alice"), mention("Sonnet"))
         );
     }
 
@@ -1204,7 +1274,8 @@ Some table notes.
         assert_eq!(
             resolve_mention_names("Hey @acp-claude-2, please look at @crates/hadron-chamber/src/app/mod.rs:50", &roster, Some(root)),
             format!(
-                "Hey @Sonnet, please look at [<span style=\"color: {hex}\">mod.rs:50</span>](file:///workspace/crates/hadron-chamber/src/app/mod.rs#L50 \"crates/hadron-chamber/src/app/mod.rs:50\")"
+                "Hey {}, please look at [<span style=\"color: {hex}\">mod.rs:50</span>](file:///workspace/crates/hadron-chamber/src/app/mod.rs#L50 \"crates/hadron-chamber/src/app/mod.rs:50\")",
+                mention("Sonnet")
             )
         );
     }
@@ -1259,7 +1330,10 @@ Some table notes.
         let hex = crate::theme::file_link_hex();
         assert_eq!(
             resolve_mention_names("`@acp-claude-2` then @acp-claude-2 with @src/main.rs.", &roster, None),
-            format!("`@acp-claude-2` then @Sonnet with [<span style=\"color: {hex}\">main.rs</span>](file:///src/main.rs \"src/main.rs\").")
+            format!(
+                "`@acp-claude-2` then {} with [<span style=\"color: {hex}\">main.rs</span>](file:///src/main.rs \"src/main.rs\").",
+                mention("Sonnet")
+            )
         );
     }
 
@@ -1282,7 +1356,7 @@ Some table notes.
                 content
             }
         };
-        assert_eq!(res1, "Hello @Sonnet");
+        assert_eq!(res1, format!("Hello {}", mention("Sonnet")));
 
         // Index 0 reused with new body
         let body2 = "I'm Copilot";

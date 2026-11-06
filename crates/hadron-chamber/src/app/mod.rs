@@ -2351,7 +2351,8 @@ pub(crate) fn handle_chat_link_click(
     _window: &mut gpui::Window,
     cx: &mut gpui::App,
 ) {
-    if event.is_right_click() {
+    // `hadron://mention/…` links exist only to colour `@mention`s; never open them.
+    if event.is_right_click() || url.starts_with("hadron://") {
         return;
     }
     if let Some((path, line)) = resolve_link_for_active_workspace(url.as_ref()) {
