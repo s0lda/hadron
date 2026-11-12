@@ -195,17 +195,29 @@ pub fn read_turn_capture(
     let fresh = |p: &Path| -> Option<String> {
         let meta = std::fs::metadata(p).ok()?;
         let mtime = meta.modified().ok()?;
-        // A hook that fires in the same millisecond the turn started is this turn's.
-        if mtime + std::time::Duration::from_millis(1) < started {
+        // Linux/WSL2 inode mtimes use CLOCK_REALTIME_COARSE (~4-10ms tick) while
+        // `SystemTime::now()` uses CLOCK_REALTIME; tolerate 20ms of coarse-tick skew.
+        if mtime + std::time::Duration::from_millis(20) < started {
             return None;
         }
         std::fs::read_to_string(p).ok()
     };
 
-    let payload = fresh(out).or_else(|| {
-        let dir = capture_dir()?;
-        fresh(&latest_capture_path(&dir, cwd))
-    })?;
+    let out_name = out.file_name();
+    let payload = fresh(out)
+        .or_else(|| {
+            let dir = capture_dir()?;
+            out_name
+                .and_then(|name| fresh(&dir.join(name)))
+                .or_else(|| fresh(&latest_capture_path(&dir, cwd)))
+        })
+        .or_else(|| {
+            let (_, linux_cwd) = hadron_lattice::wsl::parse_wsl_unc_path(cwd)?;
+            let wsl_dir = hadron_lattice::wsl::wsl_user_hadron_dir_for_field(cwd)?.join("statusline");
+            out_name
+                .and_then(|name| fresh(&wsl_dir.join(name)))
+                .or_else(|| fresh(&latest_capture_path(&wsl_dir, &linux_cwd)))
+        })?;
 
     parse_agy_statusline(&payload).ok()
 }

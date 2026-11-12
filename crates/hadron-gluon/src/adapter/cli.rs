@@ -531,6 +531,96 @@ impl<R: CliRunner> CliQuark<R> {
         self
     }
 
+    fn hadron_dir(&self) -> Option<PathBuf> {
+        self.prompt_cost_dir
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .or_else(|| self.live_dir.as_deref().and_then(std::path::Path::parent))
+            .map(std::path::Path::to_path_buf)
+    }
+
+    fn is_agy_seat(&self) -> bool {
+        let prog_stem = std::path::Path::new(&self.spec.program)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&self.spec.program);
+        prog_stem.eq_ignore_ascii_case("agy")
+            || matches!(
+                self.spec.stream.as_ref().map(|s| &s.format),
+                Some(hadron_lattice::StreamFormat::AgyStreamJson)
+            )
+    }
+
+    fn prepare_agy_statusline(
+        &self,
+        cwd: &std::path::Path,
+        inv: &mut CliInvocation,
+    ) -> Option<(PathBuf, PathBuf)> {
+        if !self.is_agy_seat() {
+            return None;
+        }
+        let dir = self.hadron_dir()?;
+        let out_path = dir.join("statusline").join(format!("{}.json", self.id.as_str()));
+        if let Some(parent) = out_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(err) = std::fs::remove_file(&out_path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "gluon: warning: failed to clear prior statusline capture {}: {err}",
+                    out_path.display()
+                );
+                return None;
+            }
+        }
+        let child_out_path = translate_statusline_out_for_child(&out_path, cwd);
+        let cmd = resolve_statusline_command(cwd);
+        let settings_json = build_statusline_settings_json(&cmd);
+        inv.args.push("--settings".to_string());
+        inv.args.push(settings_json);
+        inv.env
+            .0
+            .push((crate::statusline::OUT_ENV.to_string(), child_out_path));
+        Some((dir, out_path))
+    }
+
+    fn apply_agy_statusline_telemetry(
+        &self,
+        outcome: &mut TurnOutcome,
+        dir: &std::path::Path,
+        out_path: &std::path::Path,
+        cwd: &std::path::Path,
+        turn_started: std::time::SystemTime,
+    ) {
+        let Some(tel) = crate::statusline::read_turn_capture(out_path, cwd, turn_started) else {
+            return;
+        };
+        if let Some(tel_ctx) = tel.usage.context {
+            if tel_ctx.context_window_size > 0 {
+                let used = outcome
+                    .usage
+                    .context
+                    .as_ref()
+                    .map(|c| c.used_tokens)
+                    .filter(|&u| u > 0)
+                    .unwrap_or(tel_ctx.used_tokens);
+                let size = tel_ctx.context_window_size;
+                outcome.usage.context = Some(hadron_lattice::ContextUsage {
+                    used_tokens: used,
+                    context_window_size: size,
+                    used_percentage: (used as f64 / size as f64) * 100.0,
+                });
+            }
+        }
+        if outcome.usage.model.is_none() && tel.model.is_some() {
+            outcome.usage.model = tel.model;
+        }
+        if !tel.usage.quota.is_empty() {
+            outcome.usage.quota = tel.usage.quota.clone();
+            let _ = hadron_lattice::quota::save(&dir.join("quota"), &self.id, &tel.usage.quota);
+        }
+    }
+
     /// Fit a prompt that must ride as one argv element.
     ///
     /// The argv budget ([`SAFE_ARG_BYTES`], 24 KiB on Windows) sheds the transcript,
@@ -544,13 +634,8 @@ impl<R: CliRunner> CliQuark<R> {
         if full.1.len() <= SAFE_ARG_BYTES {
             return full;
         }
-        let hadron_dir = self
-            .prompt_cost_dir
-            .as_deref()
-            .and_then(std::path::Path::parent)
-            .or_else(|| self.live_dir.as_deref().and_then(std::path::Path::parent))
-            .filter(|d| d.is_dir());
-        let Some(hadron_dir) = hadron_dir else {
+        let hadron_dir = self.hadron_dir().filter(|d| d.is_dir());
+        let Some(hadron_dir) = hadron_dir.as_deref() else {
             return fit_projection_to_budget(turn, &self.id, SAFE_ARG_BYTES);
         };
         match spill_prompt(hadron_dir, &self.id, &full.1) {
@@ -794,10 +879,11 @@ impl<R: CliRunner> CliQuark<R> {
                 None
             }
         });
+        let is_agy = self.is_agy_seat();
         let context = context_tokens.map(|used| {
             let size = res
                 .context_window
-                .unwrap_or_else(|| default_cli_context_window_size(model.as_deref()));
+                .unwrap_or_else(|| default_cli_context_window_size(is_agy, model.as_deref()));
             hadron_lattice::ContextUsage {
                 used_tokens: used,
                 context_window_size: size,
@@ -821,15 +907,80 @@ impl<R: CliRunner> CliQuark<R> {
     }
 }
 
+fn translate_statusline_out_for_child(out_path: &std::path::Path, cwd: &std::path::Path) -> String {
+    if hadron_lattice::wsl::is_wsl_unc_path(cwd) {
+        if let Some((_, linux_out)) = hadron_lattice::wsl::parse_wsl_unc_path(out_path) {
+            return linux_out.to_string_lossy().replace('\\', "/");
+        }
+        if let Some((distro, _)) = hadron_lattice::wsl::parse_wsl_unc_path(cwd) {
+            return hadron_lattice::wsl::translate_arg_for_wsl(&distro, &out_path.to_string_lossy());
+        }
+    }
+    out_path.to_string_lossy().to_string()
+}
+
+fn sibling_gluon_exe() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let bin_name = if cfg!(windows) {
+        "hadron-gluon.exe"
+    } else {
+        "hadron-gluon"
+    };
+    let candidate = dir.join(bin_name);
+    candidate.is_file().then_some(candidate)
+}
+
+fn resolve_statusline_command(cwd: &std::path::Path) -> String {
+    if !hadron_lattice::wsl::is_wsl_unc_path(cwd) {
+        if let Some(sibling) = sibling_gluon_exe() {
+            return format!("\"{}\" --statusline", sibling.display());
+        }
+    }
+    r#"sh -c 'p="$HADRON_STATUSLINE_OUT"; if [ -n "$p" ]; then (cat > "$p") 2>/dev/null || { d="$HOME/.hadron/statusline"; mkdir -p "$d" 2>/dev/null && cat > "$d/${p##*/}" 2>/dev/null; }; fi; echo hadron'"#.to_string()
+}
+
+fn build_statusline_settings_json(command: &str) -> String {
+    serde_json::json!({
+        "statusLine": {
+            "type": "command",
+            "command": command,
+            "enabled": true,
+        }
+    })
+    .to_string()
+}
+
 /// Default context window size when a streaming CLI (`agy --output-format stream-json`,
 /// `claude --output-format stream-json`) omits `context_window_size` on stdout.
 ///
-/// Google's `agy` CLI (`BuildStatusLineData` / `Store.ModelMaxTokens`) and Gemini models
-/// report a 1M (`1_048_576` = $2^{20}$) context window, whereas Claude models default to
-/// `200_000` unless `1m` is present in the model identifier.
-fn default_cli_context_window_size(model: Option<&str>) -> u32 {
+/// Google's `agy` CLI (`BuildStatusLineData` / `Store.ModelMaxTokens`) reports a 1M
+/// (`1_048_576` = $2^{20}$) context window for both Gemini 3.x/4.x and Claude Opus/Sonnet 5.5
+/// seats; non-`agy` Claude CLI models default to `1_000_000` for 1M variants (`claude-opus-5*`,
+/// `claude-sonnet-5*`, `claude-opus-4-6`/`4-7`/`4-8`, or `1m`) and `200_000` otherwise.
+fn default_cli_context_window_size(is_agy: bool, model: Option<&str>) -> u32 {
+    if is_agy {
+        return 1_048_576;
+    }
     if let Some(m) = model {
         let lower = m.to_ascii_lowercase();
+        let is_1m_claude = [
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "opus-5",
+            "sonnet-5",
+            "opus-4-6",
+            "opus-4-7",
+            "opus-4-8",
+        ]
+        .iter()
+        .any(|pat| lower.contains(pat));
+        if is_1m_claude {
+            return 1_000_000;
+        }
         if lower.contains("claude") {
             return if lower.contains("1m") { 1_000_000 } else { 200_000 };
         }
@@ -983,7 +1134,9 @@ impl<R: CliRunner> Quark for CliQuark<R> {
                 }
             }
 
-            let invocation = self.invocation(prompt, mode, cwd.clone());
+            let mut invocation = self.invocation(prompt, mode, cwd.clone());
+            let statusline_capture = self.prepare_agy_statusline(&cwd, &mut invocation);
+            let turn_started = std::time::SystemTime::now();
             let run_opt = {
                 let run_fut = async {
                     if let Some(stream) = self.spec.stream.clone() {
@@ -1025,7 +1178,16 @@ impl<R: CliRunner> Quark for CliQuark<R> {
             }
 
             match res {
-                Ok(outcome) => {
+                Ok(mut outcome) => {
+                    if let Some((ref dir, ref out_path)) = statusline_capture {
+                        self.apply_agy_statusline_telemetry(
+                            &mut outcome,
+                            dir,
+                            out_path,
+                            &cwd,
+                            turn_started,
+                        );
+                    }
                     self.resident = true;
                     return Ok(outcome);
                 }
@@ -2249,5 +2411,162 @@ mod tests {
             !quark.resident,
             "Quark::reset_session on CliQuark must clear resident so /clear, /reboot, and 70%/150k context rotation start a fresh conversation"
         );
+    }
+
+    #[tokio::test]
+    async fn agy_claude_5_5_and_1m_claude_models_resolve_1m_context_window_without_clamping() {
+        for model_name in ["claude-opus-5-5-high", "claude-sonnet-5-5-high"] {
+            let lines = vec![vec![
+                r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"view_file","usage":{"used_tokens":217196,"input_tokens":217196,"output_tokens":1400,"cache_read_tokens":210000}}}"#.to_string(),
+                r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"ok"}}"#.to_string(),
+                r#"{"event":"result","result":{"response":"ok","usage":{"input_tokens":322213,"output_tokens":12400,"cache_read_tokens":13561400,"total_tokens":334613}}}"#.to_string(),
+            ]];
+            let runner = FakeRunner::with_stream_lines(lines);
+            let mut spec = CliSpec::agy();
+            spec.stream = Some(agy_stream_spec());
+            let mut q = CliQuark::new(
+                QuarkId::new("cli-agy"),
+                Flavor::Worker,
+                model_name,
+                spec,
+                runner,
+            );
+            let outcome = q.excite(projection("verify 1M context")).await.unwrap();
+            let ctx = outcome.usage.context.expect("context should be populated");
+            assert_eq!(ctx.used_tokens, 217_196, "{model_name} peak step input_tokens preserved");
+            assert_eq!(
+                ctx.context_window_size, 1_048_576,
+                "{model_name} on agy must use 1_048_576 (1M) window, never 200_000"
+            );
+            assert!(
+                (ctx.used_percentage - (217_196.0 / 1_048_576.0) * 100.0).abs() < 1e-4,
+                "expected ~20.71%, got {}",
+                ctx.used_percentage
+            );
+        }
+
+        // Non-agy CLI defaults: legacy Claude stays 200k; 1M Claude 5.x / Opus 4.6+ get 1_000_000.
+        assert_eq!(default_cli_context_window_size(false, Some("claude-3-5-sonnet-20241022")), 200_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-sonnet-4-5")), 200_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-sonnet-4-5[1m]")), 1_000_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-opus-4-6")), 1_000_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-opus-4-7")), 1_000_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-opus-4-8")), 1_000_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-opus-5-5-high")), 1_000_000);
+        assert_eq!(default_cli_context_window_size(false, Some("claude-sonnet-5-5-high")), 1_000_000);
+        assert_eq!(default_cli_context_window_size(true, Some("claude-3-5-sonnet")), 1_048_576);
+    }
+
+    #[tokio::test]
+    async fn agy_cli_quark_injects_statusline_settings_ingests_capture_and_persists_quota() {
+        use crate::adapter::runner::CliResult;
+        use std::sync::{Arc, Mutex};
+
+        struct StatuslineFakeRunner {
+            recorded: Arc<Mutex<Vec<CliInvocation>>>,
+        }
+
+        #[async_trait]
+        impl CliRunner for StatuslineFakeRunner {
+            async fn run(&self, inv: CliInvocation) -> anyhow::Result<CliResult> {
+                self.recorded.lock().unwrap().push(inv);
+                Ok(CliResult {
+                    stdout: "ok".to_string(),
+                    exit: 0,
+                    usage: None,
+                })
+            }
+
+            async fn run_streaming(
+                &self,
+                inv: CliInvocation,
+                on_line: &mut (dyn for<'a> FnMut(&'a str) -> bool + Send),
+            ) -> anyhow::Result<CliResult> {
+                let out_env = inv
+                    .env
+                    .iter()
+                    .find(|(k, _)| k == crate::statusline::OUT_ENV)
+                    .map(|(_, v)| PathBuf::from(v))
+                    .expect("HADRON_STATUSLINE_OUT must be injected for agy seat");
+                let raw_statusline = r#"{"cwd":"/home/user/project","session_id":"s1","conversation_id":"c1","model":{"id":"Claude Opus 5.5 (High)"},"context_window":{"total_input_tokens":180000,"total_output_tokens":4200,"context_window_size":1048576,"used_percentage":17.166},"quota":{"3p-5h":{"remaining_fraction":0.8125,"reset_time":"2026-11-12T21:00:00Z"},"3p-weekly":{"remaining_fraction":0.625,"reset_time":"2026-11-18T00:00:00Z"},"gemini-5h":{"remaining_fraction":0.95,"reset_time":"2026-11-12T20:00:00Z"},"gemini-weekly":{"remaining_fraction":0.90,"reset_time":"2026-11-19T00:00:00Z"}},"plan_tier":"Google AI Ultra","email":"secret.user@example.com"}"#;
+                std::fs::write(&out_env, raw_statusline).expect("write per-turn statusline capture");
+
+                on_line(r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"view_file","usage":{"used_tokens":217196,"input_tokens":217196,"output_tokens":900,"cache_read_tokens":200000}}}"#);
+                on_line(r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"done"}}"#);
+                on_line(r#"{"event":"result","result":{"response":"done","usage":{"input_tokens":250000,"output_tokens":3000,"cache_read_tokens":900000,"total_tokens":253000}}}"#);
+
+                self.recorded.lock().unwrap().push(inv);
+                Ok(CliResult {
+                    stdout: "done".to_string(),
+                    exit: 0,
+                    usage: None,
+                })
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let hadron_dir = tmp.path().join(".hadron");
+        std::fs::create_dir_all(hadron_dir.join("live")).unwrap();
+        let recorded = Arc::new(Mutex::new(Vec::new()));
+        let id = QuarkId::new("cli-agy");
+        let mut spec = CliSpec::agy();
+        spec.stream = Some(agy_stream_spec());
+        let mut q = CliQuark::new(
+            id.clone(),
+            Flavor::Worker,
+            "",
+            spec,
+            StatuslineFakeRunner {
+                recorded: recorded.clone(),
+            },
+        )
+        .watching(hadron_dir.join("live"));
+
+        let mut turn = projection("run turn with statusline");
+        turn.cwd = tmp.path().to_path_buf();
+        let outcome = q.excite(turn).await.unwrap();
+
+        let invs = recorded.lock().unwrap();
+        assert_eq!(invs.len(), 1);
+        let settings_pos = invs[0]
+            .args
+            .iter()
+            .position(|a| a == "--settings")
+            .expect("--settings flag must be appended");
+        let settings_val: serde_json::Value =
+            serde_json::from_str(&invs[0].args[settings_pos + 1]).expect("valid --settings JSON");
+        assert_eq!(settings_val["statusLine"]["type"], "command");
+        assert_eq!(settings_val["statusLine"]["enabled"], true);
+        assert!(!settings_val["statusLine"]["command"].as_str().unwrap().is_empty());
+
+        assert_eq!(outcome.usage.model.as_deref(), Some("Claude Opus 5.5 (High)"));
+        let ctx = outcome.usage.context.as_ref().expect("context populated");
+        assert_eq!(ctx.used_tokens, 217_196, "StreamResult peak step used_tokens preserved");
+        assert_eq!(ctx.context_window_size, 1_048_576);
+        assert!((ctx.used_percentage - (217_196.0 / 1_048_576.0) * 100.0).abs() < 1e-4);
+
+        assert_eq!(outcome.usage.quota.len(), 4);
+        assert!(outcome.usage.quota.iter().any(|b| b.key == "3p-5h" && (b.remaining_fraction - 0.8125).abs() < 1e-6));
+        assert!(outcome.usage.quota.iter().any(|b| b.key == "gemini-5h" && (b.remaining_fraction - 0.95).abs() < 1e-6));
+
+        let saved_quota = hadron_lattice::quota::load(&hadron_dir.join("quota"), &id);
+        assert_eq!(saved_quota, outcome.usage.quota, "<hadron_dir>/quota/<id>.json persisted");
+
+        let quota_raw = std::fs::read_to_string(hadron_dir.join("quota").join("cli-agy.json")).unwrap();
+        let outcome_dbg = format!("{outcome:?}");
+        for text in [&quota_raw, &outcome_dbg] {
+            assert!(!text.contains("secret.user@example.com"), "privacy: email must never leak: {text}");
+            assert!(!text.contains('@'), "privacy: @ must never leak: {text}");
+            assert!(!text.contains("Ultra"), "privacy: plan_tier must never leak: {text}");
+        }
+
+        // Verify WSL UNC path translation and POSIX statusline command selection.
+        let wsl_cwd = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\trees\cli-agy");
+        let wsl_out = std::path::Path::new(r"\\wsl.localhost\Ubuntu\home\user\project\.hadron\statusline\cli-agy.json");
+        assert_eq!(
+            translate_statusline_out_for_child(wsl_out, wsl_cwd),
+            "/home/user/project/.hadron/statusline/cli-agy.json"
+        );
+        assert!(resolve_statusline_command(wsl_cwd).starts_with("sh -c "));
     }
 }

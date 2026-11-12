@@ -237,11 +237,20 @@ fn apply_reseat(
     out
 }
 
+pub(crate) fn is_statusline_invocation<I: IntoIterator<Item = String>>(args: I) -> bool {
+    args.into_iter().any(|a| a == "--statusline")
+}
+
 /// The `hadron-gluon` daemon entrypoint, in the library rather than in a `[[bin]]`,
 /// so the single installable package (`hadron`) can carry a bin target that calls it.
 /// The chamber finds the daemon as a sibling of its own `current_exe`
 /// (`chamber/src/main.rs:211`), so all three binaries must install together.
 pub async fn run() {
+    if is_statusline_invocation(std::env::args().skip(1)) {
+        let _ = crate::statusline::run_shim();
+        return;
+    }
+
     let _shutdown_guard = crate::proc::ShutdownGuard::new();
 
     let Some(args) = parse_args() else {
@@ -946,5 +955,20 @@ mod tests {
             assert_eq!(label, "no usable team");
             assert!(rows.is_empty());
         }
+    }
+
+    #[test]
+    fn is_statusline_invocation_detects_statusline_flag() {
+        assert!(is_statusline_invocation(["--statusline".to_string()]));
+        assert!(is_statusline_invocation([
+            "--other".to_string(),
+            "--statusline".to_string(),
+        ]));
+        assert!(!is_statusline_invocation(Vec::<String>::new()));
+        assert!(!is_statusline_invocation([
+            ".hadron/field.jsonl".to_string(),
+            "--interval-ms".to_string(),
+            "500".to_string(),
+        ]));
     }
 }
