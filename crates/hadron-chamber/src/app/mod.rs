@@ -138,6 +138,7 @@ actions!(
         OpenMenu,
         ToggleFocus,
         FocusChat,
+        FindInView,
         Dismiss,
         ToggleProcessManager,
         NewTerminalTab,
@@ -399,8 +400,19 @@ struct Chamber {
     log_expanded: std::collections::HashSet<usize>,
     #[allow(dead_code)] // only read by the superseded message_row
     log_expanded_ixs: std::collections::HashSet<usize>,
-    /// Maps a virtual list item index to the message's true index in `view.messages`.
+    /// Maps a virtual list item index to the message's true index in `view.messages`,
+    /// narrowed by `chat_search_query`.
     chat_message_ixs: Vec<usize>,
+    /// The Log tab's twin of `chat_message_ixs`, narrowed by `log_search_query` +
+    /// `log_kind_filter`. `log_list_state`'s count is this vector's length.
+    log_message_ixs: Vec<usize>,
+    /// Live chat filter, set while the composer holds `/find …` (or `/search …`).
+    /// In memory only — never written to the field.
+    chat_search_query: String,
+    /// The Log tab's search box and its last-seen value.
+    log_search_input: Entity<InputState>,
+    log_search_query: String,
+    log_kind_filter: model::LogKindFilter,
     /// Scroll position for the Stats tab.
     stats_scroll: ScrollHandle,
     /// Cache of parsed Markdown to HTML, keyed by message index, storing (raw_body, resolved_content)
@@ -814,6 +826,10 @@ impl Chamber {
         });
         let _input_sub = cx.subscribe_in(&input, window, Self::on_input_submit);
 
+        let log_search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Search events…  (@actor, to:@target, text)")
+        });
+
         let repl_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Type /command, ?note query, or tool:name (Enter to run)…")
@@ -986,6 +1002,12 @@ impl Chamber {
             }),
             cx.subscribe_in(&file_tree_filter_input, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
+            }),
+            cx.subscribe_in(&log_search_input, window, |this, input, event: &InputEvent, _, cx| {
+                if let InputEvent::Change = event {
+                    let query = input.read(cx).value().to_string();
+                    this.set_log_filter(query, this.log_kind_filter, cx);
+                }
             }),
             cx.subscribe_in(&file_tree_op_input, window, |this, _, event: &InputEvent, window, cx| {
                 if let InputEvent::PressEnter { .. } = event {
@@ -1580,8 +1602,10 @@ impl Chamber {
             px(1000.),
         );
 
+        let log_message_ixs =
+            model::filter_log_message_indices(&view.messages, "", model::LogKindFilter::All);
         let log_list_state = gpui::ListState::new(
-            view.messages.len(),
+            log_message_ixs.len(),
             gpui::ListAlignment::Bottom,
             px(1000.),
         );
@@ -1803,6 +1827,11 @@ impl Chamber {
             log_expanded: std::collections::HashSet::new(),
             log_expanded_ixs: std::collections::HashSet::new(),
             chat_message_ixs,
+            log_message_ixs,
+            chat_search_query: String::new(),
+            log_search_input,
+            log_search_query: String::new(),
+            log_kind_filter: model::LogKindFilter::All,
             stats_scroll,
             parsed_markdown: std::cell::RefCell::new(std::collections::HashMap::new()),
             turn_summaries: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -2120,6 +2149,9 @@ fn default_key_bindings() -> Vec<KeyBinding> {
         // Global chat prompt focus hotkey (Cmd+L / Ctrl+L) to focus chat from anywhere.
         KeyBinding::new("cmd-l", FocusChat, None),
         KeyBinding::new("ctrl-l", FocusChat, None),
+        // Find in the current view: Chat -> `/find ` in the composer, Log -> its search box.
+        KeyBinding::new("cmd-f", FindInView, None),
+        KeyBinding::new("ctrl-f", FindInView, None),
         // Quick REPL & Tool Scratchpad overlay (Capability #16)
         KeyBinding::new("cmd-k", ToggleReplOverlay, None),
         KeyBinding::new("ctrl-shift-k", ToggleReplOverlay, None),
@@ -2741,6 +2773,8 @@ mod tests {
         assert!(bindings.iter().any(|b| b.contains("TerminalCopy") && b.contains(r#"key: "c""#)));
         // Project Switcher: Ctrl+O / Cmd+O -> ToggleProjectSwitcher
         assert!(bindings.iter().any(|b| b.contains("ToggleProjectSwitcher") && b.contains(r#"key: "o""#)));
+        // Find in view: Ctrl+F / Cmd+F -> FindInView
+        assert!(bindings.iter().any(|b| b.contains("FindInView") && b.contains(r#"key: "f""#)));
     }
 
     #[test]

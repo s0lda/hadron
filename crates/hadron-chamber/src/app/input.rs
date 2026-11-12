@@ -35,6 +35,12 @@ impl super::Chamber {
         // overlay, not the fork's LSP menu, so we drive it from the edit stream.
         if let InputEvent::Change = event {
             self.recompute_completion(cx);
+            // `/find …` filters the chat live as it is typed. Any other text leaves
+            // the filter alone, so it survives sending the line (Esc clears it).
+            let text = input.read(cx).value().to_string();
+            if let Some(query) = crate::text::find_query(&text) {
+                self.set_chat_filter(query, cx);
+            }
             if self.composer_preview_mode {
                 cx.on_next_frame(window, move |this, _window, cx: &mut Context<Self>| {
                     let max_offset = this.composer_preview_scroll.max_offset();
@@ -89,7 +95,8 @@ impl super::Chamber {
             split_leading_commands_with_skills(&full, &self.cached_skill_ids);
         fold_preamble_into_prompt_commands_with_skills(&mut cmds, &mut body, &self.cached_skill_ids);
         for (cmd, args) in &cmds {
-            if cmd != "clear" && cmd != "resume" {
+            // `/find` is a view filter, not a field event: keep it out of `field.jsonl`.
+            if !matches!(cmd.as_str(), "clear" | "resume" | "find" | "search") {
                 let cmd_ev = slash_command_event(cmd, args);
                 self.append_and_reload(cmd_ev, cx);
             }
@@ -157,7 +164,7 @@ impl super::Chamber {
         self.chat_list_state
             .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
         self.log_list_state
-            .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
+            .scroll_to_reveal_item(self.log_message_ixs.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -959,6 +966,7 @@ mod tests {
             "sessions",
             "clear-history",
             "spend",
+            "find",
             "search",
             "diff",
             "export",

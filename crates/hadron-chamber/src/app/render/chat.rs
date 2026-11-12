@@ -79,6 +79,68 @@ pub(super) fn parse_skill_block_notice(body: &str) -> Option<SkillBlockNotice> {
     None
 }
 
+/// Verbatim copy of `hadron_gluon::engine::merge::GATE_HANDBACK_MARKER`, which is
+/// crate-private there. If the gate's wording changes, the triage card stops
+/// appearing (fails closed) — the test below pins the sentence.
+const GATE_HANDBACK_MARKER: &str = "The merge gate stopped this branch from landing.";
+
+/// The quark a red merge-gate notice is about, when `m` is one: a gluon message
+/// carrying the gate's hand-back sentence (or a "merge gate failed" notice),
+/// addressed to — or opening with an `@mention` of — the quark whose branch failed.
+pub(super) fn red_gate_quark(m: &MessageRow) -> Option<String> {
+    if m.from != "gluon" || !m.is_chat() {
+        return None;
+    }
+    let lower = m.body.to_lowercase();
+    let is_red = m.body.contains(GATE_HANDBACK_MARKER)
+        || lower.contains("failed merge gate")
+        || lower.contains("merge gate failed");
+    if !is_red {
+        return None;
+    }
+    m.to
+        .clone()
+        .or_else(|| crate::text::line_start_mentions(&m.body).first().map(|s| s.to_string()))
+        .filter(|q| !q.is_empty() && q != "human")
+}
+
+/// The gate's own explanation, without the opening sentence or the closing
+/// "you are still on your own branch" boilerplate — at most 12 non-empty lines,
+/// so a dispatched fix carries the failure and not a test log.
+pub(super) fn gate_failure_excerpt(body: &str) -> String {
+    body.lines()
+        .skip(1)
+        .map(str::trim_end)
+        .take_while(|l| !l.trim_start().starts_with("You are still on your own branch"))
+        .filter(|l| !l.trim().is_empty())
+        .take(12)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Body of the triage card's "Dispatch Fix" message.
+pub(super) fn gate_fix_message(quark: &str, body: &str) -> String {
+    let excerpt = gate_failure_excerpt(body);
+    let mut msg = format!(
+        "@{quark} The merge gate is red on your branch. Fix it in your own worktree, \
+         commit, and end your turn as you normally would; the gate retries the merge on its own."
+    );
+    if !excerpt.is_empty() {
+        msg.push_str("\n\nWhat the gate reported:\n\n");
+        msg.push_str(&excerpt);
+    }
+    msg
+}
+
+/// Body of the triage card's "Retry Gate" message.
+pub(super) fn gate_retry_message(quark: &str) -> String {
+    format!(
+        "@{quark} Re-verify your branch for the merge gate: re-run the project's gate in your \
+         worktree, commit anything outstanding, and end your turn as you normally would so the \
+         gate retries the merge."
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct OnboardingReadiness {
     pub git_ready: bool,
@@ -787,9 +849,12 @@ impl super::Chamber {
                             }
                         }
                     }))
-                    .capture_action(cx.listener(|this, _: &Escape, _window, cx| {
+                    .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                         if this.completion.take().is_some() {
                             cx.notify();
+                            cx.stop_propagation();
+                        } else if !this.chat_search_query.is_empty() {
+                            this.clear_chat_filter(window, cx);
                             cx.stop_propagation();
                         }
                     }))
@@ -821,6 +886,9 @@ impl super::Chamber {
                     .children(self.overdue_schedule_banners(cx))
                     .when_some(draft_card, |el, card| el.child(card))
                     .when_some(live_card, |el, card| el.child(card))
+                    .when(!self.chat_search_query.is_empty(), |el| {
+                        el.child(self.chat_filter_pill(cx))
+                    })
                     .child({
                         let is_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
                         v_flex()
@@ -1651,6 +1719,14 @@ impl super::Chamber {
     /// with each author's avatar and name.
     pub(super) fn chat_view(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.chat_message_ixs.is_empty() {
+            // An active `/find` that matches nothing is not an empty session: keep the
+            // onboarding card for sessions that really have no chat yet.
+            if !self.chat_search_query.is_empty() && self.view.messages.iter().any(|m| m.is_chat()) {
+                return v_flex()
+                    .p_4()
+                    .child(empty_hint("No chat messages match your filter."))
+                    .into_any_element();
+            }
             return self.render_onboarding_card(cx).into_any_element();
         }
 
@@ -1729,19 +1805,39 @@ impl super::Chamber {
         let weak_view = cx.entity().downgrade();
         let local_offset = *chrono::Local::now().offset();
         let today = chrono::Local::now().date_naive();
+        let filter_bar = self.log_filter_bar(cx);
+
+        if self.log_message_ixs.is_empty() {
+            return v_flex()
+                .size_full()
+                .p_3()
+                .child(filter_bar)
+                .child(empty_hint("No events match your filter."))
+                .into_any_element();
+        }
 
         v_flex()
             .size_full()
             .p_3()
+            .child(filter_bar)
             .child(
-                gpui::list(self.log_list_state.clone(), move |ix, _window, cx| {
+                gpui::list(self.log_list_state.clone(), move |list_ix, _window, cx| {
                     if let Some(view) = weak_view.upgrade() {
                         let this = view.read(cx);
+                        // `ix` is the row's index in `view.messages` (what `log_expanded`
+                        // and the element ids key on); `list_ix` is its filtered position.
+                        let Some(&ix) = this.log_message_ixs.get(list_ix) else {
+                            return div().into_any_element();
+                        };
                         if let Some(m) = this.view.messages.get(ix) {
                             let mut add_divider = false;
                             let m_date = m.ts.with_timezone(&local_offset).date_naive();
-                            if ix > 0 {
-                                if let Some(prev_m) = this.view.messages.get(ix - 1) {
+                            if list_ix > 0 {
+                                if let Some(prev_m) = this
+                                    .log_message_ixs
+                                    .get(list_ix - 1)
+                                    .and_then(|&prev_ix| this.view.messages.get(prev_ix))
+                                {
                                     if prev_m.ts.with_timezone(&local_offset).date_naive() != m_date {
                                         add_divider = true;
                                     }
@@ -1891,9 +1987,142 @@ impl super::Chamber {
                         div().into_any_element()
                     }
                 })
-                .size_full(),
+                // Not `size_full`: the filter bar above takes its share of the height.
+                .flex_1()
+                .w_full(),
             )
             .into_any_element()
+    }
+
+    /// The Log tab's search box, kind pills, `N / M` counter and Clear. Pure display:
+    /// every handler only edits in-memory filter state (`set_log_filter`).
+    fn log_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let shown = self.log_message_ixs.len();
+        let total = self.view.messages.len();
+        let active = !self.log_search_query.is_empty()
+            || self.log_kind_filter != crate::model::LogKindFilter::All;
+        let selected = self.log_kind_filter;
+        v_flex()
+            .flex_none()
+            .w_full()
+            .gap_1p5()
+            .pb_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(Input::new(&self.log_search_input).xsmall()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme::text_muted())
+                            .child(format!("{shown} / {total}")),
+                    )
+                    .when(active, |el| {
+                        el.child(
+                            div()
+                                .id("log-filter-clear")
+                                .flex_none()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .bg(theme::bg_surface())
+                                .border_1()
+                                .border_color(theme::glass_highlight())
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .hover(|s| s.text_color(theme::text()))
+                                .child("Clear")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.clear_log_filter(window, cx);
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .flex_wrap()
+                    .children(crate::model::LogKindFilter::ALL.map(|kind| {
+                        let is_selected = kind == selected;
+                        div()
+                            .id(SharedString::from(format!("log-kind-pill-{}", kind.label())))
+                            .px_2()
+                            .py_0p5()
+                            .rounded_full()
+                            .cursor_pointer()
+                            .border_1()
+                            .text_xs()
+                            .when(is_selected, |s| {
+                                s.bg(theme::bg_elevated())
+                                    .text_color(theme::accent())
+                                    .font_weight(gpui::FontWeight::BOLD)
+                                    .border_color(theme::hairline_border())
+                            })
+                            .when(!is_selected, |s| {
+                                s.border_color(theme::glass_highlight())
+                                    .text_color(theme::text_muted())
+                                    .hover(|h| h.text_color(theme::text()))
+                            })
+                            .child(kind.label())
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.set_log_filter(this.log_search_query.clone(), kind, cx);
+                            }))
+                    })),
+            )
+    }
+
+    /// The status pill above the composer while `/find` narrows the chat.
+    fn chat_filter_pill(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let shown = self.chat_message_ixs.len();
+        let total = self.view.messages.iter().filter(|m| m.is_chat()).count();
+        h_flex()
+            .id("chat-filter-pill")
+            .w_full()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_3()
+            .py_1()
+            .mb_2()
+            .rounded_lg()
+            .bg(theme::glass_card())
+            .border_1()
+            .border_color(theme::accent().opacity(0.45))
+            .text_xs()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(theme::text_secondary())
+                    .child(format!(
+                        "Filtering chat: {shown} of {total} messages — \u{201c}{}\u{201d}",
+                        self.chat_search_query
+                    )),
+            )
+            .child(
+                div()
+                    .id("chat-filter-clear")
+                    .flex_none()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .bg(theme::bg_surface())
+                    .border_1()
+                    .border_color(theme::glass_highlight())
+                    .text_color(theme::text_muted())
+                    .hover(|s| s.text_color(theme::text()))
+                    .child("Clear (Esc)")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.clear_chat_filter(window, cx);
+                    })),
+            )
     }
 
     /// Render a message body as Markdown under an element id unique to `(view, ix)`.
@@ -2507,8 +2736,67 @@ impl super::Chamber {
 
                             this.child(action_bar)
                         },
-                    ),
+                    )
+                    .when_some(red_gate_quark(m), |this, quark| {
+                        this.child(self.gate_triage_card(ix, &quark, &m.body, chamber_entity.clone()))
+                    }),
             )
+    }
+
+    /// Action bar under a red merge-gate notice. Every handler goes through an
+    /// existing path: the Git rail, `post_chat_message`, or the composer — and
+    /// Abandon only *prefills* `/abandon @<quark>`, keeping its two-step confirm.
+    fn gate_triage_card(
+        &self,
+        ix: usize,
+        quark: &str,
+        body: &str,
+        ent: Entity<Self>,
+    ) -> impl IntoElement {
+        let button = |id: &str, label: &'static str, danger: bool| {
+            let color = if danger { theme::danger() } else { theme::accent() };
+            h_flex()
+                .id(SharedString::from(format!("gate-triage-{id}-{ix}")))
+                .cursor_pointer()
+                .items_center()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(color.opacity(0.12))
+                .border_1()
+                .border_color(color.opacity(0.45))
+                .hover(move |s| s.bg(color.opacity(0.22)))
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(color)
+                .child(label)
+        };
+        let (q_inspect, ent_inspect) = (quark.to_string(), ent.clone());
+        let (fix_msg, ent_fix) = (gate_fix_message(quark, body), ent.clone());
+        let (retry_msg, ent_retry) = (gate_retry_message(quark), ent.clone());
+        let abandon_line = format!("/abandon @{quark}");
+        h_flex()
+            .id(SharedString::from(format!("gate-triage-{ix}")))
+            .items_center()
+            .gap_2()
+            .flex_wrap()
+            .mt_1()
+            .child(button("inspect", "Inspect 3-Way Diff", false).on_click(move |_, _, cx| {
+                ent_inspect.update(cx, |this, cx| this.inspect_gate_branch(&q_inspect, cx));
+            }))
+            .child(button("fix", "Dispatch Fix", false).on_click(move |_, _, cx| {
+                ent_fix.update(cx, |this, cx| {
+                    this.post_chat_message(Actor::Human, fix_msg.clone(), cx)
+                });
+            }))
+            .child(button("retry", "Retry Gate", false).on_click(move |_, _, cx| {
+                ent_retry.update(cx, |this, cx| {
+                    this.post_chat_message(Actor::Human, retry_msg.clone(), cx)
+                });
+            }))
+            .child(button("abandon", "Abandon Branch", true).on_click(move |_, window, cx| {
+                ent.update(cx, |this, cx| this.prefill_chat_input(&abandon_line, window, cx));
+            }))
     }
 
     /// Insert a completion trigger character (such as `@`) at the current input cursor position.
@@ -2899,6 +3187,76 @@ mod turn_summary_tests {
         assert_eq!(format_duration(154), "2m 34s");
         assert_eq!(format_duration(530), "8m 50s");
         assert_eq!(format_duration(3725), "1h 02m 05s");
+    }
+}
+
+#[cfg(test)]
+mod gate_triage_tests {
+    use super::{gate_failure_excerpt, gate_fix_message, gate_retry_message, red_gate_quark};
+    use crate::model::MessageRow;
+
+    fn row(from: &str, to: Option<&str>, body: &str) -> MessageRow {
+        MessageRow {
+            from: from.into(),
+            to: to.map(Into::into),
+            body: body.into(),
+            kind_label: "message",
+            usage: None,
+            ts: chrono::Utc::now(),
+            legacy_used_tokens: None,
+            turn: None,
+            severity: Some(hadron_lattice::Severity::Error),
+        }
+    }
+
+    const HANDBACK: &str = "@acp-agy The merge gate stopped this branch from landing. Nothing was merged and nothing was lost.\n\n\
+        > tests failed: 2 failed\n> test foo::bar ... FAILED\n\n\
+        You are still on your own branch in your own worktree — fix it THERE.";
+
+    /// Guard, not a source: our copy of the gate's sentence must match gluon's.
+    #[test]
+    fn marker_matches_gluons_gate_handback_marker() {
+        let merge_rs = include_str!("../../../../hadron-gluon/src/engine/merge.rs");
+        let needle = format!("GATE_HANDBACK_MARKER: &str = \"{}\";", super::GATE_HANDBACK_MARKER);
+        assert!(merge_rs.contains(&needle), "gluon's GATE_HANDBACK_MARKER changed: {needle}");
+    }
+
+    #[test]
+    fn red_gate_quark_detects_gluon_handbacks_only() {
+        assert_eq!(red_gate_quark(&row("gluon", Some("acp-agy"), HANDBACK)).as_deref(), Some("acp-agy"));
+        // No `to`: falls back to the line-start mention.
+        assert_eq!(red_gate_quark(&row("gluon", None, HANDBACK)).as_deref(), Some("acp-agy"));
+        assert_eq!(
+            red_gate_quark(&row("gluon", Some("cli-agy"), "Merge gate failed for `quark/cli-agy/x`")).as_deref(),
+            Some("cli-agy")
+        );
+        // A quark quoting the sentence is not a gate notice.
+        assert_eq!(red_gate_quark(&row("acp-agy", Some("orchestrator"), HANDBACK)), None);
+        // A green gate is not red.
+        assert_eq!(red_gate_quark(&row("gluon", Some("acp-agy"), "merged → main")), None);
+        // Not a chat row.
+        let mut status = row("gluon", Some("acp-agy"), HANDBACK);
+        status.kind_label = "status";
+        assert_eq!(red_gate_quark(&status), None);
+    }
+
+    #[test]
+    fn excerpt_keeps_the_failure_and_drops_the_boilerplate() {
+        let ex = gate_failure_excerpt(HANDBACK);
+        assert!(ex.contains("2 failed"));
+        assert!(ex.contains("foo::bar"));
+        assert!(!ex.contains("The merge gate stopped"));
+        assert!(!ex.contains("You are still on your own branch"));
+        let long = format!("head\n{}", (0..50).map(|i| format!("line {i}\n")).collect::<String>());
+        assert_eq!(gate_failure_excerpt(&long).lines().count(), 12);
+    }
+
+    #[test]
+    fn fix_and_retry_messages_address_the_quark() {
+        let fix = gate_fix_message("acp-agy", HANDBACK);
+        assert!(fix.starts_with("@acp-agy "));
+        assert!(fix.contains("foo::bar"));
+        assert!(gate_retry_message("acp-agy").starts_with("@acp-agy "));
     }
 }
 

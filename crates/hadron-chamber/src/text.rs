@@ -186,7 +186,8 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "sessions", detail: "List archived sessions with labels", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "clear-history", detail: "Delete all archived sessions while preserving token usage ledger", arity: Arity::None, arg: ArgSource::None, listed: true },
     Command { name: "spend", detail: "Show spend per seat over a window: today (session), week, or all (e.g. /spend @Quark week)", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
-    Command { name: "search", detail: "Search this session's messages for text", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "find", detail: "Filter chat messages live in place (or press Ctrl+F; Esc to clear)", arity: Arity::Line, arg: ArgSource::None, listed: true },
+    Command { name: "search", detail: "Alias for /find: filter chat messages live in place", arity: Arity::Line, arg: ArgSource::None, listed: false },
     Command { name: "diff", detail: "Summarize a seat's branch diff against the default branch, or the working tree if no seat is given", arity: Arity::Line, arg: ArgSource::Quark, listed: true },
     Command { name: "export", detail: "Export the current session (or a named archived session) as a Markdown transcript", arity: Arity::Line, arg: ArgSource::None, listed: true },
     Command { name: "add-skill", detail: "Add a custom skill (e.g. /add-skill @path/to/file.md, or /add-skill my-skill then paste the file content)", arity: Arity::Body, arg: ArgSource::File, listed: true },
@@ -329,6 +330,16 @@ pub(crate) fn note_body(
 /// Look a command up by the name typed after the slash.
 pub fn command(name: &str) -> Option<&'static Command> {
     command_in(name, None)
+}
+
+/// The live chat-filter query while the composer holds `/find …` or `/search …`:
+/// `Some("")` for a bare `/find`, `None` for anything else (including `/finder`).
+pub fn find_query(input: &str) -> Option<&str> {
+    let rest = input.trim_start().strip_prefix('/')?;
+    ["find", "search"].iter().find_map(|name| {
+        let after = rest.strip_prefix(name)?;
+        (after.is_empty() || after.starts_with(char::is_whitespace)).then(|| after.trim())
+    })
 }
 
 /// Look a command up by the name typed after the slash using pre-cached custom skill names
@@ -1031,29 +1042,6 @@ pub fn spend_body(stats: &crate::model::SessionStats, window_label: &str, target
         out.push_str(&format!(
             "\n**Team total** — {} turn(s), {} fresh token(s)\n",
             stats.total_turns, stats.total_fresh
-        ));
-    }
-    out
-}
-
-/// Format `/search` output: every message whose body contains `query`
-/// (case-insensitive), newest constraint applied by the caller (this just filters).
-pub fn search_body(messages: &[crate::model::MessageRow], query: &str) -> String {
-    let q = query.to_lowercase();
-    let hits: Vec<&crate::model::MessageRow> =
-        messages.iter().filter(|m| m.body.to_lowercase().contains(&q)).collect();
-    if hits.is_empty() {
-        return format!("No matches for `{query}`.\n");
-    }
-    let mut out = format!("**Search: `{query}`** — {} match(es)\n\n", hits.len());
-    for m in hits {
-        let to = m.to.as_deref().unwrap_or("(broadcast)");
-        let snippet: String = m.body.chars().take(160).collect();
-        out.push_str(&format!(
-            "- **{} → {}** ({}): {snippet}\n",
-            m.from,
-            to,
-            m.ts.format("%Y-%m-%d %H:%M")
         ));
     }
     out
@@ -3221,26 +3209,6 @@ mod tests {
         assert!(body.contains("No seat matches"));
     }
 
-    // -- search_body --
-
-    #[test]
-    fn search_body_finds_case_insensitive_matches() {
-        let messages = vec![
-            msg("acp-claude", Some("acp-agy"), "fix the merge gate", "message"),
-            msg("acp-agy", Some("acp-claude"), "unrelated reply", "message"),
-        ];
-        let body = search_body(&messages, "MERGE GATE");
-        assert!(body.contains("1 match"));
-        assert!(body.contains("fix the merge gate"));
-        assert!(!body.contains("unrelated reply"));
-    }
-
-    #[test]
-    fn search_body_reports_no_matches() {
-        let body = search_body(&[], "anything");
-        assert!(body.contains("No matches"));
-    }
-
     // -- diff_body --
 
     #[test]
@@ -3650,6 +3618,31 @@ mod tests {
         let quarks = vec![("cli-agy".to_string(), Some("Agy".to_string()))];
         let ghost = extract_ghost_completion("I want to run a bench", 21, &[], &quarks, &[], None);
         assert_eq!(ghost.as_deref(), Some("mark"));
+    }
+
+    #[test]
+    fn find_is_listed_and_search_is_unlisted_alias() {
+        let find_cmd = command("find").expect("/find in COMMANDS");
+        assert!(find_cmd.listed);
+        assert_eq!(find_cmd.arity, Arity::Line);
+
+        let search_cmd = command("search").expect("/search in COMMANDS");
+        assert!(!search_cmd.listed, "/search should be an unlisted alias for /find");
+
+        let comp = completion_candidates("/fi", 3, &[], &[], &[]).expect("completion for /fi");
+        assert!(comp.candidates.iter().any(|c| c.label == "/find"));
+    }
+
+    #[test]
+    fn find_query_reads_find_and_search_lines_only() {
+        assert_eq!(find_query("/find merge gate"), Some("merge gate"));
+        assert_eq!(find_query("/search @acp-agy  "), Some("@acp-agy"));
+        assert_eq!(find_query("/find"), Some(""));
+        assert_eq!(find_query("/find "), Some(""));
+        assert_eq!(find_query("/finder x"), None);
+        assert_eq!(find_query("/fin"), None);
+        assert_eq!(find_query("hello /find x"), None);
+        assert_eq!(find_query(""), None);
     }
 }
 

@@ -61,12 +61,105 @@ impl Chamber {
     /// with `view.messages.len()`, and after a reproject they agree. It took the next
     /// message to rebuild the index, which is when the whole history appeared at once.
     pub(super) fn resync_lists_to_projection(&mut self) {
-        self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
+        self.chat_message_ixs = self.filtered_chat_ixs();
         self.chat_list_state.reset(self.chat_message_ixs.len());
-        self.log_list_state.reset(self.view.messages.len());
+        self.log_message_ixs = self.filtered_log_ixs();
+        self.log_list_state.reset(self.log_message_ixs.len());
         self.parsed_markdown.borrow_mut().clear();
         self.turn_summaries.borrow_mut().clear();
         self.cached_stats.borrow_mut().clear();
+    }
+
+    /// `chat_message_ixs` as the current projection + `chat_search_query` define it —
+    /// the one formula every rebuild of that cache goes through.
+    fn filtered_chat_ixs(&self) -> Vec<usize> {
+        crate::model::filter_chat_message_indices(&self.view.messages, &self.chat_search_query)
+    }
+
+    /// `log_message_ixs` as the current projection + Log filters define it.
+    fn filtered_log_ixs(&self) -> Vec<usize> {
+        crate::model::filter_log_message_indices(
+            &self.view.messages,
+            &self.log_search_query,
+            self.log_kind_filter,
+        )
+    }
+
+    /// Change the live chat filter (`/find`). In memory only: nothing reaches the
+    /// field. A no-op when the query is unchanged, so every composer keystroke can
+    /// call it without resetting the list's scroll.
+    pub(super) fn set_chat_filter(&mut self, query: &str, cx: &mut Context<Self>) {
+        let query = query.trim();
+        if self.chat_search_query == query {
+            return;
+        }
+        self.chat_search_query = query.to_string();
+        self.chat_message_ixs = self.filtered_chat_ixs();
+        self.chat_list_state.reset(self.chat_message_ixs.len());
+        self.chat_list_state
+            .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    /// Change the Log tab's text query and/or kind pill. In memory only.
+    pub(super) fn set_log_filter(
+        &mut self,
+        query: String,
+        kind: crate::model::LogKindFilter,
+        cx: &mut Context<Self>,
+    ) {
+        if self.log_search_query == query && self.log_kind_filter == kind {
+            return;
+        }
+        self.log_search_query = query;
+        self.log_kind_filter = kind;
+        self.log_message_ixs = self.filtered_log_ixs();
+        self.log_list_state.reset(self.log_message_ixs.len());
+        self.log_list_state
+            .scroll_to_reveal_item(self.log_message_ixs.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    /// Clear the Log tab's query (input box included) and kind pill.
+    pub(super) fn clear_log_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_log_filter(String::new(), crate::model::LogKindFilter::All, cx);
+        // Its `Change` re-enters `set_log_filter` with the same empty query: a no-op.
+        self.log_search_input.update(cx, |s, cx| s.set_value("", window, cx));
+    }
+
+    /// Ctrl+F: on Chat, focus the composer holding `/find <current query>`; on Log,
+    /// focus the Log search box. Inside the terminal the chord belongs to the shell.
+    pub(super) fn find_in_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal_focus.is_focused(window) {
+            cx.propagate();
+            return;
+        }
+        match self.chat_tab {
+            ChatTab::Log => {
+                window.focus(&self.log_search_input.focus_handle(cx), cx);
+                cx.notify();
+            }
+            ChatTab::Chat | ChatTab::Stats => {
+                self.chat_tab = ChatTab::Chat;
+                let current = self.input.read(cx).value().to_string();
+                if crate::text::find_query(&current).is_some() {
+                    window.focus(&self.input.focus_handle(cx), cx);
+                    cx.notify();
+                } else {
+                    let prefill = format!("/find {}", self.chat_search_query);
+                    self.prefill_chat_input(&prefill, window, cx);
+                }
+            }
+        }
+    }
+
+    /// Esc / the pill's Clear: drop the chat filter, and the `/find` line with it.
+    pub(super) fn clear_chat_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = self.input.read(cx).value().to_string();
+        if crate::text::find_query(&current).is_some() {
+            self.input.update(cx, |s, cx| s.set_value("", window, cx));
+        }
+        self.set_chat_filter("", cx);
     }
 
     /// Re-project the field and bring `chat_list_state`/`log_list_state`/
@@ -85,16 +178,23 @@ impl Chamber {
         let old_first_ts = self.view.messages.first().map(|m| m.ts);
         let old_chat_count = self.chat_message_ixs.len();
         let old_log_count = self.view.messages.len();
+        let old_log_ix_count = self.log_message_ixs.len();
 
         self.reproject(events);
 
         if is_pure_append(old_first_ts, old_log_count, &self.view.messages) {
-            self.chat_message_ixs = crate::model::chat_message_indices(&self.view.messages);
+            // A pure append leaves every old row untouched, so the filtered prefix is
+            // unchanged and only the appended tail can add entries: splice that tail.
+            self.chat_message_ixs = self.filtered_chat_ixs();
             let new_chat_count = self.chat_message_ixs.len();
             if new_chat_count > old_chat_count {
                 self.chat_list_state
                     .splice(old_chat_count..old_chat_count, new_chat_count - old_chat_count);
-
+            }
+            // Cue on any new chat row, not on filtered growth: an active `/find`
+            // must not silence a quark asking for approval.
+            let chat_grew = self.view.messages[old_log_count..].iter().any(|m| m.is_chat());
+            if chat_grew {
                 // Notify and play audio cue if from an autonomous quark
                 if let Some(last_msg) = self.view.messages.last() {
                     let from_quark = last_msg.from != "human";
@@ -129,9 +229,13 @@ impl Chamber {
             }
             let new_log_count = self.view.messages.len();
             if new_log_count > old_log_count {
-                self.log_list_state
-                    .splice(old_log_count..old_log_count, new_log_count - old_log_count);
                 self.cached_stats.borrow_mut().clear();
+            }
+            self.log_message_ixs = self.filtered_log_ixs();
+            let new_log_ix_count = self.log_message_ixs.len();
+            if new_log_ix_count > old_log_ix_count {
+                self.log_list_state
+                    .splice(old_log_ix_count..old_log_ix_count, new_log_ix_count - old_log_ix_count);
             }
         } else {
             self.resync_lists_to_projection();
@@ -307,7 +411,7 @@ impl Chamber {
         self.chat_list_state
             .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
         self.log_list_state
-            .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
+            .scroll_to_reveal_item(self.log_message_ixs.len().saturating_sub(1));
         cx.notify();
     }
 
@@ -1934,19 +2038,10 @@ impl Chamber {
                 self.post_chat_message(Actor::Gluon, body, cx);
                 true
             }
-            "search" => {
-                let query = args.trim();
-                if query.is_empty() {
-                    eprintln!("chamber: `/search` needs text (e.g. `/search merge gate`)");
-                    self.post_chat_message(
-                        Actor::Gluon,
-                        "Usage: `/search <query>` (e.g. `/search merge gate`)".to_string(),
-                        cx,
-                    );
-                    return true;
-                }
-                let body = crate::text::search_body(&self.view.messages, query);
-                self.post_chat_message(Actor::Gluon, body, cx);
+            "find" | "search" => {
+                // Local only: narrows the Chat list in memory, posts nothing. An empty
+                // query clears the filter.
+                self.set_chat_filter(args, cx);
                 true
             }
             "diff" => {
@@ -2830,6 +2925,44 @@ impl Chamber {
         cx.notify();
     }
 
+    /// Triage card's "Inspect 3-Way Diff": open `Git → 3-Way` and select `quark`'s
+    /// newest `quark/<id>/<ulid>` branch from the already-loaded branch list. The
+    /// branch diff is computed off the UI thread (unlike `select_branch`, a click path).
+    pub(super) fn inspect_gate_branch(&mut self, quark: &str, cx: &mut Context<Self>) {
+        self.prefs.inspector_collapsed = false;
+        self.select_git_subtab(GitSubtab::Diff3Way, cx);
+        let prefix = format!("quark/{quark}/");
+        let Some(branch) = self
+            .git_branches
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter(|b| b.name.starts_with(&prefix))
+            .max_by(|a, b| a.name.cmp(&b.name))
+            .map(|b| b.name.clone())
+        else {
+            return;
+        };
+        if self.git_selected_branch.as_deref() == Some(branch.as_str()) {
+            return;
+        }
+        let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let name = branch.clone();
+            let diff = cx
+                .background_executor()
+                .spawn(async move { crate::vcs::branch_diff(&root, "main", &name) })
+                .await;
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.git_branch_diff = diff;
+                chamber.git_branch_open_ixs.clear();
+                chamber.git_selected_branch = Some(branch);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Move cursor selection in the active Git rail subtab.
     pub(super) fn move_git_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         if self.right_rail_tab != RightRailTab::Git {
@@ -3086,6 +3219,9 @@ impl Chamber {
         }
         if self.terminal_focus.is_focused(window) {
             return;
+        }
+        if self.chat_tab == ChatTab::Chat && !self.chat_search_query.is_empty() {
+            self.clear_chat_filter(window, cx);
         }
         window.focus(&self.input.focus_handle(cx), cx);
         cx.notify();
@@ -3663,7 +3799,7 @@ impl Chamber {
         self.chat_list_state
             .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
         self.log_list_state
-            .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
+            .scroll_to_reveal_item(self.log_message_ixs.len().saturating_sub(1));
     }
 
     /// "Always allow" the pending op: append a *remembering* grant so the

@@ -680,7 +680,7 @@ impl super::Chamber {
                 self.chat_list_state
                     .scroll_to_reveal_item(self.chat_message_ixs.len().saturating_sub(1));
                 self.log_list_state
-                    .scroll_to_reveal_item(self.view.messages.len().saturating_sub(1));
+                    .scroll_to_reveal_item(self.log_message_ixs.len().saturating_sub(1));
                 changed = true;
             } else if team_changed {
                 // The message list is unchanged (same events) but the resolved team is

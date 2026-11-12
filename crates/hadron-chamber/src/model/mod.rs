@@ -128,6 +128,157 @@ pub fn chat_message_indices(messages: &[MessageRow]) -> Vec<usize> {
         .collect()
 }
 
+/// Event-type filter pills for the `Event Log` tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogKindFilter {
+    #[default]
+    All,
+    Messages,
+    Status,
+    Edits,
+    Gates,
+    Commands,
+    Errors,
+}
+
+impl LogKindFilter {
+    pub const ALL: [Self; 7] = [
+        Self::All,
+        Self::Messages,
+        Self::Status,
+        Self::Edits,
+        Self::Gates,
+        Self::Commands,
+        Self::Errors,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Messages => "Messages",
+            Self::Status => "Status",
+            Self::Edits => "Edits",
+            Self::Gates => "Gates",
+            Self::Commands => "Commands",
+            Self::Errors => "Errors",
+        }
+    }
+
+    pub fn matches_row(self, m: &MessageRow) -> bool {
+        match self {
+            Self::All => true,
+            Self::Messages => m.kind_label == "message",
+            Self::Status => matches!(
+                m.kind_label,
+                "status"
+                    | "assign"
+                    | "mode_set"
+                    | "mode_clear"
+                    | "reboot"
+                    | "session_name"
+                    | "energy_report"
+            ),
+            Self::Edits => matches!(m.kind_label, "edit" | "snapshot"),
+            Self::Gates => {
+                matches!(m.kind_label, "permission_req" | "permission_grant" | "gate")
+                    || (m.from == "gluon"
+                        && (m.body.contains("merge gate")
+                            || m.body.contains("gating `")
+                            || m.body.contains("merged →")
+                            || m.body.contains("landed")))
+            }
+            Self::Commands => m.kind_label == "command",
+            Self::Errors => {
+                m.severity == Some(hadron_lattice::Severity::Error)
+                    || (m.kind_label == "status" && (m.body == "error" || m.body == "blocked"))
+            }
+        }
+    }
+}
+
+/// Pure in-memory search matcher over a projected [`MessageRow`].
+///
+/// Supports whitespace-separated conjunctive tokens:
+/// - `to:@target` or `to:target` narrows to rows addressed to `target` (via `to` or line-start `@target`).
+/// - `@actor` narrows to rows authored by, addressed to, or mentioning `@actor`.
+/// - Any other token matches case-insensitively across `body`, `from`, `to`, and `kind_label`.
+pub fn matches_search_query(m: &MessageRow, query: &str) -> bool {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let body_lower = m.body.to_lowercase();
+    let from_lower = m.from.to_lowercase();
+    let to_lower = m.to.as_deref().map(str::to_lowercase);
+    let kind_lower = m.kind_label.to_lowercase();
+
+    for raw_tok in trimmed.split_whitespace() {
+        let tok_lower = raw_tok.to_lowercase();
+        if let Some(target_part) = tok_lower.strip_prefix("to:") {
+            let target = target_part.trim_start_matches('@');
+            if target.is_empty() {
+                continue;
+            }
+            let matches_to = to_lower.as_deref().is_some_and(|t| t.contains(target))
+                || crate::text::line_start_mentions(&m.body)
+                    .iter()
+                    .any(|men| men.to_lowercase().contains(target));
+            if !matches_to {
+                return false;
+            }
+        } else if let Some(actor) = tok_lower.strip_prefix('@') {
+            if actor.is_empty() {
+                continue;
+            }
+            let mention_needle = format!("@{actor}");
+            let matches_actor = from_lower.contains(actor)
+                || to_lower.as_deref().is_some_and(|t| t.contains(actor))
+                || body_lower.contains(&mention_needle);
+            if !matches_actor {
+                return false;
+            }
+        } else {
+            let matches_text = body_lower.contains(&tok_lower)
+                || from_lower.contains(&tok_lower)
+                || kind_lower.contains(&tok_lower)
+                || to_lower.as_deref().is_some_and(|t| t.contains(&tok_lower));
+            if !matches_text {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Filtered indices into `messages` for the virtualized Chat list (`is_chat()` + `query`).
+pub fn filter_chat_message_indices(messages: &[MessageRow], query: &str) -> Vec<usize> {
+    if query.trim().is_empty() {
+        return chat_message_indices(messages);
+    }
+    messages
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, m)| (m.is_chat() && matches_search_query(m, query)).then_some(ix))
+        .collect()
+}
+
+/// Filtered indices into `messages` for the virtualized Event Log list (`kind_filter` + `query`).
+pub fn filter_log_message_indices(
+    messages: &[MessageRow],
+    query: &str,
+    kind_filter: LogKindFilter,
+) -> Vec<usize> {
+    messages
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, m)| {
+            (kind_filter.matches_row(m) && matches_search_query(m, query)).then_some(ix)
+        })
+        .collect()
+}
+
 fn resolve_fresh(
     usage: Option<&hadron_lattice::Usage>,
     legacy_used_tokens: u32,

@@ -1414,3 +1414,143 @@ fn test_project_normalizes_inflated_cache_read_context_usage() {
     assert_eq!(ctx.used_tokens, 443_232);
     assert!((ctx.used_percentage - 22.1616).abs() < 1e-4);
 }
+
+#[test]
+fn test_filter_chat_and_log_message_indices_by_query_and_kind() {
+    let mut err_msg = ev(
+        Actor::Gluon,
+        Some("acp-agy"),
+        Kind::Message {
+            body: "@acp-agy The merge gate stopped this branch from landing.".into(),
+        },
+    );
+    err_msg.severity = Some(hadron_lattice::Severity::Error);
+
+    let evs = vec![
+        ev(
+            Actor::Human,
+            None,
+            Kind::Message {
+                body: "@acp-claude implement feature X".into(),
+            },
+        ),
+        ev(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            None,
+            Kind::Status {
+                state: QuarkState::Thinking,
+            },
+        ),
+        ev(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            None,
+            Kind::Edit {
+                paths: vec!["src/lib.rs".into()],
+                git: "abc1234".into(),
+                summary: "edit lib".into(),
+            },
+        ),
+        ev(
+            Actor::Quark(QuarkId::new("acp-claude")),
+            None,
+            Kind::Command {
+                cmd: "cargo test".into(),
+                exit: 0,
+                out_summary: "ok".into(),
+            },
+        ),
+        err_msg,
+        ev(
+            Actor::Quark(QuarkId::new("acp-agy")),
+            None,
+            Kind::Status {
+                state: QuarkState::Blocked,
+            },
+        ),
+    ];
+
+    let rows = project(&evs).messages;
+    assert_eq!(rows.len(), 6);
+
+    // Chat indices: rows 0 and 4 are `message`
+    assert_eq!(filter_chat_message_indices(&rows, ""), vec![0, 4]);
+    assert_eq!(filter_chat_message_indices(&rows, "merge gate"), vec![4]);
+    assert_eq!(filter_chat_message_indices(&rows, "to:@acp-claude"), vec![0]);
+    assert_eq!(filter_chat_message_indices(&rows, "to:@acp-agy"), vec![4]);
+    assert_eq!(filter_chat_message_indices(&rows, "@acp-claude feature"), vec![0]);
+    assert!(filter_chat_message_indices(&rows, "nonexistent").is_empty());
+
+    // Log kind filters
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::All),
+        vec![0, 1, 2, 3, 4, 5]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::Messages),
+        vec![0, 4]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::Status),
+        vec![1, 5]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::Edits),
+        vec![2]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::Commands),
+        vec![3]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::Gates),
+        vec![4]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "", LogKindFilter::Errors),
+        vec![4, 5]
+    );
+
+    // Combined log kind + query filter
+    assert_eq!(
+        filter_log_message_indices(&rows, "@acp-claude", LogKindFilter::Status),
+        vec![1]
+    );
+    assert_eq!(
+        filter_log_message_indices(&rows, "cargo", LogKindFilter::Commands),
+        vec![3]
+    );
+}
+
+/// `Chamber::sync_view` splices only the appended tail into the filtered list
+/// caches. That is sound only if filtering a pure append never disturbs the
+/// filtered prefix of the old rows — pinned here for both filters.
+#[test]
+fn test_filtered_indices_of_a_pure_append_extend_the_old_prefix() {
+    let msg = |who: &str, body: &str| {
+        ev(
+            Actor::Quark(QuarkId::new(who)),
+            None,
+            Kind::Message { body: body.into() },
+        )
+    };
+    let old = vec![msg("acp-agy", "gate red"), msg("acp-claude", "ok"), msg("acp-agy", "fixed gate")];
+    let mut all = old.clone();
+    all.push(msg("acp-claude", "gate green"));
+    all.push(ev(
+        Actor::Quark(QuarkId::new("acp-agy")),
+        None,
+        Kind::Status { state: QuarkState::Blocked },
+    ));
+
+    let (old_rows, all_rows) = (project(&old).messages, project(&all).messages);
+    for query in ["", "gate", "@acp-agy", "nothing-matches"] {
+        let before = filter_chat_message_indices(&old_rows, query);
+        let after = filter_chat_message_indices(&all_rows, query);
+        assert_eq!(&after[..before.len()], &before[..], "chat query {query:?}");
+        for kind in LogKindFilter::ALL {
+            let before = filter_log_message_indices(&old_rows, query, kind);
+            let after = filter_log_message_indices(&all_rows, query, kind);
+            assert_eq!(&after[..before.len()], &before[..], "log query {query:?} kind {kind:?}");
+        }
+    }
+}
