@@ -43,13 +43,19 @@ impl super::Chamber {
                 self.acp_model_probe = None;
                 return;
             };
+            let work_dir = hadron_lattice::repo_root_of(&self.path).to_path_buf();
+            let seat_model = (!seat.model.trim().is_empty()).then(|| seat.model.clone());
             self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), state: AcpModelState::Probing });
-            cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut cx = cx.clone();
                 async move {
                     let result = cx
                         .background_spawn(async move {
-                            hadron_gluon::adapter::acp::probe_selectors(&target)
+                            hadron_gluon::adapter::acp::probe_selectors_for_seat(
+                                &target,
+                                Some(&work_dir),
+                                seat_model.as_deref(),
+                            )
                         })
                         .await;
                     this.update(&mut cx, |this, cx| {

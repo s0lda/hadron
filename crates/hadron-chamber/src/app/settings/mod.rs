@@ -627,6 +627,9 @@ impl Chamber {
             }
             if base.model != desired.model || base.effort != desired.effort {
                 self.update_seat_config(&qid, &desired, cx);
+                if desired.transport == hadron_lattice::Transport::Acp && base.model != desired.model {
+                    self.start_acp_model_probe(qid_str, cx);
+                }
             }
             if self.settings_target.key() == qid_str {
                 self.settings_model

@@ -64,7 +64,19 @@ pub fn create_model_delegate(default_label: &str, models: &[String], selected: O
 /// offers a rich, searchable list of models in Settings and the Quark Info panel.
 pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
     let v = vendor.trim().to_ascii_lowercase();
-    if v.contains("agy") || v.contains("gemini") || v.contains("google") {
+    if v.contains("antigravity") {
+        vec![
+            "gemini-4-carbon".to_string(),
+            "gemini-4-argon".to_string(),
+            "gemini-4-hydrogen".to_string(),
+            "gemini-pro-orchestrator".to_string(),
+            "gemini-pro-orchestrator-argon".to_string(),
+            "gemini-3.8-flash".to_string(),
+            "claude-opus-5-5".to_string(),
+            "claude-sonnet-5-5".to_string(),
+            "gpt-oss-120b-medium".to_string(),
+        ]
+    } else if v.contains("agy") || v.contains("gemini") || v.contains("google") {
         vec![
             "gemini-4-carbon-medium".to_string(),
             "gemini-4-carbon-high".to_string(),
@@ -72,9 +84,22 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
             "gemini-4-argon-medium".to_string(),
             "gemini-4-argon-high".to_string(),
             "gemini-4-argon-low".to_string(),
+            "gemini-4-hydrogen-high".to_string(),
+            "gemini-4-hydrogen-xhigh".to_string(),
+            "gemini-4-hydrogen-medium".to_string(),
+            "gemini-4-hydrogen-low".to_string(),
+            "gemini-pro-orchestrator".to_string(),
+            "gemini-pro-orchestrator-argon".to_string(),
             "gemini-3.8-flash-high".to_string(),
             "gemini-3.8-flash-medium".to_string(),
             "gemini-3.8-flash-low".to_string(),
+            "claude-opus-5-5-high".to_string(),
+            "claude-opus-5-5-medium".to_string(),
+            "claude-opus-5-5-low".to_string(),
+            "claude-sonnet-5-5-high".to_string(),
+            "claude-sonnet-5-5-medium".to_string(),
+            "claude-sonnet-5-5-low".to_string(),
+            "gpt-oss-120b-medium".to_string(),
             "gemini-3.8-flash".to_string(),
             "gemini-3.6-flash".to_string(),
             "gemini-3.5-flash".to_string(),
@@ -155,8 +180,15 @@ mod tests {
     #[test]
     fn vendor_fallback_models_covers_core_vendors() {
         assert!(vendor_fallback_models("agy").contains(&"gemini-4-argon-medium".to_string()));
+        assert!(vendor_fallback_models("agy").contains(&"gemini-4-hydrogen-high".to_string()));
+        assert!(vendor_fallback_models("agy").contains(&"gemini-4-hydrogen-xhigh".to_string()));
+        assert!(vendor_fallback_models("agy").contains(&"gemini-pro-orchestrator".to_string()));
+        assert!(vendor_fallback_models("agy").contains(&"gemini-pro-orchestrator-argon".to_string()));
         assert!(vendor_fallback_models("agy").contains(&"gemini-3.8-flash".to_string()));
         assert!(!vendor_fallback_models("agy").contains(&"gemini-3.8-pro".to_string()));
+        assert!(vendor_fallback_models("antigravity").contains(&"gemini-4-hydrogen".to_string()));
+        assert!(vendor_fallback_models("antigravity").contains(&"gemini-pro-orchestrator-argon".to_string()));
+        assert!(!vendor_fallback_models("antigravity").contains(&"gemini-4-hydrogen-high".to_string()));
         assert!(vendor_fallback_models("claude").contains(&"claude-opus-4-8".to_string()));
         assert!(vendor_fallback_models("claude").contains(&"claude-sonnet-5".to_string()));
         assert!(vendor_fallback_models("claude").contains(&"claude-fable-5".to_string()));

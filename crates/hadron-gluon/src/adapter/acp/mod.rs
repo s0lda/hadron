@@ -61,7 +61,10 @@ pub use session::dispatch_batched_tool_calls;
 // `AcpSelectors`/`probe_selectors`/`ModelSelector` are the new render-only surface
 // Task 1 adds: one boot, every selector the agent advertised, not just the model —
 // the chamber names `ModelSelector` directly in its shared chip-row helper.
-pub use model::{probe, probe_selector, probe_selectors, AcpModel, AcpSelectors, ModelSelector};
+pub use model::{
+    probe, probe_selector, probe_selectors, probe_selectors_for_seat, AcpModel, AcpSelectors,
+    ModelSelector,
+};
 pub use spend::{turn_spend, turn_spend_from_report, turn_spend_with_context, SpendReport, SpendWatermark};
 
 pub struct AcpQuark {

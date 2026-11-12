@@ -471,6 +471,26 @@ pub fn is_windows_host_path(program: &str) -> bool {
     lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat")
 }
 
+/// Convert a Windows drive-letter path (`C:\Users\...\hadron-forge-mcp.exe` or `\\?\C:\...`)
+/// into its in-distro WSL automount path (`/mnt/c/Users/.../hadron-forge-mcp.exe`) so a
+/// Linux process running inside WSL can invoke a Windows host binary via WSL interop.
+pub fn windows_drive_to_wsl_mnt(path: &Path) -> Option<PathBuf> {
+    let stripped = crate::sys::paths::strip_unc_prefix(&path.to_string_lossy());
+    let bytes = stripped.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let rest = stripped[2..].replace('\\', "/");
+        let rest = rest.trim_start_matches('/');
+        if rest.is_empty() {
+            Some(PathBuf::from(format!("/mnt/{drive}")))
+        } else {
+            Some(PathBuf::from(format!("/mnt/{drive}/{rest}")))
+        }
+    } else {
+        None
+    }
+}
+
 /// Check whether `program` exists inside `distro` (checking standard system and user bin directories)
 /// or on the Windows host, and return `true` if `program` should be executed via `wsl.exe` inside `distro`,
 /// or `false` if it is only installed on the Windows host (e.g. `agy.exe` on Windows when opening a WSL repo,
@@ -1015,5 +1035,18 @@ mod tests {
         // Windows /mnt/c paths must be rejected so we only use genuine Linux binaries
         let mnt_stdout = b"/mnt/c/Users/Jake/bin/hadron-gluon\r\n";
         assert_eq!(parse_wsl_which_output(mnt_stdout), None);
+
+        assert_eq!(
+            windows_drive_to_wsl_mnt(Path::new(
+                r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-forge-mcp.exe"
+            )),
+            Some(PathBuf::from(
+                "/mnt/c/Users/Komputer/AppData/Local/Programs/Hadron/hadron-forge-mcp.exe"
+            ))
+        );
+        assert_eq!(
+            windows_drive_to_wsl_mnt(Path::new("/home/jake/.local/bin/hadron-forge-mcp")),
+            None
+        );
     }
 }

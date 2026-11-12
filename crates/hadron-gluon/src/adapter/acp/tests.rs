@@ -1726,5 +1726,103 @@ fn prepare_acp_turn_prompt_strips_static_prefix_on_resumed_session_and_prunes_ov
     );
 }
 
+#[test]
+fn resolve_model_or_split_effort_handles_agy_acp_base_and_suffixed_models() {
+    use super::model::{resolve_model_or_split_effort, AcpModel};
+
+    let selector = ModelSelector {
+        config_id: "model".into(),
+        current: "gemini-4-carbon".into(),
+        available: vec![
+            AcpModel { value: "gemini-4-carbon".into(), label: "Gemini 4 Carbon".into() },
+            AcpModel { value: "gemini-4-hydrogen".into(), label: "Gemini 4 Hydrogen".into() },
+            AcpModel {
+                value: "gemini-pro-orchestrator-argon".into(),
+                label: "Orchestrator (Argon)".into(),
+            },
+            AcpModel { value: "gpt-oss-120b-medium".into(), label: "GPT-OSS 120B (Medium)".into() },
+        ],
+    };
+
+    assert_eq!(
+        resolve_model_or_split_effort(&selector, "gemini-4-hydrogen"),
+        (Some("gemini-4-hydrogen".into()), None)
+    );
+    assert_eq!(
+        resolve_model_or_split_effort(&selector, "gemini-4-hydrogen-xhigh"),
+        (Some("gemini-4-hydrogen".into()), Some("xhigh".into()))
+    );
+    assert_eq!(
+        resolve_model_or_split_effort(&selector, "gemini-4-carbon-high"),
+        (None, Some("high".into())),
+        "already-current base model extracts effort without redundant model switch"
+    );
+    assert_eq!(
+        resolve_model_or_split_effort(&selector, "gpt-oss-120b-medium"),
+        (Some("gpt-oss-120b-medium".into()), None),
+        "exact offered model with baked suffix resolves directly"
+    );
+    assert_eq!(
+        resolve_model_or_split_effort(&selector, "gemini-pro-orchestrator-argon"),
+        (Some("gemini-pro-orchestrator-argon".into()), None)
+    );
+}
+
+#[test]
+fn resolve_session_cwd_and_forge_translates_wsl_unc_for_in_distro_acp_agents() {
+    use super::session::{descriptor_runs_via_wsl, resolve_session_cwd_and_forge_with_wsl_bin};
+    use std::path::Path;
+
+    let wsl_desc = r#"{"type":"stdio","name":"wsl.exe","command":"wsl.exe","args":["-d","Ubuntu"],"env":[]}"#;
+    assert!(descriptor_runs_via_wsl(wsl_desc));
+
+    let unc_cwd = Path::new(r"\\wsl.localhost\Ubuntu\home\jake\repo\.hadron\trees\acp-agy");
+    let win_forge = Path::new(r"C:\Users\Komputer\AppData\Local\Programs\Hadron\hadron-forge-mcp.exe");
+
+    // Fallback when no Linux `hadron-forge-mcp` is installed in WSL: invoke host `.exe` via `/mnt/c/...` with UNC args.
+    let (session_cwd, forge_exe, forge_args) =
+        resolve_session_cwd_and_forge_with_wsl_bin(unc_cwd, &[], win_forge, true, None);
+    assert_eq!(session_cwd, std::path::PathBuf::from("/home/jake/repo/.hadron/trees/acp-agy"));
+    assert_eq!(
+        forge_exe,
+        std::path::PathBuf::from("/mnt/c/Users/Komputer/AppData/Local/Programs/Hadron/hadron-forge-mcp.exe")
+    );
+    assert_eq!(forge_args, vec![unc_cwd.to_string_lossy().to_string()]);
+
+    // Preferred path when Linux `hadron-forge-mcp` exists inside WSL: invoke Linux binary with Linux args.
+    let (session_cwd_linux, forge_exe_linux, forge_args_linux) =
+        resolve_session_cwd_and_forge_with_wsl_bin(
+            unc_cwd,
+            &[],
+            win_forge,
+            true,
+            Some("/home/jake/.cargo/bin/hadron-forge-mcp".into()),
+        );
+    assert_eq!(session_cwd_linux, std::path::PathBuf::from("/home/jake/repo/.hadron/trees/acp-agy"));
+    assert_eq!(forge_exe_linux, std::path::PathBuf::from("/home/jake/.cargo/bin/hadron-forge-mcp"));
+    assert_eq!(forge_args_linux, vec!["/home/jake/repo/.hadron/trees/acp-agy".to_string()]);
+}
+
+#[test]
+#[ignore = "spawns live `agy acp` binary on host"]
+fn live_agy_acp_probe_selectors_for_seat_returns_xhigh_for_hydrogen() {
+    let target = AcpTarget::for_vendor("antigravity").expect("antigravity preset exists");
+    let selectors = super::model::probe_selectors_for_seat(
+        &target,
+        Some(std::path::Path::new(".")),
+        Some("gemini-4-hydrogen"),
+    )
+    .expect("live `agy acp` probe should succeed");
+    let model = selectors.model.expect("agy acp exposes model selector");
+    assert_eq!(model.current, "gemini-4-hydrogen");
+    let effort = selectors.effort.expect("agy acp exposes thought_level selector");
+    assert!(
+        effort.available.iter().any(|m| m.value == "xhigh"),
+        "thought_level after switching to gemini-4-hydrogen must offer xhigh: {:?}",
+        effort.available
+    );
+}
+
+
 
 

@@ -635,8 +635,9 @@ impl QuarkKind {
                 // out on a machine with no venv would leave no way to create the seat
                 // whose Settings page is the only thing that provisions one.
                 let mut program = std::path::Path::new(resolved.program()).to_path_buf();
-                let is_agy_bridge =
-                    seat.vendor == "agy" || seat.id.as_str() == "acp-agy" || seat.id.as_str() == "agy";
+                let is_agy_bridge = seat.vendor == "agy"
+                    || ((seat.id.as_str() == "acp-agy" || seat.id.as_str() == "agy")
+                        && seat.vendor != "antigravity");
                 if is_agy_bridge {
                     let _ = crate::adapter::bridge::materialize_script();
                     if program.is_absolute() && !program.exists() {

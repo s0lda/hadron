@@ -1207,6 +1207,18 @@ fn spec_for_seat_strips_effort_for_cli_agy_and_effort_baked_models() {
     acp_baked.effort = Some("low".to_string());
     let spec_acp_baked = spec_for_seat(&acp_baked, &s_store).unwrap();
     assert_eq!(spec_acp_baked.effort, None, "effort-baked ACP model must strip effort");
+
+    let mut acp_native_agy = seat("acp-agy", "antigravity");
+    acp_native_agy.transport = hadron_lattice::Transport::Acp;
+    acp_native_agy.model = "gemini-4-hydrogen".to_string();
+    acp_native_agy.effort = Some("high".to_string());
+    assert_eq!(
+        QuarkKind::from_seat(&acp_native_agy).unwrap(),
+        QuarkKind::Acp(AcpTarget::for_vendor("antigravity").unwrap()),
+        "acp-agy with vendor antigravity must build native `agy acp` without bridge provisioning"
+    );
+    let spec_native_agy = spec_for_seat(&acp_native_agy, &s_store).unwrap();
+    assert_eq!(spec_native_agy.effort.as_deref(), Some("high"));
 }
 
 

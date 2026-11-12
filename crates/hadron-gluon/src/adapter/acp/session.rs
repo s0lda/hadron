@@ -21,7 +21,7 @@ use crate::adapter::registry::{AcpTarget, ResolvedAcpTarget};
 
 use super::model::{
     classify_request, effort_selector, mode_selector, model_selector, permission_choice,
-    resolve_model,
+    resolve_model, resolve_model_or_split_effort,
 };
 use super::spend::turn_spend_with_context;
 
@@ -137,6 +137,84 @@ pub(super) fn acp_stdio_descriptor_sandboxed(
         "env": env_json,
     })
     .to_string()
+}
+
+pub(super) fn descriptor_runs_via_wsl(descriptor_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(descriptor_json)
+        .ok()
+        .and_then(|v| v.get("command")?.as_str().map(|c| c.eq_ignore_ascii_case("wsl.exe")))
+        .unwrap_or(false)
+}
+
+/// Resolve the `cwd` and `hadron-forge-mcp` `(executable, args)` handed to `session/new`.
+///
+/// When Windows `hadron-gluon.exe` launches an ACP agent inside WSL (`running_via_wsl == true`,
+/// e.g. `wsl.exe -d Ubuntu ... --exec /home/.../agy acp`), the agent runs in the Linux
+/// filesystem namespace:
+/// 1. `session_cwd` must be the Linux path (`/home/...`) rather than `\\wsl.localhost\...`.
+/// 2. `hadron-forge-mcp` prefers an in-distro Linux binary (`resolve_wsl_program_path`) with
+///    Linux-translated args, or falls back to invoking the host `hadron-forge-mcp.exe` through
+///    WSL automount (`/mnt/c/.../hadron-forge-mcp.exe`) with Windows UNC args.
+pub(super) fn resolve_session_cwd_and_forge(
+    cwd: &std::path::Path,
+    external: &[hadron_lattice::ExternalRootSpec],
+    host_forge_exe: &std::path::Path,
+    running_via_wsl: bool,
+) -> (PathBuf, PathBuf, Vec<String>) {
+    let wsl_forge = if running_via_wsl {
+        hadron_lattice::wsl::parse_wsl_unc_path(cwd).and_then(|(distro, _)| {
+            hadron_lattice::wsl::resolve_wsl_program_path(&distro, "hadron-forge-mcp")
+        })
+    } else {
+        None
+    };
+    resolve_session_cwd_and_forge_with_wsl_bin(
+        cwd,
+        external,
+        host_forge_exe,
+        running_via_wsl,
+        wsl_forge,
+    )
+}
+
+pub(super) fn resolve_session_cwd_and_forge_with_wsl_bin(
+    cwd: &std::path::Path,
+    external: &[hadron_lattice::ExternalRootSpec],
+    host_forge_exe: &std::path::Path,
+    running_via_wsl: bool,
+    wsl_forge: Option<String>,
+) -> (PathBuf, PathBuf, Vec<String>) {
+    if running_via_wsl {
+        if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(cwd) {
+            if let Some(wsl_forge) = wsl_forge {
+                let mut args = vec![linux_cwd.to_string_lossy().replace('\\', "/")];
+                for root in external {
+                    args.push(
+                        if root.writable {
+                            "--external-root-rw"
+                        } else {
+                            "--external-root"
+                        }
+                        .to_string(),
+                    );
+                    args.push(hadron_lattice::wsl::translate_arg_for_wsl(
+                        &distro,
+                        &root.path.to_string_lossy(),
+                    ));
+                }
+                return (linux_cwd, PathBuf::from(wsl_forge), args);
+            }
+            if let Some(mnt_forge) = hadron_lattice::wsl::windows_drive_to_wsl_mnt(host_forge_exe) {
+                return (linux_cwd, mnt_forge, forge_mcp_args(cwd, external));
+            }
+            return (linux_cwd, host_forge_exe.to_path_buf(), forge_mcp_args(cwd, external));
+        }
+    }
+    (
+        cwd.to_path_buf(),
+        host_forge_exe.to_path_buf(),
+        forge_mcp_args(cwd, external),
+    )
 }
 
 /// Parse the vendor-namespaced Claude rate-limit payload `claude-agent-acp` attaches
@@ -865,15 +943,25 @@ impl super::AcpQuark {
                                 ),
                             );
 
-                            let forge_exe = std::env::current_exe()
+                            let forge_bin =
+                                format!("hadron-forge-mcp{}", std::env::consts::EXE_SUFFIX);
+                            let host_forge_exe = std::env::current_exe()
                                 .ok()
-                                .and_then(|p| p.parent().map(|d| d.join("hadron-forge-mcp")))
-                                .unwrap_or_else(|| PathBuf::from("hadron-forge-mcp"));
+                                .and_then(|p| p.parent().map(|d| d.join(&forge_bin)))
+                                .unwrap_or_else(|| PathBuf::from(&forge_bin));
+                            let running_via_wsl = descriptor_runs_via_wsl(&agent_source);
+                            let (session_cwd, forge_exe, forge_args) =
+                                resolve_session_cwd_and_forge(
+                                    &cwd,
+                                    &external_roots,
+                                    &host_forge_exe,
+                                    running_via_wsl,
+                                );
 
                             let mcp_servers = vec![
                                 McpServer::Stdio(
                                     McpServerStdio::new("hadron-forge-mcp", forge_exe)
-                                        .args(forge_mcp_args(&cwd, &external_roots)),
+                                        .args(forge_args),
                                 ),
                                 McpServer::Stdio(
                                     McpServerStdio::new("context7", "npx")
@@ -882,7 +970,9 @@ impl super::AcpQuark {
                             ];
 
                             let session = cx
-                                .send_request(NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
+                                .send_request(
+                                    NewSessionRequest::new(session_cwd).mcp_servers(mcp_servers),
+                                )
                                 .block_task()
                                 .await?;
                             let sid = session.session_id;
@@ -895,10 +985,16 @@ impl super::AcpQuark {
                             // default and a turn on the wrong model beats no turn at all.
                             // But it must be loud, or the roster will claim a model that
                             // never ran.
-                            let offered = session.config_options.unwrap_or_default();
+                            let mut offered = session.config_options.unwrap_or_default();
+                            let mut effective_effort = want_effort;
                             match model_selector(&offered) {
                                 Some(selector) => {
-                                    match resolve_model(&selector, &want_model) {
+                                    let (model_to_set, inferred_effort) =
+                                        resolve_model_or_split_effort(&selector, &want_model);
+                                    if effective_effort.is_none() {
+                                        effective_effort = inferred_effort.clone();
+                                    }
+                                    match model_to_set {
                                         Some(value) => {
                                             let set = cx
                                                 .send_request(SetSessionConfigOptionRequest::new(
@@ -909,7 +1005,8 @@ impl super::AcpQuark {
                                                 .block_task()
                                                 .await;
                                             match set {
-                                                Ok(_) => {
+                                                Ok(resp) => {
+                                                    offered = resp.config_options;
                                                     *pump_model.lock().unwrap() = Some(value.clone());
                                                     term::info(
                                                         Source::Acp,
@@ -935,6 +1032,7 @@ impl super::AcpQuark {
                                             *pump_model.lock().unwrap() =
                                                 Some(selector.current.clone());
                                             if !want_model.trim().is_empty()
+                                                && inferred_effort.is_none()
                                                 && !selector
                                                     .available
                                                     .iter()
@@ -973,14 +1071,20 @@ impl super::AcpQuark {
                                 }
                             }
 
-                            if let Some(want_eff) = want_effort {
+                            if let Some(want_eff) = effective_effort {
                                 if let Some(selector) = effort_selector(&offered) {
                                     if let Some(value) = resolve_model(&selector, &want_eff) {
-                                        let _ = cx.send_request(SetSessionConfigOptionRequest::new(
-                                            sid.clone(),
-                                            selector.config_id,
-                                            value.as_str(),
-                                        )).block_task().await;
+                                        if let Ok(resp) = cx
+                                            .send_request(SetSessionConfigOptionRequest::new(
+                                                sid.clone(),
+                                                selector.config_id,
+                                                value.as_str(),
+                                            ))
+                                            .block_task()
+                                            .await
+                                        {
+                                            offered = resp.config_options;
+                                        }
                                         term::info(Source::Acp, &format!("effort set to {:?}", value));
                                     }
                                 }

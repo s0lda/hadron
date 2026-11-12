@@ -7,7 +7,7 @@ use hadron_lattice::Mode;
 use agent_client_protocol::schema::v1::{
     InitializeRequest, NewSessionRequest, PermissionOptionKind, RequestPermissionRequest,
     SessionConfigId, SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory,
-    SessionConfigSelectOptions, ToolKind,
+    SessionConfigSelectOptions, SetSessionConfigOptionRequest, ToolKind,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{AcpAgent, Agent, ConnectionTo};
@@ -229,6 +229,49 @@ pub fn resolve_model(selector: &ModelSelector, wanted: &str) -> Option<String> {
     Some(hit.value.clone())
 }
 
+/// Resolve `wanted` against `selector`; if no direct match exists and `wanted` ends with
+/// a baked effort suffix (`-low`, `-medium`, `-high`, `-xhigh`, `-max`), strip that suffix
+/// and match the base family against `selector.available` (e.g. `"gemini-4-hydrogen-xhigh"`
+/// on native `agy acp`, which splits base model `"gemini-4-hydrogen"` and `thought_level`
+/// `"xhigh"` into two `configOptions`).
+///
+/// Returns `(model_to_set, inferred_effort_from_suffix)`.
+pub fn resolve_model_or_split_effort(
+    selector: &ModelSelector,
+    wanted: &str,
+) -> (Option<String>, Option<String>) {
+    if let Some(direct) = resolve_model(selector, wanted) {
+        return (Some(direct), None);
+    }
+    let trimmed = wanted.trim();
+    if trimmed.is_empty() {
+        return (None, None);
+    }
+    if selector.available.iter().any(|m| {
+        m.value == selector.current
+            && (m.value.eq_ignore_ascii_case(trimmed) || m.label.eq_ignore_ascii_case(trimmed))
+    }) {
+        return (None, None);
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    for suffix in ["-xhigh", "-medium", "-high", "-low", "-max"] {
+        if let Some(base) = lower.strip_suffix(suffix) {
+            if !base.is_empty() && base != "gemini-pro-orchestrator" {
+                if let Some(hit) = selector
+                    .available
+                    .iter()
+                    .find(|m| m.value.eq_ignore_ascii_case(base))
+                {
+                    let model_change = (hit.value != selector.current).then(|| hit.value.clone());
+                    let effort = suffix.trim_start_matches('-').to_string();
+                    return (model_change, Some(effort));
+                }
+            }
+        }
+    }
+    (None, None)
+}
+
 /// Boot an ACP agent, complete the `initialize` handshake, read back who answered,
 /// and shut it down. **Blocking** — call it off the UI thread.
 ///
@@ -240,7 +283,7 @@ pub fn resolve_model(selector: &ModelSelector, wanted: &str) -> Option<String> {
 ///
 /// Returns the agent's own name (ACP's `agent_info`), or the reason it failed.
 pub fn probe(target: &AcpTarget) -> anyhow::Result<String> {
-    let (name, opts) = probe_session(target)?;
+    let (name, opts) = probe_session(target, None, None)?;
     // The handshake result the human is shown: the agent's own current model when it
     // offers a picker, else the agent's name — proof that *something* answered.
     Ok(match model_selector(&opts) {
@@ -269,7 +312,20 @@ pub fn selectors_from(options: &[SessionConfigOption]) -> AcpSelectors {
 /// Same single boot as [`probe_selector`], but keeps every selector the agent
 /// advertised instead of dropping all but the model.
 pub fn probe_selectors(target: &AcpTarget) -> anyhow::Result<AcpSelectors> {
-    let (_name, opts) = probe_session(target)?;
+    let (_name, opts) = probe_session(target, None, None)?;
+    Ok(selectors_from(&opts))
+}
+
+/// Probe every config selector offered by `target` in `work_dir`, switching the session
+/// to `want_model` when provided so model-dependent selectors (such as `agy acp` adding
+/// `"xhigh"` to `thought_level` when `"gemini-4-hydrogen"` is active) reflect the seat's
+/// configured model.
+pub fn probe_selectors_for_seat(
+    target: &AcpTarget,
+    work_dir: Option<&std::path::Path>,
+    want_model: Option<&str>,
+) -> anyhow::Result<AcpSelectors> {
+    let (_name, opts) = probe_session(target, work_dir, want_model)?;
     Ok(selectors_from(&opts))
 }
 
@@ -281,13 +337,17 @@ pub fn probe_selector(target: &AcpTarget) -> anyhow::Result<Option<ModelSelector
     Ok(probe_selectors(target)?.model)
 }
 
-use super::session::acp_stdio_descriptor;
+use super::session::{acp_stdio_descriptor, acp_stdio_descriptor_sandboxed, descriptor_runs_via_wsl};
 
 /// Boot an ACP agent, complete `initialize` + `session/new`, read back the agent's
 /// name and its advertised `config_options`, and shut it down. The shared core of
 /// [`probe`] and [`probe_selector`] — one boot path, so a change to the handshake
 /// (or the 120s guard) can never drift between the two callers. **Blocking.**
-fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<SessionConfigOption>)> {
+fn probe_session(
+    target: &AcpTarget,
+    work_dir: Option<&std::path::Path>,
+    want_model: Option<&str>,
+) -> anyhow::Result<(Option<String>, Vec<SessionConfigOption>)> {
     type Probed = (Option<String>, Vec<SessionConfigOption>);
     let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Probed>>();
 
@@ -305,6 +365,8 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
                 .map_err(|e| anyhow::anyhow!("failed to provision agy bridge venv: {e:#}"))?;
         }
     }
+    let work_dir_buf = work_dir.map(|p| p.to_path_buf());
+    let want_model_owned = want_model.map(|s| s.to_string());
     // Same shape as `boot`: the SDK's connection API is scoped to its closure and
     // wants its own executor, so it gets its own thread.
     std::thread::Builder::new()
@@ -312,7 +374,20 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
         .spawn(move || {
             let outcome: anyhow::Result<Probed> = futures::executor::block_on(async move {
                 let display_command = target_clone.command_line();
-                let agent_source = acp_stdio_descriptor(&target_clone, target_clone.env());
+                let agent_source = match &work_dir_buf {
+                    Some(dir) => acp_stdio_descriptor_sandboxed(
+                        &target_clone,
+                        target_clone.env(),
+                        dir,
+                        hadron_gatekeeper::SandboxMode::Off,
+                    ),
+                    None => acp_stdio_descriptor(&target_clone, target_clone.env()),
+                };
+                let probe_cwd = if descriptor_runs_via_wsl(&agent_source) {
+                    std::path::PathBuf::from("/tmp")
+                } else {
+                    std::env::temp_dir()
+                };
                 let agent = AcpAgent::from_str(&agent_source)
                     .map_err(|e| anyhow::anyhow!("bad ACP command {display_command:?}: {e}"))?;
                 let probed = agent_client_protocol::Client
@@ -324,10 +399,29 @@ fn probe_session(target: &AcpTarget) -> anyhow::Result<(Option<String>, Vec<Sess
                             .block_task()
                             .await?;
                         let sess = cx
-                            .send_request(NewSessionRequest::new(std::env::temp_dir()))
+                            .send_request(NewSessionRequest::new(probe_cwd))
                             .block_task()
                             .await?;
-                        let opts = sess.config_options.unwrap_or_default();
+                        let sid = sess.session_id;
+                        let mut opts = sess.config_options.unwrap_or_default();
+                        if let Some(wanted) = want_model_owned.as_deref() {
+                            if let Some(sel) = model_selector(&opts) {
+                                let (model_to_set, _) = resolve_model_or_split_effort(&sel, wanted);
+                                if let Some(val) = model_to_set {
+                                    if let Ok(resp) = cx
+                                        .send_request(SetSessionConfigOptionRequest::new(
+                                            sid,
+                                            sel.config_id,
+                                            val.as_str(),
+                                        ))
+                                        .block_task()
+                                        .await
+                                    {
+                                        opts = resp.config_options;
+                                    }
+                                }
+                            }
+                        }
                         Ok((init.agent_info.map(|i| i.name), opts))
                     })
                     .await

@@ -497,14 +497,15 @@ impl SeatOverride {
 
 /// Whether a model identifier already encodes a reasoning effort tier
 /// (e.g. `gemini-4-carbon-medium`, `claude-opus-5-5-high`, `gpt-oss-120b-medium`)
-/// or names a fixed-effort orchestrator model (`gemini-pro-orchestrator`),
-/// making a separate effort selector redundant and (on `agy` CLI) conflicting.
+/// or names a fixed-effort orchestrator model (`gemini-pro-orchestrator`,
+/// `gemini-pro-orchestrator-argon`), making a separate effort selector redundant
+/// and (on `agy` CLI) conflicting.
 pub fn model_encodes_effort(model: &str) -> bool {
     let m = model.trim().to_ascii_lowercase();
     if m.is_empty() {
         return false;
     }
-    if m == "gemini-pro-orchestrator" {
+    if m == "gemini-pro-orchestrator" || m.starts_with("gemini-pro-orchestrator-") {
         return true;
     }
     ["-low", "-medium", "-high", "-xhigh", "-max"]

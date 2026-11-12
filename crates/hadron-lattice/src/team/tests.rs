@@ -1553,6 +1553,7 @@ fn seat_supports_effort_per_transport_and_vendor() {
     assert!(super::model_encodes_effort("claude-opus-5-5-high"));
     assert!(super::model_encodes_effort("gpt-oss-120b-medium"));
     assert!(super::model_encodes_effort("gemini-pro-orchestrator"));
+    assert!(super::model_encodes_effort("gemini-pro-orchestrator-argon"));
     assert!(!super::model_encodes_effort("opus"));
     assert!(!super::model_encodes_effort("opus[1m]"));
     assert!(!super::model_encodes_effort("gemini-4-carbon"));

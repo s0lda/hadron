@@ -1313,6 +1313,12 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
             // Legibility comes from the resolved team if the quark is adopted, else
             // from the catalogue (available-but-off), else it is an event-only id we
             // know nothing about (a live participant with no seat).
+            let seat_shows_effort = |s: &hadron_lattice::Seat| {
+                s.supports_effort()
+                    || (s.transport == hadron_lattice::Transport::Acp
+                        && s.vendor.eq_ignore_ascii_case("antigravity")
+                        && !hadron_lattice::model_encodes_effort(&s.model))
+            };
             let (display_name, vendor, model, flavor, transport, effort, enabled, adopted) =
                 match (team.get(&qid), global.get(&qid)) {
                     (Some(s), _) => (
@@ -1321,7 +1327,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         s.model.clone(),
                         Some(s.flavor.clone()),
                         s.transport,
-                        s.supports_effort().then(|| s.effort.clone()).flatten(),
+                        seat_shows_effort(s).then(|| s.effort.clone()).flatten(),
                         s.enabled,
                         true,
                     ),
@@ -1331,7 +1337,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
                         g.model.clone(),
                         Some(g.flavor.clone()),
                         g.transport,
-                        g.supports_effort().then(|| g.effort.clone()).flatten(),
+                        seat_shows_effort(g).then(|| g.effort.clone()).flatten(),
                         false, // not adopted here → inert, greyed like a disabled seat
                         false,
                     ),
