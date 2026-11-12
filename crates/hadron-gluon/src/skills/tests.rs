@@ -383,6 +383,7 @@ fn a_quark_handed_its_own_plan_is_told_to_hand_off() {
     let handoff = Handoff {
         peers: vec![QuarkId::new("agy")],
         plan_author: Some(QuarkId::new("opus")),
+        ..Default::default()
     };
 
     let out = render(&m, &me, &handoff, true);
@@ -399,11 +400,38 @@ fn a_plan_written_by_a_peer_is_not_a_conflict() {
     let handoff = Handoff {
         peers: vec![QuarkId::new("agy")],
         plan_author: Some(QuarkId::new("agy")),
+        ..Default::default()
     };
 
     let out = render(&m, &me, &handoff, true);
     assert!(!out.contains("you wrote this plan"));
     assert!(out.contains("independent pair of eyes"));
+}
+
+/// Hub-and-spoke: a worker under a live orchestrator is told to report to
+/// `@orchestrator` and RECOMMEND a peer — not to address the peer directly, which
+/// the prompt's worker addressing rules forbid.
+#[test]
+fn a_worker_under_an_orchestrator_recommends_a_peer_via_the_orchestrator() {
+    let me = QuarkId::new("opus");
+    let m = select("execute the plan", &builtins()).unwrap();
+    let handoff = Handoff {
+        peers: vec![QuarkId::new("agy")],
+        plan_author: Some(QuarkId::new("opus")),
+        report_via_orchestrator: true,
+    };
+
+    let out = render(&m, &me, &handoff, true);
+    assert!(out.contains("report to `@orchestrator`"), "{out}");
+    assert!(out.contains("`@agy`"), "still names the eligible peer:\n{out}");
+    assert!(out.contains("Do not address a peer worker directly"));
+    assert!(!out.contains("a line starting with one of these names will actually reach them"));
+    assert!(out.contains("Ask `@orchestrator` to hand the verification"));
+
+    // Without an orchestrator the direct handoff wording is unchanged.
+    let direct = render(&m, &me, &Handoff { report_via_orchestrator: false, ..handoff }, true);
+    assert!(direct.contains("a line starting with one of these names will actually reach them"));
+    assert!(!direct.contains("report to `@orchestrator`"));
 }
 
 /// Live state, not a hypothetical: opus is disabled and acp-agy cannot boot, so a
@@ -433,6 +461,7 @@ fn show_me_what_a_quark_actually_receives() {
         &Handoff {
             peers: vec![QuarkId::new("agy"), QuarkId::new("acp-claude")],
             plan_author: Some(QuarkId::new("opus")),
+            ..Default::default()
         },
         true,
     );

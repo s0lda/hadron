@@ -535,6 +535,11 @@ impl super::Engine {
                 .and_then(|path| fs::read_to_string(path).ok())
                 .and_then(|md| skills::plan_author(&md));
 
+            // Hub-and-spoke: a worker with a live orchestrator reports to it and only
+            // *recommends* a peer, matching the prompt's worker addressing rules.
+            let report_via_orchestrator = !self.is_orchestrator(target)
+                && self.orchestrator_id().is_some_and(|o| self.is_enabled(&o));
+
             // Every quark — resident (ACP) or one-shot (CLI) — gets the SAME shape now:
             // the always-on index above (the full menu, so it can still invoke a skill
             // this task didn't start in) plus the active skill's full body here. A
@@ -542,7 +547,12 @@ impl super::Engine {
             // cache-stable prefix every turn (`skills::corpus()`, ~70-80k tokens); that
             // is gone — composition still works off the index, and the one skill this
             // turn actually needs arrives in full, same as it always has for CLI.
-            active_skill = Some(skills::render(&m, target, &skills::Handoff { peers, plan_author }, true));
+            active_skill = Some(skills::render(
+                &m,
+                target,
+                &skills::Handoff { peers, plan_author, report_via_orchestrator },
+                true,
+            ));
         }
 
         // Resolve the quark's effective mode from the field before the turn:

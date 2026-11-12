@@ -47,6 +47,11 @@ pub struct Projection {
     /// Whether the index was cut to fit the budget. A lesson silently dropped for size
     /// is the failure mode we keep killing everywhere else: the quark cannot tell
     /// "never learned" from "not shown".
+    ///
+    /// Set by the prompt fitter (`hadron_gluon::adapter::cli::fit_projection_to_budget`)
+    /// when it re-ranks or sheds the index (the index reader currently always reports
+    /// `false`). `true` with an empty `nucleus_index` means the whole index was
+    /// omitted for budget — rendered as such, never as "nothing recorded yet".
     #[serde(default)]
     pub nucleus_index_truncated: bool,
     /// The resolved budget (bytes) `nucleus_index` may occupy before the prompt

@@ -267,7 +267,8 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Arg { flag: Some("--print".to_string()) },
             model_flag: Some("--model".to_string()),
-            effort_flag: None,
+            // `agy --help`: "--effort  Reasoning effort … (low|medium|high|xhigh|max)".
+            effort_flag: Some("--effort".to_string()),
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,

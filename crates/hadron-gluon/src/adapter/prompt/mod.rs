@@ -340,7 +340,16 @@ pub fn build_dynamic_suffix(projection: &Projection, self_id: &QuarkId) -> Strin
     if !projection.nucleus_index_path.as_os_str().is_empty() {
         p.push_str("# What the swarm has learned (nucleus index)\n");
         if projection.nucleus_index.trim().is_empty() {
-            p.push_str("_Empty — nothing has been recorded here yet._\n\n");
+            if projection.nucleus_index_truncated {
+                // Shed by the prompt fitter, not empty: claiming "nothing recorded"
+                // would tell the quark there is nothing to look up.
+                p.push_str(&format!(
+                    "_Omitted to fit the prompt budget — open `{}` on demand._\n\n",
+                    projection.nucleus_index_path.display()
+                ));
+            } else {
+                p.push_str("_Empty — nothing has been recorded here yet._\n\n");
+            }
         } else {
             let recalled = crate::engine::nucleus::rank_lessons(
                 &projection.nucleus_index,

@@ -1702,8 +1702,9 @@ fn prepare_acp_turn_prompt_strips_static_prefix_on_resumed_session_and_prunes_ov
     assert!(!resumed_prompt.contains("STATIC-INDEX-CANARY"));
     assert!(resumed_prompt.contains("Do work"));
 
-    // Verify oversized field window is compacted by SlidingContextPruner
-    turn.field_window = (0..120)
+    // Verify oversized field window is compacted by SlidingContextPruner. 300 x 1.2 KB
+    // is over the 256 KiB pipe budget ACP prompts are fitted to.
+    turn.field_window = (0..300)
         .map(|i| {
             Event::new(
                 Actor::Human,
@@ -1716,8 +1717,8 @@ fn prepare_acp_turn_prompt_strips_static_prefix_on_resumed_session_and_prunes_ov
         .collect();
     let (_, compacted_prompt) = super::session::prepare_acp_turn_prompt(turn, &id, true);
     assert!(
-        compacted_prompt.len() <= crate::adapter::cli::SAFE_ARG_BYTES,
-        "prepared ACP prompt must stay within SAFE_ARG_BYTES budget"
+        compacted_prompt.len() <= crate::adapter::cli::SAFE_PIPE_PROMPT_BYTES,
+        "prepared ACP prompt must stay within SAFE_PIPE_PROMPT_BYTES budget"
     );
     assert!(
         compacted_prompt.contains("Sliding Context Pruner: compacted"),

@@ -1110,6 +1110,14 @@ fn catalogue_carries_both_antigravity_acp_and_sdk_bridge() {
         .find(|e| e.vendor == "antigravity")
         .expect("antigravity (native ACP) is in the catalogue");
     assert!(acp_native.command.is_some());
+    // The built-in preset (the cached upstream registry may still override an
+    // unproven one in the catalogue, so pin the preset itself).
+    let preset = ACP_AGENTS.iter().find(|a| a.vendor == "antigravity").unwrap();
+    assert_eq!(
+        (preset.program, preset.args),
+        ("agy", &["acp"][..]),
+        "native ACP boots `agy acp`, not an npx wrapper"
+    );
     assert_eq!(QuarkKind::secret_env_for("agy", hadron_lattice::Transport::Acp), &["GEMINI_API_KEY"]);
     assert!(QuarkKind::secret_env_for("antigravity", hadron_lattice::Transport::Acp).is_empty());
 }

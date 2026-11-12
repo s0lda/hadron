@@ -111,6 +111,17 @@ pub const MAX_ARG_STRLEN: usize = 128 * 1024;
 /// should stay visibly tied to the limit it is hedging against.
 pub const SAFE_ARG_BYTES: usize = MAX_ARG_STRLEN / 4 * 3;
 
+/// The prompt budget for transports that do NOT ride argv — ACP sessions and
+/// `PromptChannel::Stdin` CLIs. A pipe has no OS length limit, so holding these to
+/// [`SAFE_ARG_BYTES`] (24 KiB on Windows) starved them of the nucleus index and
+/// field history for no reason. This is a context-cost ceiling, not an OS guard.
+pub const SAFE_PIPE_PROMPT_BYTES: usize = 256 * 1024;
+
+/// When a prompt is over budget, the nucleus index is re-ranked down to this many
+/// bytes before it is dropped outright — pinned and task-relevant lessons survive a
+/// tight (Windows 24 KiB) argv budget instead of vanishing all at once.
+pub const FIT_NUCLEUS_INDEX_BYTES: usize = 2048;
+
 /// Inserted where the transcript was cut, so a truncated quark knows its context is
 /// incomplete instead of confabulating over the gap.
 pub const TRUNCATION_MARKER: &str = "[transcript truncated: older field events were dropped to fit the CLI's argument limit]";
@@ -229,13 +240,12 @@ pub fn fit_projection_to_budget(
             return (p, out);
         }
     }
-    let inv_soft_cap = max_bytes / 3;
+    // Invariants are concatenated Standard Model first, repo `always.md` after, so a
+    // cut from the end on a line boundary sheds trailing repo rules before any of the
+    // Standard Model — and never leaves half a rule behind.
+    let inv_soft_cap = max_bytes / 2;
     if p.invariants.len() > inv_soft_cap && inv_soft_cap > 0 {
-        let mut cut = inv_soft_cap;
-        while cut > 0 && !p.invariants.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        p.invariants.truncate(cut);
+        truncate_at_line(&mut p.invariants, inv_soft_cap);
         out = render(&p);
         if out.len() <= max_bytes {
             return (p, out);
@@ -243,7 +253,29 @@ pub fn fit_projection_to_budget(
     }
 
     if !p.nucleus_index.is_empty() {
+        // Re-rank to a small slice first: `rank_lessons` keeps pinned lessons and the
+        // ones that match this task. It emits `budget / 8` bytes, hence the `* 8`.
+        // The configured `nucleus_index_budget_bytes` is left alone — the prompt
+        // quotes it to the quark as the index's real budget.
+        let shrunk = crate::engine::nucleus::rank_lessons(
+            &p.nucleus_index,
+            &p.nucleus_notes_dir,
+            &p.task,
+            FIT_NUCLEUS_INDEX_BYTES * 8,
+        );
+        let kept_a_lesson = shrunk.lines().any(|l| l.starts_with("- "));
+        if kept_a_lesson && shrunk.len() < p.nucleus_index.len() {
+            p.nucleus_index = shrunk;
+            p.nucleus_index_truncated = true;
+            out = render(&p);
+            if out.len() <= max_bytes {
+                return (p, out);
+            }
+        }
         p.nucleus_index.clear();
+        // Empty + truncated = "omitted for budget", which the prompt renders as such
+        // instead of claiming nothing has ever been recorded.
+        p.nucleus_index_truncated = true;
         out = render(&p);
         if out.len() <= max_bytes {
             return (p, out);
@@ -269,11 +301,7 @@ pub fn fit_projection_to_budget(
         let base_len = render(&without_inv).len();
         let inv_budget = max_bytes.saturating_sub(base_len + 40);
         if inv_budget > 0 && inv_budget < p.invariants.len() {
-            let mut cut = inv_budget;
-            while cut > 0 && !p.invariants.is_char_boundary(cut) {
-                cut -= 1;
-            }
-            p.invariants.truncate(cut);
+            truncate_at_line(&mut p.invariants, inv_budget);
             out = render(&p);
             if out.len() <= max_bytes {
                 return (p, out);
@@ -300,6 +328,47 @@ pub fn fit_projection_to_budget(
         p.task.truncate(task_cut);
     }
     (p, format!("{}\n{TRUNCATION_MARKER}", &out[..cut]))
+}
+
+/// Atomically write an argv-overflow prompt to `<hadron_dir>/prompts/<id>.md` (temp +
+/// rename, same shape as `prompt_cost::save`). `.hadron/` is untracked, so the spill
+/// never dirties a worktree's git status.
+pub fn spill_prompt(hadron_dir: &std::path::Path, id: &QuarkId, prompt: &str) -> std::io::Result<PathBuf> {
+    let dir = hadron_dir.join("prompts");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{}.md", id.as_str()));
+    let tmp = path.with_extension("md.tmp");
+    std::fs::write(&tmp, prompt)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(path)
+}
+
+/// The pointer prepended to an argv prompt whose full version was spilled to `path`.
+fn spill_header(path: &std::path::Path) -> String {
+    format!(
+        "# Read your full prompt first\n\
+         This prompt was cut to fit the OS command-line limit. The complete prompt — full \
+         transcript, nucleus index and instructions — is at `{}`. Read that file in full \
+         before acting; where it differs from what follows, the file wins.\n\n",
+        path.display()
+    )
+}
+
+/// Truncate `s` to at most `max` bytes, ending on a line boundary (the newline is
+/// kept) so no rule is left cut mid-sentence. With no newline under `max`, falls back
+/// to the nearest char boundary rather than dropping everything.
+fn truncate_at_line(s: &mut String, max: usize) {
+    if s.len() <= max {
+        return;
+    }
+    let mut cut = max;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    if let Some(nl) = s[..cut].rfind('\n') {
+        cut = nl + 1;
+    }
+    s.truncate(cut);
 }
 
 /// Returns true if an error string from a CLI subprocess execution represents
@@ -460,6 +529,46 @@ impl<R: CliRunner> CliQuark<R> {
     pub fn with_prompt_cost_dir(mut self, dir: PathBuf) -> Self {
         self.prompt_cost_dir = Some(dir);
         self
+    }
+
+    /// Fit a prompt that must ride as one argv element.
+    ///
+    /// The argv budget ([`SAFE_ARG_BYTES`], 24 KiB on Windows) sheds the transcript,
+    /// nucleus index and more. When that happens and a `.hadron` state dir exists, the
+    /// pipe-budget prompt is spilled to `<hadron-dir>/prompts/<id>.md` and the argv
+    /// prompt opens with a pointer to it — so nothing shed is out of the quark's reach,
+    /// while the argv prompt still carries everything that fits (a model that skips
+    /// the file is no worse off than before).
+    fn fit_argv_prompt(&self, turn: &Projection) -> (Projection, String) {
+        let full = fit_projection_to_budget(turn, &self.id, SAFE_PIPE_PROMPT_BYTES);
+        if full.1.len() <= SAFE_ARG_BYTES {
+            return full;
+        }
+        let hadron_dir = self
+            .prompt_cost_dir
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .or_else(|| self.live_dir.as_deref().and_then(std::path::Path::parent))
+            .filter(|d| d.is_dir());
+        let Some(hadron_dir) = hadron_dir else {
+            return fit_projection_to_budget(turn, &self.id, SAFE_ARG_BYTES);
+        };
+        match spill_prompt(hadron_dir, &self.id, &full.1) {
+            Ok(path) => {
+                let header = spill_header(&path);
+                let budget = SAFE_ARG_BYTES.saturating_sub(header.len());
+                let (fitted, prompt) = fit_projection_to_budget(turn, &self.id, budget);
+                (fitted, format!("{header}{prompt}"))
+            }
+            Err(e) => {
+                eprintln!(
+                    "CliQuark {}: could not spill the over-length prompt to {}: {e}",
+                    self.id.as_str(),
+                    hadron_dir.display()
+                );
+                fit_projection_to_budget(turn, &self.id, SAFE_ARG_BYTES)
+            }
+        }
     }
 
     pub fn with_energy_limit(mut self, limit: Option<u32>) -> Self {
@@ -853,15 +962,16 @@ impl<R: CliRunner> Quark for CliQuark<R> {
             // The argv guard only applies when the spec says the prompt rides as one
             // argv element with no stdin fallback (`execve` on Linux rejects an over-long one
             // with E2BIG; `CreateProcessW` on Windows returns error 206 before the CLI ever starts).
-            // Otherwise fit the prompt through `SlidingContextPruner` first when oversized.
+            // Otherwise the prompt rides a pipe: fit it through `SlidingContextPruner` to the
+            // pipe budget, which has no OS limit behind it.
             let (fitted_turn, prompt) =
                 if self.spec.argv_guard || matches!(self.spec.prompt, PromptChannel::Arg { .. }) {
-                    fit_projection_to_budget(&prepared_turn, &self.id, SAFE_ARG_BYTES)
+                    self.fit_argv_prompt(&prepared_turn)
                 } else {
                     fit_projection_with_sliding_pruner(
                         &prepared_turn,
                         &self.id,
-                        SAFE_ARG_BYTES,
+                        SAFE_PIPE_PROMPT_BYTES,
                         &crate::sliding_pruner::SlidingPrunerConfig::default(),
                     )
                 };
@@ -1653,7 +1763,8 @@ mod tests {
         let spec = CliSpec::generic("cat".to_string(), vec![]);
         let mut q = CliQuark::new(QuarkId::new("cat-quark"), Flavor::Worker, "", spec, runner);
 
-        let p = huge_projection(120, 1200);
+        // 300 x 1.2 KB is over the 256 KiB `SAFE_PIPE_PROMPT_BYTES` stdin budget.
+        let p = huge_projection(300, 1200);
         q.excite(p).await.unwrap();
 
         let recorded = q.runner.recorded.lock().unwrap();
@@ -1689,6 +1800,20 @@ mod tests {
         .with_effort(Some("high".to_string()));
         q_agy.excite(projection("do task")).await.unwrap();
 
+        // Negative control: a spec with no effort flag must never pass one, even
+        // when the seat sets an effort.
+        let runner_none = FakeRunner::with_stdout(vec!["ok"]);
+        let none_spec = CliSpec { effort_flag: None, ..CliSpec::agy() };
+        let mut q_none = CliQuark::new(
+            QuarkId::new("cli-none"),
+            Flavor::Worker,
+            "some-model",
+            none_spec,
+            runner_none,
+        )
+        .with_effort(Some("high".to_string()));
+        q_none.excite(projection("do task")).await.unwrap();
+
         let recorded_claude = q_claude.runner.recorded.lock().unwrap();
         assert!(
             recorded_claude[0]
@@ -1700,9 +1825,15 @@ mod tests {
         );
         let recorded_agy = q_agy.runner.recorded.lock().unwrap();
         assert!(
-            !recorded_agy[0].args.iter().any(|a| a == "--effort"),
-            "agy CLI spec with effort_flag: None must never pass --effort, got: {:?}",
+            recorded_agy[0].args.windows(2).any(|w| w[0] == "--effort" && w[1] == "high"),
+            "agy preset declares `--effort` (agy --help) and must pass it, got: {:?}",
             recorded_agy[0].args
+        );
+        let recorded_none = q_none.runner.recorded.lock().unwrap();
+        assert!(
+            !recorded_none[0].args.iter().any(|a| a == "--effort"),
+            "a CLI spec with effort_flag: None must never pass --effort, got: {:?}",
+            recorded_none[0].args
         );
     }
 
@@ -1826,6 +1957,164 @@ mod tests {
             fitted.contains("RECENT-MSG-2"),
             "most recent field message must survive Windows 24 KiB budget"
         );
+    }
+
+    /// An index of `n` task-relevant lessons plus a pinned section of `pinned` lines.
+    fn big_index(pinned: usize, n: usize) -> String {
+        let mut s = String::from("## How we get things wrong\n\n");
+        for i in 0..pinned {
+            s.push_str(&format!("- [pinned-canary-{i}](notes/pinned-canary-{i}.md) — must survive\n"));
+        }
+        s.push_str("\n## Other\n\n");
+        for i in 0..n {
+            s.push_str(&format!("- [lesson-{i}](notes/lesson-{i}.md) — fix bug detail number {i}\n"));
+        }
+        s
+    }
+
+    /// A projection whose only big shed-able section is the nucleus index, plus the
+    /// rendered length with the index omitted — so a test can place `max_bytes`
+    /// exactly between "shrunk index fits" and "nothing but the notice fits".
+    fn tight_index_projection(pinned: usize) -> (Projection, usize) {
+        let mut p = projection_mode("fix bug", Mode::Bypass);
+        p.invariants = "# The Standard Model\n".to_string() + &"- a rule line\n".repeat(400);
+        p.active_skill = Some(format!("# Skill for this turn: SKILL-CANARY\n{}", "step\n".repeat(600)));
+        p.nucleus_index = big_index(pinned, 400);
+        p.nucleus_index_path = PathBuf::from("/repo/.hadron/nucleus/index.md");
+        p.nucleus_notes_dir = PathBuf::from("/nonexistent/notes");
+        let mut omitted = p.clone();
+        omitted.nucleus_index.clear();
+        omitted.nucleus_index_truncated = true;
+        omitted.field_window.insert(
+            0,
+            Event::new(Actor::Gluon, None, Kind::Message { body: TRUNCATION_MARKER.to_string() }),
+        );
+        let base = crate::adapter::prompt::build(&omitted, &QuarkId::new("agy"));
+        (p, base.len())
+    }
+
+    /// The regression: a 24 KiB Windows argv budget used to `clear()` the index and
+    /// render "_Empty — nothing has been recorded here yet._". It must re-rank to a
+    /// small slice that keeps the pinned lessons first.
+    #[test]
+    fn a_tight_budget_re_ranks_the_index_instead_of_dropping_it() {
+        let (p, base) = tight_index_projection(1);
+        let max = base + 3000;
+        assert!(crate::adapter::prompt::build(&p, &QuarkId::new("agy")).len() > max, "precondition: over budget");
+
+        let (fitted, prompt) = fit_projection_to_budget(&p, &QuarkId::new("agy"), max);
+        assert!(prompt.len() <= max);
+        assert!(prompt.contains("pinned-canary-0"), "pinned lesson must survive:\n{prompt}");
+        assert!(fitted.nucleus_index_truncated, "a re-ranked index is reported as cut");
+        let kept = prompt.matches("](notes/lesson-").count();
+        assert!(kept > 0 && kept < 40, "index shrunk to ~{FIT_NUCLEUS_INDEX_BYTES} B, kept {kept}");
+        assert!(!prompt.contains("nothing has been recorded here yet"));
+        assert!(prompt.contains("SKILL-CANARY"), "the skill outlives the index");
+    }
+
+    /// When even the shrunk index cannot fit, the prompt must say it was OMITTED —
+    /// never that nothing was ever recorded — and the active skill still survives.
+    #[test]
+    fn an_index_shed_for_budget_is_reported_as_omitted_not_empty() {
+        let (p, base) = tight_index_projection(60);
+        let max = base + 200;
+
+        let (fitted, prompt) = fit_projection_to_budget(&p, &QuarkId::new("agy"), max);
+        assert!(prompt.len() <= max);
+        assert!(fitted.nucleus_index.is_empty());
+        assert!(
+            prompt.contains("_Omitted to fit the prompt budget — open `/repo/.hadron/nucleus/index.md` on demand._"),
+            "must point at the index it omitted:\n{prompt}"
+        );
+        assert!(!prompt.contains("nothing has been recorded here yet"));
+        assert!(prompt.contains("SKILL-CANARY"), "the skill is shed only after the index");
+    }
+
+    /// Invariants are trimmed on a line boundary: no rule is left cut mid-sentence.
+    #[test]
+    fn truncate_at_line_never_leaves_half_a_line() {
+        let mut s = "alpha rule\nbeta rule\ngamma rule\n".to_string();
+        truncate_at_line(&mut s, 15);
+        assert_eq!(s, "alpha rule\n");
+        let mut one = "no newline at all".to_string();
+        truncate_at_line(&mut one, 5);
+        assert_eq!(one, "no ne", "falls back to a char boundary");
+    }
+
+    /// Pipe transports (ACP, stdin CLIs) are fitted to `SAFE_PIPE_PROMPT_BYTES`, so a
+    /// realistic 37 KB index and ~17 KB of invariants arrive intact — no 24 KiB
+    /// starvation where there is no argv limit.
+    #[test]
+    fn the_pipe_budget_keeps_a_real_sized_index_and_full_invariants() {
+        let mut p = projection_mode("fix bug", Mode::Bypass);
+        p.invariants = format!("# The Standard Model\n{}INVARIANTS-TAIL\n", "- rule line here\n".repeat(1000));
+        p.nucleus_index = big_index(1, 600);
+        assert!(p.nucleus_index.len() > 37_000);
+        p.nucleus_index_path = PathBuf::from("/repo/.hadron/nucleus/index.md");
+        p.nucleus_notes_dir = PathBuf::from("/nonexistent/notes");
+
+        let (fitted, prompt) = fit_projection_with_sliding_pruner(
+            &p,
+            &QuarkId::new("acp-agy"),
+            SAFE_PIPE_PROMPT_BYTES,
+            &crate::sliding_pruner::SlidingPrunerConfig::default(),
+        );
+        assert!(prompt.contains("INVARIANTS-TAIL"), "invariants must arrive whole");
+        assert!(prompt.contains("pinned-canary-0"));
+        assert!(!fitted.nucleus_index_truncated);
+        assert!(!prompt.contains("Omitted to fit the prompt budget"));
+    }
+
+    /// An argv-bound prompt over `SAFE_ARG_BYTES` is spilled to
+    /// `<hadron-dir>/prompts/<id>.md` with the FULL transcript, and the argv prompt
+    /// stays under the OS limit while pointing at the file.
+    #[tokio::test]
+    async fn an_argv_overflow_spills_the_full_prompt_to_the_hadron_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hadron_dir = tmp.path().join(".hadron");
+        std::fs::create_dir_all(&hadron_dir).unwrap();
+
+        let mut turn = projection("do task");
+        turn.field_window = (0..80)
+            .map(|i| {
+                Event::new(Actor::Human, None, Kind::Message { body: format!("EVENT-{i:02} {}", "x".repeat(2000)) })
+            })
+            .collect();
+
+        let mut q = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Worker,
+            "",
+            CliSpec::agy(),
+            FakeRunner::with_stdout(vec!["ok"]),
+        )
+        .with_prompt_cost_dir(hadron_dir.join("prompt-cost"));
+        q.excite(turn.clone()).await.unwrap();
+
+        let spill = hadron_dir.join("prompts").join("cli-agy.md");
+        let full = std::fs::read_to_string(&spill).expect("prompt spilled to .hadron/prompts/<id>.md");
+        assert!(full.contains("EVENT-00"), "the spill carries the oldest event");
+        let recorded = q.runner.recorded.lock().unwrap();
+        let argv_prompt = recorded[0].args.iter().max_by_key(|a| a.len()).unwrap();
+        assert!(argv_prompt.len() <= SAFE_ARG_BYTES);
+        assert!(argv_prompt.starts_with("# Read your full prompt first"));
+        assert!(argv_prompt.contains(&spill.display().to_string()));
+        assert!(!argv_prompt.contains("EVENT-00"), "argv prompt really was cut");
+        drop(recorded);
+
+        // No `.hadron` dir → no spill, plain argv fit.
+        let mut bare = CliQuark::new(
+            QuarkId::new("cli-agy"),
+            Flavor::Worker,
+            "",
+            CliSpec::agy(),
+            FakeRunner::with_stdout(vec!["ok"]),
+        );
+        bare.excite(turn).await.unwrap();
+        let recorded = bare.runner.recorded.lock().unwrap();
+        let argv_prompt = recorded[0].args.iter().max_by_key(|a| a.len()).unwrap();
+        assert!(argv_prompt.len() <= SAFE_ARG_BYTES);
+        assert!(!argv_prompt.contains("Read your full prompt first"));
     }
 
     #[tokio::test]

@@ -110,8 +110,9 @@ pub(super) const ACP_AGENTS: &[AcpAgentSpec] = &[
     AcpAgentSpec {
         vendor: "antigravity",
         name: "Antigravity (ACP)",
-        program: "npx",
-        args: &["-y", "antigravity-acp@latest"],
+        // Native: `agy acp` — "Start the Agent Client Protocol (ACP) stdio server".
+        program: "agy",
+        args: &["acp"],
         proven: false,
     },
     // ── Best-effort presets from docs/research/acp-providers.md (all unproven) ──

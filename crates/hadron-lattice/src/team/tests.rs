@@ -1131,6 +1131,7 @@ mod cli_spec_tests {
         assert_eq!(spec.program, "agy");
         assert_eq!(spec.prompt, PromptChannel::Arg { flag: Some("--print".into()) });
         assert_eq!(spec.model_flag, Some("--model".into()));
+        assert_eq!(spec.effort_flag, Some("--effort".into()));
         assert_eq!(spec.resume, ResumeMode::Continue { flag: "--continue".into() });
         assert_eq!(
             spec.timeout,
@@ -1474,8 +1475,8 @@ fn seat_supports_effort_per_transport_and_vendor() {
     let mut cli_agy = seat("cli-agy", "agy", "gemini-4-argon-medium", Flavor::Orchestrator);
     cli_agy.transport = Transport::Cli;
     assert!(
-        !cli_agy.supports_effort(),
-        "cli-agy encodes effort in the model string and has effort_flag: None"
+        cli_agy.supports_effort(),
+        "cli-agy preset declares effort_flag: Some(\"--effort\") (agy --help)"
     );
 
     let mut cli_claude = seat("cli-claude", "claude", "opus", Flavor::Worker);

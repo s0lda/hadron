@@ -85,6 +85,10 @@ pub struct Handoff {
     /// The `author:` recorded inside the plan file this task names, read off disk.
     /// `Some` only when the task actually points at a plan that exists.
     pub plan_author: Option<QuarkId>,
+    /// Hub-and-spoke: this quark is a worker and an enabled orchestrator exists, so
+    /// it reports to `@orchestrator` and *recommends* a peer rather than addressing
+    /// one — the prompt's addressing rules forbid worker-to-worker dispatch.
+    pub report_via_orchestrator: bool,
 }
 
 /// The path of a plan file named in the task, if any — the hook that lets the engine
@@ -230,15 +234,29 @@ pub fn render(m: &Match, self_id: &QuarkId, handoff: &Handoff, include_body: boo
             .map(|p| format!("`@{}`", p.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
-        out.push_str(&format!(
-            "These quarks can take a turn right now: {named}. They are enabled and not \
-             depleted — the engine checked at dispatch, so a line starting with one of \
-             these names will actually reach them.\n\n\
-             Hand the next step to one of them **by name**, and say what you want checked. \
-             Do not carry the whole cycle yourself: the failure this swarm keeps repeating \
-             is one quark writing, executing, and grading its own work, and reporting it \
-             green.\n"
-        ));
+        if handoff.report_via_orchestrator {
+            out.push_str(&format!(
+                "These quarks can take a turn right now: {named}. They are enabled and not \
+                 depleted — the engine checked at dispatch.\n\n\
+                 You are a worker in a hub-and-spoke swarm: **report to `@orchestrator`**, \
+                 starting the line with `@orchestrator`, and recommend one of these peers \
+                 **by name** for the next step, saying what you want checked — the \
+                 orchestrator dispatches them. Do not address a peer worker directly. Do not \
+                 carry the whole cycle yourself: the failure this swarm keeps repeating is \
+                 one quark writing, executing, and grading its own work, and reporting it \
+                 green.\n"
+            ));
+        } else {
+            out.push_str(&format!(
+                "These quarks can take a turn right now: {named}. They are enabled and not \
+                 depleted — the engine checked at dispatch, so a line starting with one of \
+                 these names will actually reach them.\n\n\
+                 Hand the next step to one of them **by name**, and say what you want checked. \
+                 Do not carry the whole cycle yourself: the failure this swarm keeps repeating \
+                 is one quark writing, executing, and grading its own work, and reporting it \
+                 green.\n"
+            ));
+        }
     }
 
     // The one thing here the engine can *prove*: who wrote the plan.
@@ -258,6 +276,11 @@ pub fn render(m: &Match, self_id: &QuarkId, handoff: &Handoff, include_body: boo
                     "No peer is available to take it, so proceed — but report explicitly \
                      that this work was written and verified by the same quark, and is \
                      therefore unreviewed.\n",
+                );
+            } else if handoff.report_via_orchestrator {
+                out.push_str(
+                    "Ask `@orchestrator` to hand the verification to one of the peers named \
+                     above, by name, and say what they should check.\n",
                 );
             } else {
                 out.push_str(

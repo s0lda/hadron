@@ -530,6 +530,20 @@ fn a_quark_is_shown_the_nucleus_index_and_told_where_to_write_it() {
     assert!(!carried.contains("nothing has been recorded here yet"));
 }
 
+/// An index the prompt fitter shed for budget (empty + truncated) is reported as
+/// omitted, with the path to open — not as "nothing recorded", which tells the quark
+/// there is nothing to look up.
+#[test]
+fn an_index_omitted_for_budget_is_not_reported_as_empty() {
+    let mut proj = projection("x");
+    proj.nucleus_index_path = std::path::PathBuf::from("/repo/.hadron/nucleus/index.md");
+    proj.nucleus_index_truncated = true;
+
+    let out = build(&proj, &QuarkId::new("agy"));
+    assert!(out.contains("_Omitted to fit the prompt budget — open `/repo/.hadron/nucleus/index.md` on demand._"));
+    assert!(!out.contains("nothing has been recorded here yet"));
+}
+
 
 /// No nucleus index path (a mock adapter, an old snapshot) → no section, rather
 /// than a section telling the quark to write to nowhere.

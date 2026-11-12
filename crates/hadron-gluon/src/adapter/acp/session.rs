@@ -189,7 +189,7 @@ pub(super) fn prepare_acp_turn_prompt(
     let prompt = crate::adapter::cli::fit_prompt_with_sliding_pruner(
         &effective_turn,
         self_id,
-        crate::adapter::cli::SAFE_ARG_BYTES,
+        crate::adapter::cli::SAFE_PIPE_PROMPT_BYTES,
         &crate::sliding_pruner::SlidingPrunerConfig::default(),
     );
     (effective_turn, prompt)
