@@ -709,6 +709,9 @@ struct Chamber {
     pub(super) last_gluon_pid: Option<u32>,
     pub(super) last_hadron_processes: Vec<hadron_lattice::sys::inspect::ProcessInfo>,
     pub(super) rpc_endpoint: Option<hadron_lattice::wire::RpcEndpointMetadata>,
+    /// Owns the background `daemon/subscribe` TCP reader thread for the chamber's lifetime;
+    /// dropping `Chamber` signals stop and joins the thread cleanly.
+    _rpc_subscription: Option<crate::rpc_client::RpcSubscriptionHandle>,
     /// Whether the "gluon stopped" banner is currently shown. Set on the
     /// running→stopped edge, cleared on stopped→running or manual dismiss.
     /// Whether `.hadron/nucleus/index.md` exceeds the 32 KiB prompt limit
@@ -1448,13 +1451,34 @@ impl Chamber {
         // Live tail: re-read the field on an interval so quark turns appended by
         // the gluon (a separate process) appear without interaction. Dumb full
         // re-read — the field is small and this matches the engine's own posture.
+        // While the daemon's `daemon/subscribe` stream is up, a push wakes the loop
+        // early for a light poll (field, live, gates — no workspace/process scan);
+        // the timer keeps running underneath as the fallback and the heavy-scan cadence.
         // The loop ends when the entity is dropped (`update` returns `Err`).
+        let rpc_subscription = (workspace_mode != WorkspaceMode::Selector)
+            .then(|| crate::rpc_client::RpcSubscriptionHandle::spawn(path.clone()));
+        let push_signal = rpc_subscription.as_ref().map(|s| s.signal());
         let mut last_health_scan: Option<std::time::Instant> = None;
         let mut tick_count: u64 = 0;
+        let mut last_poll = std::time::Instant::now();
+        let mut timer_due = last_poll + reload::FIELD_POLL_INTERVAL;
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(400))
-                .await;
+            let trigger = reload::wait_for_field_poll(
+                cx.background_executor(),
+                push_signal.as_ref(),
+                timer_due,
+                last_poll,
+            )
+            .await;
+            last_poll = std::time::Instant::now();
+            let push_tick = trigger == reload::PollTrigger::Push;
+            if !push_tick {
+                timer_due = last_poll + reload::FIELD_POLL_INTERVAL;
+                // This poll already covers any push that landed while we slept.
+                if let Some(signal) = &push_signal {
+                    signal.take_dirty();
+                }
+            }
 
             let state = match this.update(cx, |chamber, _| {
                 if chamber.workspace_mode == WorkspaceMode::Selector {
@@ -1514,12 +1538,15 @@ impl Chamber {
             };
 
             let is_wsl_path = crate::wsl::is_wsl_unc_path(&state.0);
-            let do_workspace_scan = !is_wsl_path
-                || state.9
-                || tick_count.is_multiple_of(5)
-                || matches!(state.6, RightRailTab::Git | RightRailTab::Mission);
-            let scan_processes = state.13 || tick_count.is_multiple_of(5);
-            tick_count = tick_count.wrapping_add(1);
+            let do_workspace_scan = !push_tick
+                && (!is_wsl_path
+                    || state.9
+                    || tick_count.is_multiple_of(5)
+                    || matches!(state.6, RightRailTab::Git | RightRailTab::Mission));
+            let scan_processes = !push_tick && (state.13 || tick_count.is_multiple_of(5));
+            if !push_tick {
+                tick_count = tick_count.wrapping_add(1);
+            }
             if do_workspace_scan && state.7 {
                 last_health_scan = Some(std::time::Instant::now());
             }
@@ -1995,6 +2022,7 @@ impl Chamber {
             last_gluon_pid: None,
             last_hadron_processes: Vec::new(),
             rpc_endpoint,
+            _rpc_subscription: rpc_subscription,
             nucleus_over_budget: if workspace_mode == WorkspaceMode::Selector || is_wsl {
                 false
             } else {

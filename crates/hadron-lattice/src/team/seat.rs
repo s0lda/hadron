@@ -261,8 +261,8 @@ impl Seat {
     /// Whether this seat natively supports a separate reasoning effort selector.
     ///
     /// - `Transport::Cli`: supported only when the seat's [`CliSpec`] (explicit or
-    ///   vendor preset) declares `effort_flag: Some(_)` (e.g. `claude` CLI's `--effort`;
-    ///   `agy` CLI encodes effort in the model identifier and has `effort_flag: None`).
+    ///   vendor preset) declares `effort_flag: Some(_)` (e.g. `claude` and `agy` CLIs'
+    ///   `--effort`; `gemini` CLI has `effort_flag: None`).
     /// - `Transport::Acp`: supported before probe completion only for ACP vendors known
     ///   to advertise `ThoughtLevel` config options (`claude`, `codex`, `anthropic`,
     ///   `openai`), never for `agy`/`antigravity`/`gemini` where effort is part of the

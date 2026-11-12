@@ -84,34 +84,59 @@ pub(super) fn parse_skill_block_notice(body: &str) -> Option<SkillBlockNotice> {
 /// appearing (fails closed) — the test below pins the sentence.
 const GATE_HANDBACK_MARKER: &str = "The merge gate stopped this branch from landing.";
 
+/// Extract `<id>` from an inline `` `quark/<id>/<ulid>` `` branch ref in a gluon gate notice.
+fn extract_quark_from_branch_ref(body: &str) -> Option<String> {
+    let rest = body.split("`quark/").nth(1)?;
+    let end = rest.find(['/', '`'])?;
+    let id = &rest[..end];
+    (!id.is_empty()).then(|| id.to_string())
+}
+
 /// The quark a red merge-gate notice is about, when `m` is one: a gluon message
-/// carrying the gate's hand-back sentence (or a "merge gate failed" notice),
-/// addressed to — or opening with an `@mention` of — the quark whose branch failed.
+/// carrying the gate's hand-back sentence, a "merge gate failed" notice, or a 2-strike
+/// `"merge of \`quark/<id>/<ulid>\` blocked:"` escalation — addressed to, opening with
+/// an `@mention` of, or naming `` `quark/<id>/` `` for the quark whose branch failed.
 pub(super) fn red_gate_quark(m: &MessageRow) -> Option<String> {
     if m.from != "gluon" || !m.is_chat() {
         return None;
     }
     let lower = m.body.to_lowercase();
+    let is_escalated_block = m.body.contains("merge of `quark/") && lower.contains("blocked:");
     let is_red = m.body.contains(GATE_HANDBACK_MARKER)
         || lower.contains("failed merge gate")
-        || lower.contains("merge gate failed");
+        || lower.contains("merge gate failed")
+        || is_escalated_block;
     if !is_red {
         return None;
     }
-    m.to
-        .clone()
-        .or_else(|| crate::text::line_start_mentions(&m.body).first().map(|s| s.to_string()))
-        .filter(|q| !q.is_empty() && q != "human")
+    let direct_to = m
+        .to
+        .as_deref()
+        .filter(|q| !q.is_empty() && *q != "human" && *q != "orchestrator")
+        .map(str::to_string);
+    direct_to
+        .or_else(|| extract_quark_from_branch_ref(&m.body))
+        .or_else(|| {
+            m.to.clone().or_else(|| {
+                crate::text::line_start_mentions(&m.body)
+                    .first()
+                    .map(|s| s.to_string())
+            })
+        })
+        .filter(|q| !q.is_empty() && q != "human" && q != "orchestrator")
 }
 
 /// The gate's own explanation, without the opening sentence or the closing
-/// "you are still on your own branch" boilerplate — at most 12 non-empty lines,
-/// so a dispatched fix carries the failure and not a test log.
+/// "you are still on your own branch" / 2-strike escalation boilerplate — at most 12
+/// non-empty lines, so a dispatched fix carries the failure and not a test log.
 pub(super) fn gate_failure_excerpt(body: &str) -> String {
     body.lines()
         .skip(1)
         .map(str::trim_end)
-        .take_while(|l| !l.trim_start().starts_with("You are still on your own branch"))
+        .take_while(|l| {
+            !l.trim_start().starts_with("You are still on your own branch")
+                && !(l.contains("has already had ") && l.contains("repair turn(s)"))
+        })
         .filter(|l| !l.trim().is_empty())
         .take(12)
         .collect::<Vec<_>>()
@@ -853,7 +878,7 @@ impl super::Chamber {
                         if this.completion.take().is_some() {
                             cx.notify();
                             cx.stop_propagation();
-                        } else if !this.chat_search_query.is_empty() {
+                        } else if this.has_active_chat_find(cx) {
                             this.clear_chat_filter(window, cx);
                             cx.stop_propagation();
                         }
@@ -2012,7 +2037,21 @@ impl super::Chamber {
                     .w_full()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.log_search_input).xsmall()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .capture_action(cx.listener(|this, _: &Escape, window, cx| {
+                                if this.has_active_log_filter(cx) {
+                                    this.clear_log_filter(window, cx);
+                                } else {
+                                    window.focus(&this.input.focus_handle(cx), cx);
+                                    cx.notify();
+                                }
+                                cx.stop_propagation();
+                            }))
+                            .child(Input::new(&self.log_search_input).xsmall()),
+                    )
                     .child(
                         div()
                             .flex_none()
@@ -3238,6 +3277,25 @@ mod gate_triage_tests {
         let mut status = row("gluon", Some("acp-agy"), HANDBACK);
         status.kind_label = "status";
         assert_eq!(red_gate_quark(&status), None);
+    }
+
+    #[test]
+    fn red_gate_quark_detects_two_strike_escalated_block_and_extracts_branch_quark() {
+        let escalated = "@orchestrator merge of `quark/cli-agy-2/01M783ZE4SXEKXW68H14VERAV3` blocked:\n\
+            tests failed: 1 failed\n\n\
+            `@cli-agy-2` has already had 2 repair turn(s) on this branch and it still cannot land, \
+            so the gate is escalating rather than spending another. The branch is preserved — it needs a human.";
+        assert_eq!(
+            red_gate_quark(&row("gluon", None, escalated)).as_deref(),
+            Some("cli-agy-2")
+        );
+        assert_eq!(
+            red_gate_quark(&row("gluon", Some("orchestrator"), escalated)).as_deref(),
+            Some("cli-agy-2")
+        );
+        let excerpt = gate_failure_excerpt(escalated);
+        assert!(excerpt.contains("tests failed: 1 failed"));
+        assert!(!excerpt.contains("has already had 2 repair turn(s)"));
     }
 
     #[test]

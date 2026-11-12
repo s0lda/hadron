@@ -570,7 +570,7 @@ impl Chamber {
 
     /// Combined effort options for `qid`: live ACP-probed thought levels when probed,
     /// standard levels when the seat supports a standalone effort selector (`Seat::supports_effort`),
-    /// or an empty list when unsupported (e.g. `cli-agy`, `acp-agy`, `Transport::Http`),
+    /// or an empty list when unsupported (e.g. unprobed `acp-agy`, `cli-gemini`, `Transport::Http`),
     /// which hides the Effort selector in both Settings and the Quark Info drawer.
     pub(super) fn efforts_for_quark(&self, qid: &str) -> Vec<String> {
         let resolved = resolve_team(&self.team, &self.global);

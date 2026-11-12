@@ -153,13 +153,31 @@ impl Chamber {
         }
     }
 
+    /// Whether a chat search is active — either a non-empty query or a `/find`/`/search`
+    /// prefix sitting in the composer (such as right after `Ctrl+F` or backspacing the query).
+    pub(super) fn has_active_chat_find(&self, cx: &App) -> bool {
+        !self.chat_search_query.is_empty()
+            || crate::text::find_query(&self.input.read(cx).value()).is_some()
+    }
+
+    /// Whether the Event Log has an active text query, kind pill, or non-empty search box.
+    pub(super) fn has_active_log_filter(&self, cx: &App) -> bool {
+        !self.log_search_query.is_empty()
+            || self.log_kind_filter != crate::model::LogKindFilter::All
+            || !self.log_search_input.read(cx).value().is_empty()
+    }
+
     /// Esc / the pill's Clear: drop the chat filter, and the `/find` line with it.
     pub(super) fn clear_chat_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current = self.input.read(cx).value().to_string();
-        if crate::text::find_query(&current).is_some() {
+        let cleared_prefix = crate::text::find_query(&current).is_some();
+        if cleared_prefix {
             self.input.update(cx, |s, cx| s.set_value("", window, cx));
         }
         self.set_chat_filter("", cx);
+        if cleared_prefix {
+            cx.notify();
+        }
     }
 
     /// Re-project the field and bring `chat_list_state`/`log_list_state`/
@@ -765,6 +783,15 @@ impl Chamber {
                         cx,
                     );
                 } else {
+                    let hadron_dir = hadron_lattice::hadron_dir_of(&self.path);
+                    let spec_id = format!("bakeoff-{}", chrono::Utc::now().timestamp_millis());
+                    let task_desc = trimmed.to_string();
+                    cx.background_executor()
+                        .spawn(async move {
+                            let _ = hadron_gluon::BakeOffManager::new(&spec_id, &task_desc)
+                                .save_active(&hadron_dir);
+                        })
+                        .detach();
                     let msg = format!(
                         "@orchestrator /bakeoff /dispatching-parallel-agents Task: {trimmed}\n\nExecute speculative tournament: spawn 2-3 candidate quarks with isolated worktree branches exploring alternative implementations, benchmark via Merge Gate, evaluate WinnerReport, and fast-forward winning solution."
                     );
@@ -2926,38 +2953,54 @@ impl Chamber {
     }
 
     /// Triage card's "Inspect 3-Way Diff": open `Git → 3-Way` and select `quark`'s
-    /// newest `quark/<id>/<ulid>` branch from the already-loaded branch list. The
-    /// branch diff is computed off the UI thread (unlike `select_branch`, a click path).
+    /// newest `quark/<id>/<ulid>` branch (falling back to a background `list_branches`
+    /// scan if the Git rail has not populated `git_branches` yet). The branch diff is
+    /// computed off the UI thread (unlike `select_branch`, a click path).
     pub(super) fn inspect_gate_branch(&mut self, quark: &str, cx: &mut Context<Self>) {
         self.prefs.inspector_collapsed = false;
         self.select_git_subtab(GitSubtab::Diff3Way, cx);
         let prefix = format!("quark/{quark}/");
-        let Some(branch) = self
+        let cached_branch = self
             .git_branches
             .as_deref()
             .unwrap_or(&[])
             .iter()
             .filter(|b| b.name.starts_with(&prefix))
             .max_by(|a, b| a.name.cmp(&b.name))
-            .map(|b| b.name.clone())
-        else {
-            return;
-        };
-        if self.git_selected_branch.as_deref() == Some(branch.as_str()) {
-            return;
+            .map(|b| b.name.clone());
+        if let Some(ref branch) = cached_branch {
+            if self.git_selected_branch.as_deref() == Some(branch.as_str()) {
+                return;
+            }
         }
         let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
         cx.spawn(async move |this, cx| {
-            let name = branch.clone();
-            let diff = cx
+            let resolved = cx
                 .background_executor()
-                .spawn(async move { crate::vcs::branch_diff(&root, "main", &name) })
+                .spawn(async move {
+                    let branch = match cached_branch {
+                        Some(b) => Some(b),
+                        None => crate::vcs::list_branches(&root, "main")
+                            .into_iter()
+                            .filter(|b| b.name.starts_with(&prefix))
+                            .max_by(|a, b| a.name.cmp(&b.name))
+                            .map(|b| b.name),
+                    };
+                    let branch = branch?;
+                    let diff = crate::vcs::branch_diff(&root, "main", &branch);
+                    Some((branch, diff))
+                })
                 .await;
+            let Some((branch, diff)) = resolved else {
+                return;
+            };
             let _ = this.update(cx, |chamber, cx| {
-                chamber.git_branch_diff = diff;
-                chamber.git_branch_open_ixs.clear();
-                chamber.git_selected_branch = Some(branch);
-                cx.notify();
+                if chamber.git_selected_branch.as_deref() != Some(branch.as_str()) {
+                    chamber.git_branch_diff = diff;
+                    chamber.git_branch_open_ixs.clear();
+                    chamber.git_selected_branch = Some(branch);
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -3220,8 +3263,11 @@ impl Chamber {
         if self.terminal_focus.is_focused(window) {
             return;
         }
-        if self.chat_tab == ChatTab::Chat && !self.chat_search_query.is_empty() {
+        if self.chat_tab == ChatTab::Chat && self.has_active_chat_find(cx) {
             self.clear_chat_filter(window, cx);
+        } else if self.chat_tab == ChatTab::Log && self.has_active_log_filter(cx) {
+            self.clear_log_filter(window, cx);
+            return;
         }
         window.focus(&self.input.focus_handle(cx), cx);
         cx.notify();

@@ -309,6 +309,49 @@ pub(super) fn should_sync_polled_events(
         || polled_events.last().map(|e| e.id) != local_events.last().map(|e| e.id)
 }
 
+/// Cadence of the timer-driven `FieldPoll`: the whole live tail when no
+/// `daemon/subscribe` stream is up, and the heavy-scan cadence when one is.
+pub(super) const FIELD_POLL_INTERVAL: Duration = Duration::from_millis(400);
+/// Floor between push-woken polls, so a burst of `LiveUpdated` pushes during a turn
+/// collapses into one re-read per gap instead of back-to-back field reads.
+pub(super) const PUSH_POLL_MIN_GAP: Duration = Duration::from_millis(100);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PollTrigger {
+    Timer,
+    Push,
+}
+
+/// Wait for the next background `FieldPoll`: the timer due at `timer_due`, or — while
+/// `push` holds an acknowledged `daemon/subscribe` stream — the first daemon push,
+/// though no sooner than [`PUSH_POLL_MIN_GAP`] after `last_poll`. Disconnected (or no
+/// subscriber at all) it is exactly the timer, so the disk poll is the fallback.
+pub(super) async fn wait_for_field_poll(
+    executor: &gpui::BackgroundExecutor,
+    push: Option<&crate::rpc_client::PushSignal>,
+    timer_due: std::time::Instant,
+    last_poll: std::time::Instant,
+) -> PollTrigger {
+    let gap_end = (last_poll + PUSH_POLL_MIN_GAP).min(timer_due);
+    let now = std::time::Instant::now();
+    if now < gap_end {
+        executor.timer(gap_end - now).await;
+    }
+    let mut timer = executor.timer(timer_due.saturating_duration_since(std::time::Instant::now()));
+    let Some(push) = push else {
+        timer.await;
+        return PollTrigger::Timer;
+    };
+    std::future::poll_fn(|cx| {
+        if push.poll_dirty(cx).is_ready() {
+            return std::task::Poll::Ready(PollTrigger::Push);
+        }
+        std::future::Future::poll(std::pin::Pin::new(&mut timer), cx)
+            .map(|()| PollTrigger::Timer)
+    })
+    .await
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct FieldPoll {
     pub(super) events: Option<Vec<Event>>,
