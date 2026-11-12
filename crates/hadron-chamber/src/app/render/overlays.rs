@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.51",
+        date: Some("2026-11-12"),
+        added: &[
+            "Event Log Search & Kind Filters, Live /find Chat Filter, and Red-Gate Triage Cards (hadron-chamber): Added Event Log search (@actor, to:@target, text) with LogKindFilter pills and N / M match counter, live in-place /find (alias /search, Ctrl/Cmd+F, Esc) chat filtering without field writes, and red merge-gate triage cards (Inspect 3-Way Diff, Dispatch Fix, Retry Gate, Abandon)",
+            "Loopback daemon/subscribe Push RPC, Bake-Off Persistence, Build-Cache Binding & Minimized Gate Diagnostics (hadron-lattice, hadron-gluon, hadron-chamber): Added daemon/subscribe + RpcPushEvent push notifications waking FieldPoll within 100ms, BakeOffManager::save_active tournament persistence, BuildCacheMesh::record_worktree_binding, and TestFailureMinimizer + SynthesizedInvariant gate diagnostics",
+        ],
+        changed: &[
+            "Decoupled 256 KiB Pipe Prompt Budget, Ranked Nucleus Shedding, Argv Spillover & Native agy acp Preset (hadron-gluon, hadron-lattice): Added SAFE_PIPE_PROMPT_BYTES (256 KiB) for ACP/stdin CLIs, spilled oversized argv prompts to .hadron/prompts/<id>.md, re-ranked nucleus_index to 2 KiB before shedding, switched Antigravity ACP preset to native agy acp, and added --effort on CliSpec::agy()",
+        ],
+        fixed: &[
+            "agy --statusline Telemetry & Quota Persistence, 1M Claude 5.5 Context Gauge, and Native Windows Maximize/Restore (hadron-gluon, hadron-chamber): Wired --statusline shim and per-turn session --settings + HADRON_STATUSLINE_OUT capture/quota persistence for agy seats (stripping email/plan_tier PII), restored 1M context window sizing for agy and Claude 5.5 / Opus 4.6+ models, and routed Windows titlebar buttons through WindowControlArea::{Min, Max, Close} for native maximize/restore",
+        ],
+    },
+    Release {
         version: "0.33.50",
         date: Some("2026-11-06"),
         added: &[],

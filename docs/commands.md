@@ -138,8 +138,8 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/fork-field` | `/fork-field [id]` | Fork a new session starting from a historical event ID. | `/fork-field 01J8...` |
 | `/replay` | `/replay [N]` | Step backwards through historical field events. | `/replay 20` |
 | `/export` | `/export [id]` | Export the current session transcript as Markdown. | `/export` |
-| `/search` | `/search <query>` | Search this session's message stream for matching text. | `/search merge gate` |
-| `/clear` | `/clear` | Archive and clear the current chat history. | `/clear` |
+| `/find` (alias `/search`) | `/find <query>` | Filter chat messages live in place from the composer (or press `Ctrl+F` / `Cmd+F`; `Esc` or **Clear** resets without writing a field event). | `/find merge gate` |
+| `/clear` | `/clear [--soft \| --keep-context]` | Archive and clear the current chat history (supports `--soft` and `--keep-context`). | `/clear` |
 | `/clear-history` | `/clear-history` | Delete all archived sessions while preserving token usage ledger. | `/clear-history` |
 | `/theme` | `/theme <preset \| custom>` | Switch color theme preset (`obsidian`, `oled`, `midnight`, `tokyo`, `nord`, `catppuccin`, `gruvbox`) or custom theme ID. | `/theme nord` |
 | `/toggle-roster` | `/toggle-roster` | Toggle visibility of the left Roster sidebar. | `/toggle-roster` |
@@ -157,6 +157,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 ## 📋 Event Log Observability & Context Menu
 
 The Chamber Event Log (`ChatTab::Log`) provides dense, console-like audit records:
+- **Live Search & Kind Filters**: Filter Event Log rows in place by `@actor`, `to:@target`, or text substring alongside `LogKindFilter` pills and a live `N / M` match counter (`Esc` or **Clear** resets).
 - **Command Logging**: All slash commands and `/clear` lifecycle resets are persisted as `Kind::Command` events.
 - **Selectable Metadata**: Timestamp, author (`@quark`), target (`➜ @quark`), status/kind tags, and body can be selected via mouse drag without triggering row expansion.
 - **Context Menu Actions**:

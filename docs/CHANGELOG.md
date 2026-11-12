@@ -5,6 +5,27 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.51] - 2026-11-12
+
+### Added
+- **Event Log Search & Kind Filters, Live `/find` Chat Filter, and Red-Gate Triage Cards (`hadron-chamber`)**:
+  - Added an Event Log search bar (`@actor`, `to:@target`, substring match) with `LogKindFilter` pills, a live `N / M` match counter, and `Clear`, plus live in-place `/find` (alias `/search`, `Ctrl/Cmd+F`, `Esc` to clear) filtering `chat_message_ixs` directly from the composer without writing field events (`crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/model/mod.rs`, `crates/hadron-chamber/src/text.rs`).
+  - Rendered interactive triage cards on red merge-gate handbacks (including 2-strike escalated gate blocks) with off-thread **Inspect 3-Way Diff**, **Dispatch Fix**, **Retry Gate**, and **Abandon** actions (`crates/hadron-chamber/src/app/render/chat.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+- **Loopback `daemon/subscribe` Push RPC, Bake-Off Persistence, Build-Cache Binding & Minimized Gate Diagnostics (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added `DAEMON_SUBSCRIBE_METHOD` (`daemon/subscribe`), `DAEMON_EVENT_METHOD` (`daemon/event`), and `RpcPushEvent` in `hadron-lattice::wire::protocol`, broadcast daemon state transitions from `hadron-gluon::rpc_server`, and wired `RpcSubscriptionHandle` + `PushSignal` (`AtomicWaker`) in `hadron-chamber::rpc_client` to wake `FieldPoll` within `100ms` while retaining the `400ms` timer fallback (`crates/hadron-lattice/src/wire/protocol.rs`, `crates/hadron-gluon/src/rpc_server/server.rs`, `crates/hadron-chamber/src/rpc_client.rs`, `crates/hadron-chamber/src/app/reload.rs`).
+  - Wired `BakeOffManager::save_active` and live tournament progression across `hadron-gluon::bakeoff` and Chamber's `/bakeoff` action, `BuildCacheMesh::record_worktree_binding` across quark worktrees, and `TestFailureMinimizer` + `SynthesizedInvariant` into `extract_structured_diagnostics` (`crates/hadron-gluon/src/bakeoff.rs`, `crates/hadron-gluon/src/worktree/build_cache.rs`, `crates/hadron-gluon/src/engine/merge.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+
+### Changed
+- **Decoupled 256 KiB Pipe Prompt Budget, Ranked Nucleus Shedding, Argv Spillover & Native `agy acp` Preset (`hadron-gluon`, `hadron-lattice`)**:
+  - Added `SAFE_PIPE_PROMPT_BYTES` (`256 KiB`) for ACP and stdin-piped CLIs while keeping `SAFE_ARG_BYTES` (`24 KiB`) strictly for argv CLIs, spilled oversized argv prompts to `<hadron-dir>/prompts/<id>.md` with a pointer header, and re-ranked `nucleus_index` to `FIT_NUCLEUS_INDEX_BYTES` (`2 KiB`) with line-boundary invariant trimming and honest `"_Omitted to fit the prompt budget_"` markers before shedding (`crates/hadron-lattice/src/projection.rs`, `crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/src/adapter/prompt/mod.rs`).
+  - Updated the Antigravity ACP preset to boot native `agy acp`, added `--effort` to `CliSpec::agy()`, and instructed workers under an enabled `@orchestrator` to report back via Hub-and-Spoke (`crates/hadron-gluon/src/adapter/registry/presets.rs`, `crates/hadron-lattice/src/team/transport.rs`, `crates/hadron-gluon/src/engine/routing.rs`, `crates/hadron-gluon/src/skills/select.rs`).
+
+### Fixed
+- **`agy` `--statusline` Telemetry & Quota Persistence, 1M Claude 5.5 Context Gauge, and Native Windows Maximize/Restore (`hadron-gluon`, `hadron-chamber`)**:
+  - Wired `--statusline` (`is_statusline_invocation` + `statusline::run_shim`) at the top of `hadron_gluon::cli::run` and injected session-only `--settings` + WSL-translated `HADRON_STATUSLINE_OUT` on `agy` `CliQuark` turns to ingest fresh context-window sizes, active model IDs, and 5h/weekly quota buckets (`hadron_lattice::quota::save`) while stripping `email` and `plan_tier` PII (`crates/hadron-gluon/src/cli.rs`, `crates/hadron-gluon/src/statusline.rs`, `crates/hadron-gluon/src/adapter/cli.rs`).
+  - Updated `default_cli_context_window_size` in `hadron-gluon` and `normalize_usage_context` / `is_1m_context_model` in `hadron-chamber` so `agy` seats (`1,048,576`) and 1M Claude models (`claude-opus-5*`, `claude-sonnet-5*`, `claude-opus-4-6`/`4-7`/`4-8`) never clamp `>200k` context occupancy to `200k / 200k (100%)` (`crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-chamber/src/model/mod.rs`).
+  - Routed custom titlebar min/max/close buttons through `WindowControlArea::{Min, Max, Close}` on Windows so `gpui_windows` handles native `HTMAXBUTTON` maximize/restore toggling and Win11 Snap Layouts instead of one-way `SW_MAXIMIZE` (`crates/hadron-chamber/src/app/widgets.rs`).
+
 ## [0.33.50] - 2026-11-06
 
 ### Fixed
