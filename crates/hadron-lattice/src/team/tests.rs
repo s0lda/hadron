@@ -1131,7 +1131,9 @@ mod cli_spec_tests {
         assert_eq!(spec.program, "agy");
         assert_eq!(spec.prompt, PromptChannel::Arg { flag: Some("--print".into()) });
         assert_eq!(spec.model_flag, Some("--model".into()));
-        assert_eq!(spec.effort_flag, Some("--effort".into()));
+        assert_eq!(spec.effort_flag, None);
+        assert!(!spec.supports_effort());
+        assert!(spec.is_agy_cli());
         assert_eq!(spec.resume, ResumeMode::Continue { flag: "--continue".into() });
         assert_eq!(
             spec.timeout,
@@ -1472,11 +1474,36 @@ fn team_schema_v0_and_v1_migration_v2_roundtrip_and_forward_guard() {
 
 #[test]
 fn seat_supports_effort_per_transport_and_vendor() {
-    let mut cli_agy = seat("cli-agy", "agy", "gemini-4-argon-medium", Flavor::Orchestrator);
+    let mut cli_agy = seat("cli-agy", "agy", "gemini-4-carbon-medium", Flavor::Orchestrator);
     cli_agy.transport = Transport::Cli;
     assert!(
-        cli_agy.supports_effort(),
-        "cli-agy preset declares effort_flag: Some(\"--effort\") (agy --help)"
+        !cli_agy.supports_effort(),
+        "cli-agy encodes effort in the model string and has effort_flag: None"
+    );
+
+    let mut cli_agy_empty_model = seat("cli-agy", "agy", "", Flavor::Orchestrator);
+    cli_agy_empty_model.transport = Transport::Cli;
+    assert!(
+        !cli_agy_empty_model.supports_effort(),
+        "cli-agy never exposes a standalone effort selector even with an inherited/blank model"
+    );
+
+    let mut cli_agy_stale_spec = seat("cli-agy", "agy", "claude-opus-5-5-high", Flavor::Worker);
+    cli_agy_stale_spec.transport = Transport::Cli;
+    cli_agy_stale_spec.cli = Some(CliSpec {
+        effort_flag: Some("--effort".into()),
+        ..CliSpec::agy()
+    });
+    assert!(
+        !cli_agy_stale_spec.supports_effort(),
+        "even a custom/stale CliSpec pointing at `agy` must not advertise standalone effort"
+    );
+
+    let mut cli_gemini = seat("cli-gemini", "gemini", "gemini-3.8-flash", Flavor::Worker);
+    cli_gemini.transport = Transport::Cli;
+    assert!(
+        !cli_gemini.supports_effort(),
+        "gemini CLI models select effort via model choice or offer no standalone effort flag"
     );
 
     let mut cli_claude = seat("cli-claude", "claude", "opus", Flavor::Worker);
@@ -1484,6 +1511,13 @@ fn seat_supports_effort_per_transport_and_vendor() {
     assert!(
         cli_claude.supports_effort(),
         "cli-claude preset declares effort_flag: Some(\"--effort\")"
+    );
+
+    let mut cli_claude_baked = seat("cli-claude", "claude", "claude-opus-5-5-high", Flavor::Worker);
+    cli_claude_baked.transport = Transport::Cli;
+    assert!(
+        !cli_claude_baked.supports_effort(),
+        "effort-baked model identifiers must suppress a duplicate effort selector"
     );
 
     let mut acp_agy = seat("acp-agy", "agy", "gemini-3.8-flash", Flavor::Worker);
@@ -1500,11 +1534,29 @@ fn seat_supports_effort_per_transport_and_vendor() {
         "acp-claude supports ThoughtLevel effort selector"
     );
 
+    let mut acp_claude_gemini = seat("acp-claude", "claude", "gemini-4-carbon-medium", Flavor::Worker);
+    acp_claude_gemini.transport = Transport::Acp;
+    assert!(
+        !acp_claude_gemini.supports_effort(),
+        "Gemini / effort-encoded models do not expose a standalone effort selector"
+    );
+
     let mut http_seat = seat("http-ollama", "ollama", "llama3", Flavor::Worker);
     http_seat.transport = Transport::Http;
     assert!(
         !http_seat.supports_effort(),
         "HTTP transport does not support a standalone effort selector"
     );
+
+    assert!(super::model_encodes_effort("gemini-4-carbon-medium"));
+    assert!(super::model_encodes_effort("gemini-4-hydrogen-xhigh"));
+    assert!(super::model_encodes_effort("claude-opus-5-5-high"));
+    assert!(super::model_encodes_effort("gpt-oss-120b-medium"));
+    assert!(super::model_encodes_effort("gemini-pro-orchestrator"));
+    assert!(!super::model_encodes_effort("opus"));
+    assert!(!super::model_encodes_effort("opus[1m]"));
+    assert!(!super::model_encodes_effort("gemini-4-carbon"));
+    assert!(!super::model_encodes_effort("gpt-5.4-mini"));
+    assert!(!super::model_encodes_effort(""));
 }
 

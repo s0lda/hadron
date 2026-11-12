@@ -109,7 +109,9 @@ impl Chamber {
                 let resolved = resolve_team(&self.team, &self.global);
                 if let Some(seat) = resolved.get(&QuarkId::new(key)).or_else(|| self.global.get(&QuarkId::new(key))) {
                     mdl = seat.model.clone();
-                    eff = seat.effort.clone();
+                    eff = seat_allows_persisted_effort(seat, self.acp_model_probe.as_ref())
+                        .then(|| seat.effort.clone())
+                        .flatten();
                     mod_cfg = seat.mode_config.clone();
                     deny_skills_str = seat.deny_skills.join(", ");
                     energy_limit_str = seat.energy_limit.map(|n| n.to_string()).unwrap_or_default();
@@ -340,7 +342,6 @@ impl Chamber {
             let resolved = resolve_team(&self.team, &self.global);
             let def = self.global.get(&qid).cloned();
             if let Some(base) = resolved.get(&qid).cloned().or_else(|| def.clone()) {
-                let new_effort = (!effort_val.is_empty()).then_some(effort_val);
                 let new_mode = (!mode_val.is_empty()).then_some(mode_val);
                 let new_name = (!name.is_empty()).then_some(name.clone());
                 // A blank Model means "inherit the catalogue default" (or, for a
@@ -349,6 +350,15 @@ impl Chamber {
                     def.as_ref().map(|d| d.model.clone()).unwrap_or_else(|| base.model.clone())
                 } else {
                     model_val.clone()
+                };
+                let candidate = hadron_lattice::Seat {
+                    model: new_model.clone(),
+                    ..base.clone()
+                };
+                let new_effort = if seat_allows_persisted_effort(&candidate, self.acp_model_probe.as_ref()) {
+                    (!effort_val.is_empty()).then_some(effort_val)
+                } else {
+                    None
                 };
                 // The **display name is global** — a quark is the same quark in every repo,
                 // so its name lives in the catalogue, never as a per-repo override. That is
@@ -570,8 +580,9 @@ impl Chamber {
 
     /// Combined effort options for `qid`: live ACP-probed thought levels when probed,
     /// standard levels when the seat supports a standalone effort selector (`Seat::supports_effort`),
-    /// or an empty list when unsupported (e.g. unprobed `acp-agy`, `cli-gemini`, `Transport::Http`),
-    /// which hides the Effort selector in both Settings and the Quark Info drawer.
+    /// or an empty list when unsupported (e.g. `cli-agy`, Gemini/effort-encoded models,
+    /// unprobed `acp-agy`, `Transport::Http`), which hides the Effort selector in both
+    /// Settings and the Quark Info drawer.
     pub(super) fn efforts_for_quark(&self, qid: &str) -> Vec<String> {
         let resolved = resolve_team(&self.team, &self.global);
         let qid_obj = QuarkId::new(qid);
@@ -584,35 +595,7 @@ impl Chamber {
             return Vec::new();
         };
 
-        if seat.transport == hadron_lattice::Transport::Acp {
-            if let Some(p) = &self.acp_model_probe {
-                if p.id == qid {
-                    if let AcpModelState::Ready { selectors } = &p.state {
-                        let Some(sel) = &selectors.effort else {
-                            return Vec::new();
-                        };
-                        let mut available = Vec::new();
-                        for m in &sel.available {
-                            if !m.value.is_empty() && !available.contains(&m.value) {
-                                available.push(m.value.clone());
-                            }
-                        }
-                        return available;
-                    }
-                }
-            }
-        }
-
-        if seat.supports_effort() {
-            vec![
-                "low".into(),
-                "medium".into(),
-                "high".into(),
-                "max".into(),
-            ]
-        } else {
-            Vec::new()
-        }
+        effort_options_for_seat(&seat, self.acp_model_probe.as_ref())
     }
 
     /// Directly persist a new model choice for `qid_str` from the Quark Info selector.
@@ -635,16 +618,23 @@ impl Chamber {
             } else {
                 trimmed.to_string()
             };
-            if base.model != new_model {
-                let desired = Seat {
-                    model: new_model.clone(),
-                    ..base
-                };
+            let mut desired = Seat {
+                model: new_model.clone(),
+                ..base.clone()
+            };
+            if !seat_allows_persisted_effort(&desired, self.acp_model_probe.as_ref()) {
+                desired.effort = None;
+            }
+            if base.model != desired.model || base.effort != desired.effort {
                 self.update_seat_config(&qid, &desired, cx);
             }
             if self.settings_target.key() == qid_str {
                 self.settings_model
                     .update(cx, |s, cx| s.set_value(new_model, window, cx));
+                if desired.effort.is_none() {
+                    self.settings_effort
+                        .update(cx, |s, cx| s.set_value(String::new(), window, cx));
+                }
             }
             cx.notify();
         }
@@ -679,4 +669,68 @@ impl Chamber {
             cx.notify();
         }
     }
+}
+
+/// Pure capability resolver for the standalone Effort selector options of `seat`.
+pub(super) fn effort_options_for_seat(
+    seat: &Seat,
+    acp_probe: Option<&AcpModelProbe>,
+) -> Vec<String> {
+    if hadron_lattice::model_encodes_effort(&seat.model) {
+        return Vec::new();
+    }
+
+    if seat.transport == hadron_lattice::Transport::Acp {
+        if let Some(p) = acp_probe {
+            if p.id == seat.id.as_str() {
+                if let AcpModelState::Ready { selectors } = &p.state {
+                    let Some(sel) = &selectors.effort else {
+                        return Vec::new();
+                    };
+                    let mut available = Vec::new();
+                    for m in &sel.available {
+                        if !m.value.is_empty() && !available.contains(&m.value) {
+                            available.push(m.value.clone());
+                        }
+                    }
+                    return available;
+                }
+            }
+        }
+    }
+
+    if seat.supports_effort() {
+        vec![
+            "low".into(),
+            "medium".into(),
+            "high".into(),
+            "max".into(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Whether `seat` may keep/persist a standalone `effort` field. Preserves an existing
+/// `effort` on a non-effort-encoded ACP seat while its background probe is not yet `Ready`
+/// (e.g. `acp-agy` running native `agy acp`), while stripping stale `effort` immediately
+/// for CLI/HTTP/SDK seats without effort support and for any effort-encoded model.
+pub(super) fn seat_allows_persisted_effort(
+    seat: &Seat,
+    acp_probe: Option<&AcpModelProbe>,
+) -> bool {
+    if !effort_options_for_seat(seat, acp_probe).is_empty() {
+        return true;
+    }
+    if hadron_lattice::model_encodes_effort(&seat.model) {
+        return false;
+    }
+    if seat.transport == hadron_lattice::Transport::Acp {
+        let probe_is_ready_without_effort = matches!(
+            acp_probe,
+            Some(p) if p.id == seat.id.as_str() && matches!(p.state, AcpModelState::Ready { .. })
+        );
+        return !probe_is_ready_without_effort;
+    }
+    false
 }

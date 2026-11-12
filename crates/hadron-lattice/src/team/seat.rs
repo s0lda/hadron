@@ -260,18 +260,41 @@ impl Seat {
 
     /// Whether this seat natively supports a separate reasoning effort selector.
     ///
-    /// - `Transport::Cli`: supported only when the seat's [`CliSpec`] (explicit or
-    ///   vendor preset) declares `effort_flag: Some(_)` (e.g. `claude` and `agy` CLIs'
-    ///   `--effort`; `gemini` CLI has `effort_flag: None`).
+    /// - Models that already encode effort in their identifier (`gemini-4-carbon-medium`,
+    ///   `claude-opus-5-5-high`, `gpt-oss-120b-medium`, `gemini-pro-orchestrator`) or
+    ///   target Gemini directly (`gemini*`) never expose a standalone effort selector
+    ///   without a live ACP `ThoughtLevel` probe.
+    /// - `Transport::Cli`: supported only when the seat is not `agy`/`antigravity`/`gemini`
+    ///   and its [`CliSpec`] (explicit or vendor preset) supports standalone effort
+    ///   (e.g. `claude` CLI's `--effort`; `agy`, `copilot`, and `gemini` CLIs have
+    ///   `effort_flag: None` because effort is selected with the model or unsupported).
     /// - `Transport::Acp`: supported before probe completion only for ACP vendors known
     ///   to advertise `ThoughtLevel` config options (`claude`, `codex`, `anthropic`,
     ///   `openai`), never for `agy`/`antigravity`/`gemini` where effort is part of the
     ///   model id or unsupported. Once probed, the live `selectors.effort` is authoritative.
     /// - `Transport::Http` / `Transport::Sdk`: unsupported.
     pub fn supports_effort(&self) -> bool {
+        if model_encodes_effort(&self.model) {
+            return false;
+        }
+        let vendor = self.vendor.trim().to_ascii_lowercase();
+        let is_gemini_model = self.model.trim().to_ascii_lowercase().starts_with("gemini");
+        if is_gemini_model {
+            return false;
+        }
         match self.transport {
             Transport::Cli => {
+                if matches!(vendor.as_str(), "agy" | "antigravity" | "gemini") {
+                    return false;
+                }
                 if let Some(spec) = &self.cli {
+                    let prog = std::path::Path::new(&spec.program)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&spec.program);
+                    if prog.eq_ignore_ascii_case("gemini") {
+                        return false;
+                    }
                     spec.supports_effort()
                 } else if let Some(preset) = CliSpec::preset(&self.vendor) {
                     preset.supports_effort()
@@ -280,7 +303,7 @@ impl Seat {
                 }
             }
             Transport::Acp => matches!(
-                self.vendor.as_str(),
+                vendor.as_str(),
                 "claude" | "codex" | "anthropic" | "openai"
             ),
             Transport::Http | Transport::Sdk => false,
@@ -470,6 +493,23 @@ impl SeatOverride {
             sandbox: None,
         }
     }
+}
+
+/// Whether a model identifier already encodes a reasoning effort tier
+/// (e.g. `gemini-4-carbon-medium`, `claude-opus-5-5-high`, `gpt-oss-120b-medium`)
+/// or names a fixed-effort orchestrator model (`gemini-pro-orchestrator`),
+/// making a separate effort selector redundant and (on `agy` CLI) conflicting.
+pub fn model_encodes_effort(model: &str) -> bool {
+    let m = model.trim().to_ascii_lowercase();
+    if m.is_empty() {
+        return false;
+    }
+    if m == "gemini-pro-orchestrator" {
+        return true;
+    }
+    ["-low", "-medium", "-high", "-xhigh", "-max"]
+        .iter()
+        .any(|suffix| m.ends_with(suffix))
 }
 
 #[cfg(test)]

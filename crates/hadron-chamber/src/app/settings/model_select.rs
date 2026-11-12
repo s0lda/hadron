@@ -66,6 +66,9 @@ pub fn vendor_fallback_models(vendor: &str) -> Vec<String> {
     let v = vendor.trim().to_ascii_lowercase();
     if v.contains("agy") || v.contains("gemini") || v.contains("google") {
         vec![
+            "gemini-4-carbon-medium".to_string(),
+            "gemini-4-carbon-high".to_string(),
+            "gemini-4-carbon-low".to_string(),
             "gemini-4-argon-medium".to_string(),
             "gemini-4-argon-high".to_string(),
             "gemini-4-argon-low".to_string(),

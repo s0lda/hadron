@@ -540,15 +540,7 @@ impl<R: CliRunner> CliQuark<R> {
     }
 
     fn is_agy_seat(&self) -> bool {
-        let prog_stem = std::path::Path::new(&self.spec.program)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(&self.spec.program);
-        prog_stem.eq_ignore_ascii_case("agy")
-            || matches!(
-                self.spec.stream.as_ref().map(|s| &s.format),
-                Some(hadron_lattice::StreamFormat::AgyStreamJson)
-            )
+        self.spec.is_agy_cli()
     }
 
     fn prepare_agy_statusline(
@@ -723,7 +715,10 @@ impl<R: CliRunner> CliQuark<R> {
         }
         if let (Some(effort_flag), Some(effort)) = (&self.spec.effort_flag, &self.effort) {
             let trimmed = effort.trim();
-            if !trimmed.is_empty() {
+            if !trimmed.is_empty()
+                && !self.spec.is_agy_cli()
+                && !hadron_lattice::model_encodes_effort(&self.model)
+            {
                 args.push(effort_flag.clone());
                 args.push(trimmed.to_string());
             }
@@ -1955,17 +1950,30 @@ mod tests {
         let mut q_agy = CliQuark::new(
             QuarkId::new("cli-agy"),
             Flavor::Orchestrator,
-            "gemini-4-argon-medium",
+            "gemini-4-carbon-medium",
             agy_spec,
             runner_agy,
         )
         .with_effort(Some("high".to_string()));
         q_agy.excite(projection("do task")).await.unwrap();
 
+        // Defence-in-depth control: even a custom non-agy CLI spec with `effort_flag`
+        // must omit `--effort` when the model identifier already encodes effort.
+        let runner_baked = FakeRunner::with_stdout(vec!["ok"]);
+        let mut q_baked = CliQuark::new(
+            QuarkId::new("cli-claude-baked"),
+            Flavor::Worker,
+            "claude-opus-5-5-high",
+            CliSpec::claude(),
+            runner_baked,
+        )
+        .with_effort(Some("low".to_string()));
+        q_baked.excite(projection("do task")).await.unwrap();
+
         // Negative control: a spec with no effort flag must never pass one, even
         // when the seat sets an effort.
         let runner_none = FakeRunner::with_stdout(vec!["ok"]);
-        let none_spec = CliSpec { effort_flag: None, ..CliSpec::agy() };
+        let none_spec = CliSpec { effort_flag: None, ..CliSpec::claude() };
         let mut q_none = CliQuark::new(
             QuarkId::new("cli-none"),
             Flavor::Worker,
@@ -1987,9 +1995,15 @@ mod tests {
         );
         let recorded_agy = q_agy.runner.recorded.lock().unwrap();
         assert!(
-            recorded_agy[0].args.windows(2).any(|w| w[0] == "--effort" && w[1] == "high"),
-            "agy preset declares `--effort` (agy --help) and must pass it, got: {:?}",
+            !recorded_agy[0].args.iter().any(|a| a == "--effort"),
+            "agy CLI encodes effort in the model id and must never pass --effort, got: {:?}",
             recorded_agy[0].args
+        );
+        let recorded_baked = q_baked.runner.recorded.lock().unwrap();
+        assert!(
+            !recorded_baked[0].args.iter().any(|a| a == "--effort"),
+            "effort-encoded model id must never emit a conflicting --effort flag, got: {:?}",
+            recorded_baked[0].args
         );
         let recorded_none = q_none.runner.recorded.lock().unwrap();
         assert!(

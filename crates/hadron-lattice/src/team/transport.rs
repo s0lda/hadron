@@ -248,8 +248,24 @@ impl CliSpec {
         self.temperature_flag.is_some() || self.top_p_flag.is_some() || self.max_tokens_flag.is_some()
     }
 
+    /// Whether this spec drives the `agy` CLI (`program` stem `"agy"` or
+    /// [`StreamFormat::AgyStreamJson`]). `agy` CLI encodes effort directly in
+    /// every model identifier (`gemini-4-carbon-medium`, `claude-opus-5-5-high`, …)
+    /// and exits 1 when `--effort` is passed alongside `--model`.
+    pub fn is_agy_cli(&self) -> bool {
+        let prog_stem = std::path::Path::new(&self.program)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&self.program);
+        prog_stem.eq_ignore_ascii_case("agy")
+            || matches!(
+                self.stream.as_ref().map(|s| &s.format),
+                Some(StreamFormat::AgyStreamJson)
+            )
+    }
+
     pub fn supports_effort(&self) -> bool {
-        self.effort_flag.is_some()
+        self.effort_flag.is_some() && !self.is_agy_cli()
     }
 
     /// The built-in `agy` preset. Mirrors `crates/hadron-gluon/src/adapter/agy.rs`
@@ -267,8 +283,11 @@ impl CliSpec {
             args: Vec::new(),
             prompt: PromptChannel::Arg { flag: Some("--print".to_string()) },
             model_flag: Some("--model".to_string()),
-            // `agy --help`: "--effort  Reasoning effort … (low|medium|high|xhigh|max)".
-            effort_flag: Some("--effort".to_string()),
+            // `agy models` bakes effort into every model identifier (`gemini-4-carbon-medium`,
+            // `claude-opus-5-5-high`, …), and passing `--effort` alongside `--model` makes
+            // `agy` exit 1 (`--model … conflicts with --effort=…`). Keep `None` so both the
+            // Chamber Effort selector and `--effort` argv injection stay off for `cli-agy`.
+            effort_flag: None,
             temperature_flag: None,
             top_p_flag: None,
             max_tokens_flag: None,

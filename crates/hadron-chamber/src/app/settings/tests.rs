@@ -548,3 +548,93 @@ fn test_schedule_registry_caching() {
     assert_eq!(reg2.jobs.len(), 1);
     assert_eq!(reg2.jobs[0].id, "test-job");
 }
+
+#[test]
+fn effort_options_hidden_for_cli_agy_gemini_and_effort_baked_models() {
+    use super::{effort_options_for_seat, seat_allows_persisted_effort};
+    use hadron_lattice::{Flavor, QuarkId, Seat};
+
+    let cli_agy = Seat::cli(
+        QuarkId::new("cli-agy"),
+        "agy",
+        "gemini-4-carbon-medium",
+        Flavor::Orchestrator,
+    );
+    assert!(effort_options_for_seat(&cli_agy, None).is_empty());
+    assert!(!seat_allows_persisted_effort(&cli_agy, None));
+
+    let cli_agy_claude = Seat::cli(
+        QuarkId::new("cli-agy-2"),
+        "agy",
+        "claude-opus-5-5-high",
+        Flavor::Worker,
+    );
+    assert!(effort_options_for_seat(&cli_agy_claude, None).is_empty());
+
+    let cli_gemini = Seat::cli(
+        QuarkId::new("cli-gemini"),
+        "gemini",
+        "gemini-3.8-flash",
+        Flavor::Worker,
+    );
+    assert!(effort_options_for_seat(&cli_gemini, None).is_empty());
+
+    let cli_claude = Seat::cli(
+        QuarkId::new("cli-claude"),
+        "claude",
+        "opus",
+        Flavor::Worker,
+    );
+    assert_eq!(
+        effort_options_for_seat(&cli_claude, None),
+        vec!["low", "medium", "high", "max"]
+    );
+    assert!(seat_allows_persisted_effort(&cli_claude, None));
+}
+
+#[test]
+fn acp_probe_respects_effort_selector_unless_model_encodes_effort() {
+    use super::{effort_options_for_seat, seat_allows_persisted_effort, AcpModelProbe, AcpModelState};
+    use hadron_gluon::adapter::acp::{AcpModel, AcpSelectors, ModelSelector};
+    use hadron_lattice::{Flavor, QuarkId, Seat, Transport};
+
+    let mut acp_seat = Seat::cli(
+        QuarkId::new("acp-agy"),
+        "antigravity",
+        "gemini-4-carbon",
+        Flavor::Worker,
+    );
+    acp_seat.transport = Transport::Acp;
+
+    // Before probe finishes: hidden in UI, but persisted effort preserved until probe resolves.
+    assert!(effort_options_for_seat(&acp_seat, None).is_empty());
+    assert!(seat_allows_persisted_effort(&acp_seat, None));
+
+    // Ready probe advertising ThoughtLevel on base model `gemini-4-carbon`: shown.
+    let ready_with_effort = AcpModelProbe {
+        id: "acp-agy".into(),
+        state: AcpModelState::Ready {
+            selectors: AcpSelectors {
+                effort: Some(ModelSelector {
+                    config_id: "thought_level".into(),
+                    current: "medium".into(),
+                    available: vec![
+                        AcpModel { value: "low".into(), label: "Low".into() },
+                        AcpModel { value: "medium".into(), label: "Medium".into() },
+                        AcpModel { value: "high".into(), label: "High".into() },
+                    ],
+                }),
+                ..Default::default()
+            },
+        },
+    };
+    assert_eq!(
+        effort_options_for_seat(&acp_seat, Some(&ready_with_effort)),
+        vec!["low", "medium", "high"]
+    );
+
+    // Switching to an effort-encoded model suppresses the Effort selector even with cached probe.
+    acp_seat.model = "gpt-oss-120b-medium".into();
+    assert!(effort_options_for_seat(&acp_seat, Some(&ready_with_effort)).is_empty());
+    assert!(!seat_allows_persisted_effort(&acp_seat, Some(&ready_with_effort)));
+}
