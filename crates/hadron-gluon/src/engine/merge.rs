@@ -86,6 +86,10 @@ pub struct StructuredDiagnostics {
     pub items: Vec<DiagnosticItem>,
     pub summary: String,
     pub suggested_remediation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimized_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthesized_invariant: Option<hadron_gatekeeper::SynthesizedInvariant>,
 }
 
 /// Parse unstructured compiler, test, or rebase error logs into structured actionable diagnostics.
@@ -181,12 +185,19 @@ pub fn extract_structured_diagnostics(output: &str) -> StructuredDiagnostics {
         }
 
         // 3. Merge conflict
-        if line.contains("CONFLICT") && line.contains("Merge conflict in") {
+        if (line.contains("CONFLICT") && line.contains("Merge conflict in"))
+            || line.contains("AST block conflict detected")
+        {
             primary_kind = DiagnosticErrorKind::MergeConflict;
-            let file = line.split("Merge conflict in").nth(1).unwrap_or("").trim();
+            let file = line
+                .split("Merge conflict in")
+                .nth(1)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
             items.push(DiagnosticItem {
                 kind: DiagnosticErrorKind::MergeConflict,
-                location: Some(file.to_string()),
+                location: file,
                 message: line.trim().to_string(),
                 code_snippet: None,
             });
@@ -195,26 +206,52 @@ pub fn extract_structured_diagnostics(output: &str) -> StructuredDiagnostics {
         i += 1;
     }
 
-    if output.contains("FAILED") {
-        if primary_kind == DiagnosticErrorKind::Unknown {
+    let mut minimized_summary = None;
+    if output.contains("FAILED") || output.contains("---- ") {
+        let (minimized_failures, minimized_md) = hadron_gatekeeper::TestFailureMinimizer::minimize(output);
+        if !minimized_failures.is_empty() {
+            if primary_kind == DiagnosticErrorKind::Unknown {
+                primary_kind = DiagnosticErrorKind::TestFailure;
+            }
+            minimized_summary = Some(minimized_md.trim().to_string());
+            for f in minimized_failures {
+                let f_clean_loc = f.panic_location.trim().trim_end_matches(':');
+                if !items.iter().any(|it| {
+                    it.location.as_deref().unwrap_or("").trim_end_matches(':') == f_clean_loc
+                        || it.message.contains(&f.test_name)
+                }) {
+                    items.push(DiagnosticItem {
+                        kind: DiagnosticErrorKind::TestFailure,
+                        location: Some(f_clean_loc.to_string()),
+                        message: format!("{} (assertion: {})", f.test_name, f.assertion_diff),
+                        code_snippet: None,
+                    });
+                }
+            }
+        } else if output.contains("FAILED") && primary_kind == DiagnosticErrorKind::Unknown {
             primary_kind = DiagnosticErrorKind::TestFailure;
         }
-        let (minimized_failures, _) = hadron_gatekeeper::TestFailureMinimizer::minimize(output);
-        for f in minimized_failures {
-            let f_clean_loc = f.panic_location.trim().trim_end_matches(':');
-            if !items.iter().any(|it| {
-                it.location.as_deref().unwrap_or("").trim_end_matches(':') == f_clean_loc
-                    || it.message.contains(&f.test_name)
-            }) {
-                items.push(DiagnosticItem {
-                    kind: DiagnosticErrorKind::TestFailure,
-                    location: Some(f_clean_loc.to_string()),
-                    message: format!("{} (assertion: {})", f.test_name, f.assertion_diff),
-                    code_snippet: None,
-                });
+    }
+
+    let invariant_category = match primary_kind {
+        DiagnosticErrorKind::CompilerError => {
+            if output.contains("cannot borrow")
+                || output.contains("already borrowed")
+                || output.contains("E0502")
+                || output.contains("E0499")
+                || output.contains("E0505")
+            {
+                Some(hadron_gatekeeper::InvariantCategory::BorrowChecker)
+            } else {
+                Some(hadron_gatekeeper::InvariantCategory::CompileError)
             }
         }
-    }
+        DiagnosticErrorKind::TestFailure => Some(hadron_gatekeeper::InvariantCategory::TestFailure),
+        DiagnosticErrorKind::MergeConflict => Some(hadron_gatekeeper::InvariantCategory::MergeConflict),
+        DiagnosticErrorKind::UncommittedChanges | DiagnosticErrorKind::Unknown => None,
+    };
+    let synthesized_invariant =
+        invariant_category.map(|cat| hadron_gatekeeper::synthesize_invariant(output, cat));
 
     let summary = match primary_kind {
         DiagnosticErrorKind::CompilerError => format!("Compilation failed with {} error(s)", items.len()),
@@ -247,6 +284,8 @@ pub fn extract_structured_diagnostics(output: &str) -> StructuredDiagnostics {
         items,
         summary,
         suggested_remediation,
+        minimized_summary,
+        synthesized_invariant,
     }
 }
 
@@ -257,7 +296,31 @@ pub fn format_remediation_instructions(diag: &StructuredDiagnostics) -> String {
         out.push_str("**Specific Fault Points:**\n");
         for (idx, item) in diag.items.iter().enumerate() {
             let loc_str = item.location.as_deref().unwrap_or("unknown location");
-            out.push_str(&format!("{}. [{}] `{}`\n", idx + 1, loc_str, item.message.lines().next().unwrap_or("")));
+            out.push_str(&format!(
+                "{}. [{}] `{}`\n",
+                idx + 1,
+                loc_str,
+                item.message.lines().next().unwrap_or("")
+            ));
+        }
+        out.push('\n');
+    }
+    if let Some(ref min_md) = diag.minimized_summary {
+        out.push_str(min_md);
+        out.push_str("\n\n");
+    }
+    if let Some(ref inv) = diag.synthesized_invariant {
+        out.push_str(&format!(
+            "**Invariant Prevention Hint (`{}`):** {}\n",
+            inv.slug, inv.description
+        ));
+        if let Some(how_line) = inv
+            .rule_markdown
+            .lines()
+            .find(|l| l.starts_with("**How to apply:**"))
+        {
+            out.push_str(how_line);
+            out.push('\n');
         }
         out.push('\n');
     }
@@ -565,6 +628,74 @@ impl super::Engine {
                 permit,
             } => (state, passed, tail, permit),
         };
+
+        let hadron_dir = hadron_lattice::hadron_dir_of(&self.field_path);
+        if crate::bakeoff::BakeOffManager::active_path(&hadron_dir).is_file() {
+            let duration_ms = chrono::Utc::now()
+                .signed_duration_since(heartbeat.started)
+                .num_milliseconds()
+                .max(0) as u64;
+            let diff_range = format!("{}...{}", t.base, t.wt.branch);
+            let (lines_added, lines_removed) = crate::snapshot::git_ok(
+                &t.wt.path,
+                &["diff", "--numstat", &diff_range],
+            )
+            .ok()
+            .flatten()
+            .map(|numstat| {
+                let mut added = 0usize;
+                let mut removed = 0usize;
+                for line in numstat.lines() {
+                    let mut cols = line.split_whitespace();
+                    if let (Some(a), Some(r)) = (cols.next(), cols.next()) {
+                        added += a.parse::<usize>().unwrap_or(0);
+                        removed += r.parse::<usize>().unwrap_or(0);
+                    }
+                }
+                (added, removed)
+            })
+            .unwrap_or((0, 0));
+            let tests_added = crate::snapshot::git_ok(&t.wt.path, &["diff", "-U0", &diff_range])
+                .ok()
+                .flatten()
+                .map(|patch| {
+                    patch
+                        .lines()
+                        .filter(|l| {
+                            l.starts_with('+')
+                                && !l.starts_with("+++")
+                                && (l.contains("#[test]") || l.contains("#[tokio::test]"))
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+
+            match crate::bakeoff::BakeOffManager::record_turn_if_active(
+                &hadron_dir,
+                target.as_str(),
+                &t.wt.branch,
+                lines_added,
+                lines_removed,
+                tests_added,
+                duration_ms,
+                tests_passed,
+            ) {
+                Ok(Some(summary_md)) => {
+                    self.append(
+                        Event::new(Actor::Gluon, None, Kind::Message { body: summary_md })
+                            .with_severity(hadron_lattice::Severity::Info),
+                    )
+                    .await?;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    term::warn(
+                        Source::Gluon,
+                        &format!("recording active bakeoff outcome failed (non-fatal): {e:#}"),
+                    );
+                }
+            }
+        }
 
         let events = read_events(&self.field_path)?;
         let op = hadron_gatekeeper::merge_op(&t.wt.branch, &t.base);
@@ -1160,6 +1291,57 @@ assertion `left == right` failed
         );
         assert!(diag_test.items[0].message.contains("assertion `left == right` failed"));
         assert!(diag_test.suggested_remediation.contains("cargo test"));
+        assert!(
+            diag_test
+                .minimized_summary
+                .as_deref()
+                .unwrap_or("")
+                .contains("Test Failure Minimizer (1 failed)")
+        );
+        assert_eq!(
+            diag_test.synthesized_invariant.as_ref().map(|inv| inv.slug.as_str()),
+            Some("prevent-test-assertion-regression")
+        );
+
+        let formatted = format_remediation_instructions(&diag_test);
+        assert!(formatted.contains("Test Failure Minimizer (1 failed)"));
+        assert!(formatted.contains("Invariant Prevention Hint (`prevent-test-assertion-regression`)"));
+        assert!(formatted.contains("**How to apply:**"));
+    }
+
+    #[test]
+    fn extracts_borrow_checker_and_conflict_synthesized_invariants() {
+        let borrow_err = r#"
+error[E0502]: cannot borrow `self.view` as mutable because it is also borrowed as immutable
+  --> crates/hadron-chamber/src/app/mod.rs:212:9
+   |
+212 |         self.view.messages.clear();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+"#;
+        let diag_borrow = extract_structured_diagnostics(borrow_err);
+        assert_eq!(diag_borrow.primary_kind, DiagnosticErrorKind::CompilerError);
+        let inv = diag_borrow
+            .synthesized_invariant
+            .as_ref()
+            .expect("borrow checker invariant synthesized");
+        assert_eq!(inv.slug, "prevent-concurrent-mutable-borrow");
+        assert_eq!(
+            inv.category,
+            hadron_gatekeeper::InvariantCategory::BorrowChecker
+        );
+        let formatted = format_remediation_instructions(&diag_borrow);
+        assert!(formatted.contains("prevent-concurrent-mutable-borrow"));
+
+        let conflict_err = "CONFLICT (content): Merge conflict in crates/hadron-gluon/src/daemon.rs\n";
+        let diag_conflict = extract_structured_diagnostics(conflict_err);
+        assert_eq!(diag_conflict.primary_kind, DiagnosticErrorKind::MergeConflict);
+        assert_eq!(
+            diag_conflict
+                .synthesized_invariant
+                .as_ref()
+                .map(|i| i.category),
+            Some(hadron_gatekeeper::InvariantCategory::MergeConflict)
+        );
     }
 }
 

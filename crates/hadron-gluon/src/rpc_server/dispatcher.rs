@@ -1,24 +1,32 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Notify;
 use crate::actor::bus::ActorBus;
-use hadron_lattice::wire::{JsonRpcRequest, JsonRpcResponse};
+use hadron_lattice::wire::{
+    JsonRpcRequest, JsonRpcResponse, RpcPushEvent, DAEMON_SUBSCRIBE_METHOD,
+};
+
+pub const PUSH_CHANNEL_CAPACITY: usize = 256;
 
 pub struct RpcDispatcher {
     actor_bus: ActorBus,
     field_path: Option<PathBuf>,
     wake_tx: Option<Sender<()>>,
     wake_notify: Option<Arc<Notify>>,
+    push_tx: broadcast::Sender<RpcPushEvent>,
 }
 
 impl RpcDispatcher {
     pub fn new(actor_bus: ActorBus) -> Self {
+        let (push_tx, _) = broadcast::channel(PUSH_CHANNEL_CAPACITY);
         Self {
             actor_bus,
             field_path: None,
             wake_tx: None,
             wake_notify: None,
+            push_tx,
         }
     }
 
@@ -33,8 +41,26 @@ impl RpcDispatcher {
         self
     }
 
+    /// Broadcast a push event to all active `"daemon/subscribe"` stream clients.
+    pub fn publish(&self, event: RpcPushEvent) {
+        if self.push_tx.receiver_count() > 0 {
+            let _ = self.push_tx.send(event);
+        }
+    }
+
+    /// Subscribe to server-pushed daemon events.
+    pub fn subscribe(&self) -> broadcast::Receiver<RpcPushEvent> {
+        self.push_tx.subscribe()
+    }
+
     pub async fn dispatch(&self, request: JsonRpcRequest) -> JsonRpcResponse {
         match request.method.as_str() {
+            DAEMON_SUBSCRIBE_METHOD => JsonRpcResponse::success(
+                &request.id,
+                serde_json::json!({
+                    "subscribed": true,
+                }),
+            ),
             "engine/status" => {
                 let quarks = self.actor_bus.active_quarks().await;
                 let event_count = self.field_path.as_ref()

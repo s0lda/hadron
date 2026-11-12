@@ -128,3 +128,90 @@ async fn test_rpc_server_live_tcp_loopback() {
     assert!(read_rpc_metadata(&field_dir).is_none());
 }
 
+#[tokio::test]
+async fn test_rpc_server_daemon_subscribe_push_stream_and_disconnect() {
+    let bus = ActorBus::new(16);
+    bus.register_quark("orchestrator").await.unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let field_dir = tmp.path().to_path_buf();
+    let field_path = field_dir.join("field.jsonl");
+    let (wake_tx, _wake_rx) = mpsc::channel(4);
+
+    let dispatcher = Arc::new(RpcDispatcher::new(bus).with_field_and_wake(field_path, wake_tx));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    let (addr, server_handle) =
+        RpcServer::bind_and_serve(&field_dir, Arc::clone(&dispatcher), shutdown_rx)
+            .await
+            .expect("bind_and_serve");
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    let (reader, mut writer) = stream.split();
+    let mut buf_reader = BufReader::new(reader);
+
+    // 1. Send daemon/subscribe request and verify initial success ack
+    let sub_req = JsonRpcRequest::new(DAEMON_SUBSCRIBE_METHOD, serde_json::json!({}));
+    let sub_line = format!("{}\n", serde_json::to_string(&sub_req).unwrap());
+    writer.write_all(sub_line.as_bytes()).await.unwrap();
+    writer.flush().await.unwrap();
+
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        buf_reader.read_line(&mut line),
+    )
+    .await
+    .expect("subscribe ack timeout")
+    .expect("read subscribe ack");
+    let ack: JsonRpcResponse = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(ack.id, sub_req.id);
+    assert_eq!(ack.result.unwrap()["subscribed"], true);
+
+    // 2. Publish push events on dispatcher and verify NDJSON notifications arrive immediately
+    let pushed = vec![
+        RpcPushEvent::FieldAppended {
+            next_offset: 512,
+            count: 2,
+        },
+        RpcPushEvent::LiveUpdated {
+            quark: "acp-agy".to_string(),
+        },
+        RpcPushEvent::GateUpdated {
+            quark: "cli-agy-2".to_string(),
+            passed: Some(false),
+        },
+    ];
+    for ev in &pushed {
+        dispatcher.publish(ev.clone());
+    }
+
+    for expected in &pushed {
+        line.clear();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            buf_reader.read_line(&mut line),
+        )
+        .await
+        .expect("push event timeout")
+        .expect("read push event");
+        let decoded = JsonRpcCodec::decode_push_event(&line).expect("decode daemon/event");
+        assert_eq!(&decoded, expected);
+    }
+
+    // 3. Clean client disconnect must not break subsequent publishes or server shutdown
+    drop(buf_reader);
+    drop(stream);
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    dispatcher.publish(RpcPushEvent::FieldAppended {
+        next_offset: 1024,
+        count: 1,
+    });
+
+    shutdown_tx.send(true).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), server_handle)
+        .await
+        .expect("server shutdown timeout")
+        .expect("server join");
+}
+

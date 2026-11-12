@@ -1,15 +1,20 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use hadron_lattice::wire::{
     remove_rpc_metadata, write_rpc_metadata, JsonRpcCodec, JsonRpcResponse, RpcEndpointMetadata,
+    RpcPushEvent, DAEMON_SUBSCRIBE_METHOD,
 };
 use super::dispatcher::RpcDispatcher;
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 
 pub struct RpcServer;
 
@@ -33,25 +38,31 @@ impl RpcServer {
         let handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = shutdown.changed() => {
-                        if *shutdown.borrow() {
+                    res = shutdown.changed() => {
+                        if res.is_err() || *shutdown.borrow() {
                             break;
                         }
                     }
                     accept_res = listener.accept() => {
                         match accept_res {
                             Ok((stream, _)) => {
+                                let _ = stream.set_nodelay(true);
                                 let disp = dispatcher.clone();
                                 let mut client_shutdown = shutdown.clone();
                                 tokio::spawn(async move {
                                     let (reader, mut writer) = stream.into_split();
                                     let mut buf_reader = BufReader::new(reader);
                                     let mut line = String::new();
+                                    let mut push_rx: Option<tokio::sync::broadcast::Receiver<RpcPushEvent>> = None;
+                                    let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+                                    // Consume the immediate first tick so heartbeats fire every 15s after subscribe.
+                                    heartbeat.tick().await;
+
                                     loop {
                                         line.clear();
                                         tokio::select! {
-                                            _ = client_shutdown.changed() => {
-                                                if *client_shutdown.borrow() {
+                                            res = client_shutdown.changed() => {
+                                                if res.is_err() || *client_shutdown.borrow() {
                                                     break;
                                                 }
                                             }
@@ -64,7 +75,19 @@ impl RpcServer {
                                                             continue;
                                                         }
                                                         let resp = match JsonRpcCodec::decode_request(trimmed) {
-                                                            Ok(req) => disp.dispatch(req).await,
+                                                            Ok(req) => {
+                                                                if req.method == DAEMON_SUBSCRIBE_METHOD {
+                                                                    if push_rx.is_none() {
+                                                                        push_rx = Some(disp.subscribe());
+                                                                    }
+                                                                    JsonRpcResponse::success(
+                                                                        &req.id,
+                                                                        serde_json::json!({ "subscribed": true }),
+                                                                    )
+                                                                } else {
+                                                                    disp.dispatch(req).await
+                                                                }
+                                                            }
                                                             Err(e) => JsonRpcResponse::error(
                                                                 "null",
                                                                 -32700,
@@ -76,9 +99,44 @@ impl RpcServer {
                                                             if writer.write_all(encoded.as_bytes()).await.is_err() {
                                                                 break;
                                                             }
+                                                            if writer.flush().await.is_err() {
+                                                                break;
+                                                            }
                                                         }
                                                     }
                                                     Err(_) => break,
+                                                }
+                                            }
+                                            recv_res = async {
+                                                match push_rx.as_mut() {
+                                                    Some(rx) => rx.recv().await,
+                                                    None => std::future::pending().await,
+                                                }
+                                            } => {
+                                                match recv_res {
+                                                    Ok(ev) => {
+                                                        if let Ok(encoded) = JsonRpcCodec::encode_push_event(&ev) {
+                                                            if writer.write_all(encoded.as_bytes()).await.is_err() {
+                                                                break;
+                                                            }
+                                                            if writer.flush().await.is_err() {
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(RecvError::Lagged(_)) => continue,
+                                                    Err(RecvError::Closed) => break,
+                                                }
+                                            }
+                                            _ = heartbeat.tick(), if push_rx.is_some() => {
+                                                let hb = RpcPushEvent::Heartbeat { pid: std::process::id() };
+                                                if let Ok(encoded) = JsonRpcCodec::encode_push_event(&hb) {
+                                                    if writer.write_all(encoded.as_bytes()).await.is_err() {
+                                                        break;
+                                                    }
+                                                    if writer.flush().await.is_err() {
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }

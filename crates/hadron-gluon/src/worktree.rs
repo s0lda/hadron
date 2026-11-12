@@ -478,6 +478,25 @@ pub fn shared_build_env_for_quark(cwd: &Path, quark_id: &str) -> Vec<(String, St
                 root.join("target").to_string_lossy().to_string(),
             ));
         }
+        let resolved_target = env
+            .iter()
+            .find(|(k, _)| k == "CARGO_TARGET_DIR")
+            .map(|(_, v)| PathBuf::from(v))
+            .unwrap_or_else(|| root.join("target"));
+        if root.join(".hadron").is_dir() && !quark_id.trim().is_empty() {
+            let cache_mesh = build_cache::BuildCacheMesh::for_repo(root);
+            let mesh_wt_dir = if cache_mesh.read_worktree_binding(quark_id).is_some() {
+                Ok(cache_mesh.worktrees_root().join(quark_id))
+            } else {
+                cache_mesh.record_worktree_binding(quark_id, &resolved_target)
+            };
+            if let Ok(wt_cache_dir) = mesh_wt_dir {
+                env.push((
+                    "HADRON_BUILD_CACHE_MESH".to_string(),
+                    wt_cache_dir.to_string_lossy().to_string(),
+                ));
+            }
+        }
     }
     CompilerAccelerator::detect().apply_to_env(&mut env);
 
@@ -1333,6 +1352,20 @@ pub fn reap_idle_worktrees(
             None => Reap::Removed { quark: wt.quark, path: wt.path, preserved },
         });
     }
+    if out.iter().any(|r| matches!(r, Reap::Removed { .. })) {
+        if let Ok(surviving) = list(repo_root) {
+            let active_ids: Vec<String> = surviving
+                .into_iter()
+                .map(|w| w.quark.as_str().to_string())
+                .collect();
+            if let Err(e) = build_cache::BuildCacheMesh::for_repo(repo_root).prune_stale_caches(&active_ids) {
+                hadron_lattice::term::warn(
+                    hadron_lattice::term::Source::Gluon,
+                    &format!("pruning stale build_mesh caches failed (non-fatal): {e:#}"),
+                );
+            }
+        }
+    }
     Ok(out)
 }
 
@@ -1666,6 +1699,16 @@ pub(crate) mod tests {
             env.iter().find(|(k, _)| k == "CARGO_INCREMENTAL").map(|(_, v)| v.as_str()),
             Some("0")
         );
+        let mesh_var = env
+            .iter()
+            .find(|(k, _)| k == "HADRON_BUILD_CACHE_MESH")
+            .expect("HADRON_BUILD_CACHE_MESH is set for ensured quark worktree");
+        assert!(mesh_var.1.contains("build_mesh"));
+        let mesh = build_cache::BuildCacheMesh::for_repo(repo.path());
+        let binding = mesh
+            .read_worktree_binding("opus")
+            .expect("BuildCacheMesh binding recorded on disk");
+        assert_eq!(binding["worktree_id"], "opus");
     }
 
     #[test]

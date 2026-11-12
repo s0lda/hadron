@@ -59,24 +59,6 @@ impl Engine {
         // is all the loop needs.
         let (change_tx, mut change_rx) = tokio::sync::mpsc::channel::<()>(1);
         let field_path = self.field_path().to_path_buf();
-        let bridge_shutdown = shutdown.clone();
-        let bridge_change_tx = change_tx.clone();
-        let bridge_wake_notify = self.wake_notifier();
-        let bridge = tokio::task::spawn_blocking(move || {
-            // If the watcher can't be created (e.g. dir missing), drop the
-            // sender and let the daemon fall back to pure safety-polling.
-            let watcher = match FieldWatcher::new(&field_path) {
-                Ok(w) => w,
-                Err(_) => return,
-            };
-            while !*bridge_shutdown.borrow() {
-                if watcher.wait(Duration::from_millis(200)) {
-                    let _ = bridge_change_tx.try_send(());
-                    bridge_wake_notify.notify_one();
-                }
-            }
-        });
-
         let hadron_dir = hadron_lattice::hadron_dir_of(self.field_path());
         let bus = crate::actor::bus::ActorBus::new(64);
         let mut _bus_rxs = Vec::new();
@@ -90,7 +72,140 @@ impl Engine {
                 .with_field_and_wake(self.field_path().to_path_buf(), change_tx.clone())
                 .with_wake_notify(self.wake_notifier()),
         );
-        let rpc_server_task = match crate::rpc_server::RpcServer::bind_and_serve(&hadron_dir, dispatcher, shutdown.clone()).await {
+
+        let bridge_shutdown = shutdown.clone();
+        let bridge_change_tx = change_tx.clone();
+        let bridge_wake_notify = self.wake_notifier();
+        let bridge_dispatcher = std::sync::Arc::clone(&dispatcher);
+        let bridge_field_path = field_path.clone();
+        let bridge = tokio::task::spawn_blocking(move || {
+            // If the watcher can't be created (e.g. dir missing), drop the
+            // sender and let the daemon fall back to pure safety-polling.
+            let watcher = match FieldWatcher::new(&bridge_field_path) {
+                Ok(w) => w,
+                Err(_) => return,
+            };
+            let mut last_offset = std::fs::metadata(&bridge_field_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            while !*bridge_shutdown.borrow() && bridge_shutdown.has_changed().is_ok() {
+                if watcher.wait(Duration::from_millis(200)) {
+                    let _ = bridge_change_tx.try_send(());
+                    bridge_wake_notify.notify_one();
+                    if let Ok((events, next_offset)) =
+                        hadron_lattice::io::read_new(&bridge_field_path, last_offset)
+                    {
+                        if next_offset != last_offset || !events.is_empty() {
+                            last_offset = next_offset;
+                            bridge_dispatcher.publish(
+                                hadron_lattice::wire::RpcPushEvent::FieldAppended {
+                                    next_offset,
+                                    count: events.len(),
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        });
+
+        let live_dir = hadron_lattice::live::live_dir(&field_path);
+        let gates_dir = hadron_lattice::live::gates_dir(&field_path);
+        let live_dispatcher = std::sync::Arc::clone(&dispatcher);
+        let mut live_shutdown = shutdown.clone();
+        let live_watch_task = tokio::spawn(async move {
+            let mut seen_live: std::collections::HashMap<String, std::time::SystemTime> =
+                std::collections::HashMap::new();
+            let mut seen_gates: std::collections::HashMap<String, std::time::SystemTime> =
+                std::collections::HashMap::new();
+            loop {
+                tokio::select! {
+                    res = live_shutdown.changed() => {
+                        if res.is_err() || *live_shutdown.borrow() {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(75)) => {
+                        let mut cur_live = std::collections::HashMap::new();
+                        if let Ok(entries) = std::fs::read_dir(&live_dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                                    continue;
+                                }
+                                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                                    continue;
+                                };
+                                if let Ok(mtime) = entry.metadata().and_then(|m| m.modified()) {
+                                    let quark = stem.to_string();
+                                    if seen_live.get(&quark) != Some(&mtime) {
+                                        live_dispatcher.publish(
+                                            hadron_lattice::wire::RpcPushEvent::LiveUpdated {
+                                                quark: quark.clone(),
+                                            },
+                                        );
+                                    }
+                                    cur_live.insert(quark, mtime);
+                                }
+                            }
+                        }
+                        for removed_quark in seen_live.keys() {
+                            if !cur_live.contains_key(removed_quark) {
+                                live_dispatcher.publish(
+                                    hadron_lattice::wire::RpcPushEvent::LiveUpdated {
+                                        quark: removed_quark.clone(),
+                                    },
+                                );
+                            }
+                        }
+                        seen_live = cur_live;
+
+                        let mut cur_gates = std::collections::HashMap::new();
+                        if let Ok(entries) = std::fs::read_dir(&gates_dir) {
+                            for entry in entries.flatten() {
+                                let path = entry.path();
+                                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                                    continue;
+                                }
+                                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                                    continue;
+                                };
+                                if let Ok(mtime) = entry.metadata().and_then(|m| m.modified()) {
+                                    let key = stem.to_string();
+                                    if seen_gates.get(&key) != Some(&mtime) {
+                                        let quark = std::fs::read_to_string(&path)
+                                            .ok()
+                                            .and_then(|raw| serde_json::from_str::<hadron_lattice::Activity>(&raw).ok())
+                                            .map(|a| a.quark.as_str().to_string())
+                                            .unwrap_or_else(|| key.clone());
+                                        live_dispatcher.publish(
+                                            hadron_lattice::wire::RpcPushEvent::GateUpdated {
+                                                quark,
+                                                passed: None,
+                                            },
+                                        );
+                                    }
+                                    cur_gates.insert(key, mtime);
+                                }
+                            }
+                        }
+                        for removed_gate in seen_gates.keys() {
+                            if !cur_gates.contains_key(removed_gate) {
+                                live_dispatcher.publish(
+                                    hadron_lattice::wire::RpcPushEvent::GateUpdated {
+                                        quark: removed_gate.clone(),
+                                        passed: None,
+                                    },
+                                );
+                            }
+                        }
+                        seen_gates = cur_gates;
+                    }
+                }
+            }
+        });
+
+        let rpc_server_task = match crate::rpc_server::RpcServer::bind_and_serve(&hadron_dir, std::sync::Arc::clone(&dispatcher), shutdown.clone()).await {
             Ok((addr, handle)) => {
                 term::info(Source::Gluon, &format!("serving JSON-RPC on {addr} ({})", hadron_dir.display()));
                 Some(handle)
@@ -136,6 +251,13 @@ impl Engine {
             let after = crate::field::read_events(self.field_path()).map(|e| e.len()).unwrap_or(0);
             if after > before {
                 term::info(Source::Gluon, &format!("appended {} event(s) → {after} total", after - before));
+                let next_offset = std::fs::metadata(self.field_path())
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                dispatcher.publish(hadron_lattice::wire::RpcPushEvent::FieldAppended {
+                    next_offset,
+                    count: after - before,
+                });
             }
 
             // Safe point maintenance hook
@@ -144,8 +266,8 @@ impl Engine {
             }
 
             tokio::select! {
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
+                res = shutdown.changed() => {
+                    if res.is_err() || *shutdown.borrow() {
                         break;
                     }
                 }
@@ -161,6 +283,7 @@ impl Engine {
         if let Err(e) = hadron_lattice::wire::remove_rpc_metadata(&hadron_dir) {
             term::warn(Source::Gluon, &format!("unable to clean up rpc metadata: {e:#}"));
         }
+        let _ = live_watch_task.await;
         if let Some(task) = rpc_server_task {
             let _ = task.await;
         }
@@ -304,5 +427,76 @@ mod tests {
             "idle serve() should return promptly after shutdown"
         );
         joined.unwrap().unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn daemon_pushes_field_appended_to_subscribed_rpc_client() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let dir = tempdir().unwrap();
+        let field = dir.path().join("field.jsonl");
+        let mut engine = engine_with_quark(&field, "agy", "pong");
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(async move { engine.serve(rx).await });
+
+        // Wait for gluon.rpc metadata to appear in hadron_dir_of(&field)
+        let hadron_dir = hadron_lattice::hadron_dir_of(&field);
+        let mut rpc_meta = None;
+        for _ in 0..30 {
+            if let Some(m) = hadron_lattice::wire::read_rpc_metadata(&hadron_dir) {
+                rpc_meta = Some(m);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let meta = rpc_meta.expect("daemon should publish gluon.rpc");
+
+        let mut stream = tokio::net::TcpStream::connect(&meta.addr).await.unwrap();
+        let (reader, mut writer) = stream.split();
+        let mut buf_reader = BufReader::new(reader);
+
+        let sub = hadron_lattice::wire::JsonRpcRequest::new(
+            hadron_lattice::wire::DAEMON_SUBSCRIBE_METHOD,
+            serde_json::json!({}),
+        );
+        writer
+            .write_all(format!("{}\n", serde_json::to_string(&sub).unwrap()).as_bytes())
+            .await
+            .unwrap();
+        writer.flush().await.unwrap();
+
+        let mut ack_line = String::new();
+        tokio::time::timeout(Duration::from_secs(2), buf_reader.read_line(&mut ack_line))
+            .await
+            .unwrap()
+            .unwrap();
+        let ack: hadron_lattice::wire::JsonRpcResponse =
+            serde_json::from_str(ack_line.trim()).unwrap();
+        assert_eq!(ack.result.unwrap()["subscribed"], true);
+
+        // Append a message and verify a FieldAppended push notification arrives over TCP
+        append_event(&field, &human_msg("agy", "ping")).unwrap();
+
+        let mut push_line = String::new();
+        tokio::time::timeout(Duration::from_secs(3), buf_reader.read_line(&mut push_line))
+            .await
+            .expect("daemon should push FieldAppended notification")
+            .unwrap();
+        let push_ev =
+            hadron_lattice::wire::JsonRpcCodec::decode_push_event(&push_line).expect("decode push");
+        assert!(matches!(
+            push_ev,
+            hadron_lattice::wire::RpcPushEvent::FieldAppended { next_offset, count }
+                if next_offset > 0 && count >= 1
+        ));
+
+        drop(buf_reader);
+        drop(stream);
+        tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), handle)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 }

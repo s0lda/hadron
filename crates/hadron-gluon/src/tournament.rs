@@ -60,6 +60,28 @@ impl TournamentSpec {
             candidates: candidates.to_vec(),
         }
     }
+
+    pub fn active_path(hadron_dir: &std::path::Path) -> std::path::PathBuf {
+        hadron_dir.join("bakeoffs").join("active.json")
+    }
+
+    pub fn save_active(&self, hadron_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        let target = Self::active_path(hadron_dir);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = target.with_extension("json.tmp");
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &target)?;
+        Ok(target)
+    }
+
+    pub fn load_active(hadron_dir: &std::path::Path) -> Option<Self> {
+        let content = std::fs::read_to_string(Self::active_path(hadron_dir)).ok()?;
+        serde_json::from_str(&content).ok()
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +127,16 @@ mod tests {
 
         let report = TournamentSpec::evaluate_winner(&candidates);
         assert!(report.winner_branch.is_none());
+    }
+
+    #[test]
+    fn test_tournament_spec_active_persistence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut spec = TournamentSpec::new("Optimize parser allocation", 2);
+        spec.add_candidate_branch("quark/a/01");
+        spec.save_active(tmp.path()).unwrap();
+
+        let loaded = TournamentSpec::load_active(tmp.path()).expect("load active tournament");
+        assert_eq!(loaded, spec);
     }
 }

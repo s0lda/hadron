@@ -87,6 +87,15 @@ impl BuildCacheMesh {
         Self { base_dir }
     }
 
+    /// Root a `BuildCacheMesh` under `<repo_root>/.hadron/cache/build_mesh`.
+    pub fn for_repo(repo_root: &std::path::Path) -> Self {
+        Self::new(repo_root.join(".hadron").join("cache").join("build_mesh"))
+    }
+
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
+    }
+
     pub fn worktrees_root(&self) -> PathBuf {
         self.base_dir.join("worktrees")
     }
@@ -101,6 +110,34 @@ impl BuildCacheMesh {
         let deps_dir = worktree_target.join("debug").join("deps");
         fs::create_dir_all(&deps_dir)?;
         Ok(worktree_target)
+    }
+
+    /// Initialize and record shared `target/` cache binding metadata for `worktree_id`
+    /// without duplicating build artifacts across worktrees, syncing any seeded shared deps.
+    pub fn record_worktree_binding(
+        &self,
+        worktree_id: &str,
+        shared_target_dir: &std::path::Path,
+    ) -> io::Result<PathBuf> {
+        let wt_cache = self.prepare_worktree_cache(worktree_id)?;
+        let linked_deps = self.sync_shared_deps(worktree_id).unwrap_or(0);
+        let binding_path = wt_cache.join("binding.json");
+        let payload = serde_json::json!({
+            "worktree_id": worktree_id,
+            "shared_target_dir": shared_target_dir.to_string_lossy(),
+            "linked_shared_deps": linked_deps,
+        });
+        let serialized = serde_json::to_string_pretty(&payload)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        fs::write(&binding_path, serialized)?;
+        Ok(wt_cache)
+    }
+
+    /// Query the recorded `target/` cache binding metadata for `worktree_id`, if initialized.
+    pub fn read_worktree_binding(&self, worktree_id: &str) -> Option<serde_json::Value> {
+        let binding_path = self.worktrees_root().join(worktree_id).join("binding.json");
+        let raw = fs::read_to_string(binding_path).ok()?;
+        serde_json::from_str(&raw).ok()
     }
 
     /// Links artifacts from shared dependency cache into the worktree's target deps directory.
@@ -195,6 +232,20 @@ mod tests {
         assert_eq!(pruned, 1);
         assert!(mesh.worktrees_root().join("wt-alpha").exists());
         assert!(!mesh.worktrees_root().join("wt-beta").exists());
+    }
+
+    #[test]
+    fn test_record_and_read_worktree_binding() {
+        let tmp = tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".hadron")).unwrap();
+        let mesh = BuildCacheMesh::for_repo(tmp.path());
+        let shared_target = tmp.path().join("target");
+        let wt_cache = mesh.record_worktree_binding("acp-agy", &shared_target).unwrap();
+        assert!(wt_cache.join("binding.json").is_file());
+
+        let meta = mesh.read_worktree_binding("acp-agy").expect("binding json");
+        assert_eq!(meta["worktree_id"], "acp-agy");
+        assert_eq!(meta["shared_target_dir"], shared_target.to_string_lossy().as_ref());
     }
 
     #[test]

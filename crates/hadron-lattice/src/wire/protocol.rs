@@ -55,6 +55,29 @@ impl JsonRpcResponse {
     }
 }
 
+pub const DAEMON_SUBSCRIBE_METHOD: &str = "daemon/subscribe";
+pub const DAEMON_EVENT_METHOD: &str = "daemon/event";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RpcPushEvent {
+    FieldAppended {
+        next_offset: u64,
+        count: usize,
+    },
+    LiveUpdated {
+        quark: String,
+    },
+    GateUpdated {
+        quark: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        passed: Option<bool>,
+    },
+    Heartbeat {
+        pid: u32,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonRpcNotification {
     pub jsonrpc: String,
@@ -70,6 +93,45 @@ impl JsonRpcNotification {
             method: method.into(),
             params,
         }
+    }
+
+    pub fn daemon_event(event: &RpcPushEvent) -> Self {
+        let params = serde_json::to_value(event).unwrap_or(Value::Null);
+        Self::new(DAEMON_EVENT_METHOD, params)
+    }
+
+    pub fn push_event(&self) -> Option<RpcPushEvent> {
+        if self.method != DAEMON_EVENT_METHOD {
+            return None;
+        }
+        serde_json::from_value(self.params.clone()).ok()
+    }
+}
+
+impl super::codec::JsonRpcCodec {
+    pub fn encode_notification(notif: &JsonRpcNotification) -> Result<String, serde_json::Error> {
+        let mut s = serde_json::to_string(notif)?;
+        s.push('\n');
+        Ok(s)
+    }
+
+    pub fn decode_notification(line: &str) -> Result<JsonRpcNotification, serde_json::Error> {
+        serde_json::from_str(line.trim())
+    }
+
+    pub fn encode_push_event(event: &RpcPushEvent) -> Result<String, serde_json::Error> {
+        Self::encode_notification(&JsonRpcNotification::daemon_event(event))
+    }
+
+    pub fn decode_push_event(line: &str) -> Result<RpcPushEvent, serde_json::Error> {
+        let notif = Self::decode_notification(line)?;
+        if notif.method != DAEMON_EVENT_METHOD {
+            return Err(serde::de::Error::custom(format!(
+                "unexpected notification method: {}",
+                notif.method
+            )));
+        }
+        serde_json::from_value(notif.params)
     }
 }
 
@@ -134,5 +196,40 @@ pub fn remove_rpc_metadata(field_dir: &std::path::Path) -> std::io::Result<()> {
         Err(e) => return Err(e),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use super::super::codec::JsonRpcCodec;
+
+    #[test]
+    fn push_event_encodes_and_decodes_as_daemon_event_notification() {
+        let events = vec![
+            RpcPushEvent::FieldAppended {
+                next_offset: 4096,
+                count: 3,
+            },
+            RpcPushEvent::LiveUpdated {
+                quark: "acp-agy".to_string(),
+            },
+            RpcPushEvent::GateUpdated {
+                quark: "cli-agy-2".to_string(),
+                passed: Some(true),
+            },
+            RpcPushEvent::Heartbeat { pid: 9876 },
+        ];
+
+        for ev in events {
+            let line = JsonRpcCodec::encode_push_event(&ev).expect("encode push event");
+            assert!(line.ends_with('\n'));
+            let notif = JsonRpcCodec::decode_notification(&line).expect("decode notification");
+            assert_eq!(notif.jsonrpc, "2.0");
+            assert_eq!(notif.method, DAEMON_EVENT_METHOD);
+            assert_eq!(notif.push_event().as_ref(), Some(&ev));
+            let roundtrip = JsonRpcCodec::decode_push_event(&line).expect("decode push event");
+            assert_eq!(roundtrip, ev);
+        }
+    }
 }
 
