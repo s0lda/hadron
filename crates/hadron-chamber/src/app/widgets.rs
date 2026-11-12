@@ -241,23 +241,46 @@ pub(super) fn menu_button(chamber: &Entity<Chamber>) -> impl IntoElement {
         })
 }
 
+pub(super) fn window_control_area_for_id(id: &str) -> WindowControlArea {
+    match id {
+        "min" => WindowControlArea::Min,
+        "max" => WindowControlArea::Max,
+        _ => WindowControlArea::Close,
+    }
+}
+
 /// A circular window-control button (min / max / close) with circular hover.
+///
+/// On Windows (`gpui_windows`), `window.zoom_window()` unconditionally calls
+/// `ShowWindowAsync(hwnd, SW_MAXIMIZE)` and never restores; native maximize/restore
+/// toggling (plus Win11 Snap Layouts) runs in `gpui_windows`'s `WM_NCHITTEST` /
+/// `WM_NCLBUTTONUP` handler for `WindowControlArea::Max` (`HTMAXBUTTON`), which
+/// returns early if a GPUI mouse/click listener stops propagation.
 pub(super) fn control_button(id: &'static str, icon: IconName, is_close: bool) -> impl IntoElement {
     let hover_bg = if is_close {
         theme::danger()
     } else {
         theme::bg_surface_raised()
     };
-    div()
+    let btn = div()
         .id(id)
         .flex()
         .items_center()
         .justify_center()
         .size(px(26.0))
         .rounded_full()
+        .occlude()
         .text_color(theme::text_secondary())
         .hover(|s| s.bg(hover_bg).text_color(theme::text()))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(Icon::new(icon).small());
+
+    if cfg!(target_os = "windows") {
+        btn.window_control_area(window_control_area_for_id(id))
+    } else {
+        btn.on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             match id {
@@ -269,7 +292,7 @@ pub(super) fn control_button(id: &'static str, icon: IconName, is_close: bool) -
                 }
             }
         })
-        .child(Icon::new(icon).small())
+    }
 }
 
 /// A draggable titlebar region: marks the area for the compositor and starts a
@@ -2410,5 +2433,12 @@ mod draft_tests {
             })
             .collect();
         assert_eq!(colors.len(), 4, "Every TaskState must have a distinct color");
+    }
+
+    #[test]
+    fn window_control_area_for_id_maps_min_max_and_close() {
+        assert_eq!(window_control_area_for_id("min"), WindowControlArea::Min);
+        assert_eq!(window_control_area_for_id("max"), WindowControlArea::Max);
+        assert_eq!(window_control_area_for_id("close"), WindowControlArea::Close);
     }
 }

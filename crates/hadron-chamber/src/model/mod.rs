@@ -1124,15 +1124,42 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
     }
 }
 
+fn is_1m_context_model(model: Option<&str>) -> bool {
+    let Some(m) = model else {
+        return false;
+    };
+    let lower = m.to_ascii_lowercase();
+    [
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "opus-5",
+        "sonnet-5",
+        "1m",
+        "gemini",
+    ]
+    .iter()
+    .any(|pat| lower.contains(pat))
+}
+
 /// Normalize `Usage.context` so historical CLI turns that folded cumulative multi-step
 /// `spend.cache_read` into `context.used_tokens` (`used_tokens == input + cache_read`)
-/// or exceeded `context_window_size` are corrected to single-window occupancy.
+/// or recorded stale `200_000` windows for 1M-context models / `>200k` single-step
+/// occupancy are corrected to accurate single-window occupancy.
 fn normalize_usage_context(mut usage: hadron_lattice::Usage) -> hadron_lattice::Usage {
+    let model_is_1m = is_1m_context_model(usage.model.as_deref());
     if let Some(ctx) = &mut usage.context {
         if let (Some(input), Some(cache_read)) = (usage.spend.input, usage.spend.cache_read) {
             if input > 0 && cache_read > 0 && ctx.used_tokens == input.saturating_add(cache_read) {
                 ctx.used_tokens = input;
             }
+        }
+        if ctx.context_window_size == 200_000
+            && (model_is_1m || (ctx.used_tokens > 200_000 && ctx.used_tokens <= 1_048_576))
+        {
+            ctx.context_window_size = 1_048_576;
         }
         if ctx.context_window_size > 0 {
             if ctx.used_tokens > ctx.context_window_size {

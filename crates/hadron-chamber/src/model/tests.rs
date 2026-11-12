@@ -1416,6 +1416,115 @@ fn test_project_normalizes_inflated_cache_read_context_usage() {
 }
 
 #[test]
+fn test_project_upgrades_stale_200k_window_for_claude_opus_5_5_and_gt_200k_occupancy() {
+    let mut sub_200k = ev(
+        Actor::Quark(QuarkId::new("cli-agy")),
+        None,
+        Kind::Message {
+            body: "turn 1".into(),
+        },
+    );
+    sub_200k.usage = Some(hadron_lattice::Usage {
+        spend: hadron_lattice::TokenSpend {
+            input: Some(198_758),
+            output: Some(4_120),
+            cache_read: Some(8_100_000),
+            cache_write: None,
+        },
+        model: Some("claude-opus-5-5-high".to_string()),
+        context: Some(hadron_lattice::ContextUsage {
+            used_tokens: 198_758,
+            context_window_size: 200_000,
+            used_percentage: 99.379,
+        }),
+        ..Default::default()
+    });
+
+    let mut over_200k = ev(
+        Actor::Quark(QuarkId::new("cli-agy")),
+        None,
+        Kind::Message {
+            body: "turn 2".into(),
+        },
+    );
+    over_200k.usage = Some(hadron_lattice::Usage {
+        spend: hadron_lattice::TokenSpend {
+            input: Some(322_213),
+            output: Some(12_400),
+            cache_read: Some(13_561_400),
+            cache_write: None,
+        },
+        model: Some("claude-opus-5-5-high".to_string()),
+        context: Some(hadron_lattice::ContextUsage {
+            used_tokens: 217_196,
+            context_window_size: 200_000,
+            used_percentage: 108.598,
+        }),
+        ..Default::default()
+    });
+
+    let mut unnamed_over_200k = ev(
+        Actor::Quark(QuarkId::new("cli-agy")),
+        None,
+        Kind::Message {
+            body: "turn 3".into(),
+        },
+    );
+    unnamed_over_200k.usage = Some(hadron_lattice::Usage {
+        spend: hadron_lattice::TokenSpend {
+            input: Some(322_213),
+            output: Some(5_000),
+            cache_read: Some(13_561_400),
+            cache_write: None,
+        },
+        model: None,
+        context: Some(hadron_lattice::ContextUsage {
+            used_tokens: 217_196,
+            context_window_size: 200_000,
+            used_percentage: 100.0,
+        }),
+        ..Default::default()
+    });
+
+    let view = project(&[sub_200k, over_200k, unnamed_over_200k]);
+
+    let ctx0 = view.messages[0]
+        .usage
+        .as_ref()
+        .and_then(|u| u.context.as_ref())
+        .expect("sub_200k context");
+    assert_eq!(ctx0.used_tokens, 198_758);
+    assert_eq!(ctx0.context_window_size, 1_048_576);
+    assert!(
+        (ctx0.used_percentage - (198_758.0 / 1_048_576.0) * 100.0).abs() < 1e-4,
+        "expected ~18.95%, got {}",
+        ctx0.used_percentage
+    );
+
+    let ctx1 = view.messages[1]
+        .usage
+        .as_ref()
+        .and_then(|u| u.context.as_ref())
+        .expect("over_200k context");
+    assert_eq!(ctx1.used_tokens, 217_196);
+    assert_eq!(ctx1.context_window_size, 1_048_576);
+    assert!(
+        (ctx1.used_percentage - (217_196.0 / 1_048_576.0) * 100.0).abs() < 1e-4,
+        "expected ~20.71%, got {}",
+        ctx1.used_percentage
+    );
+
+    let ctx2 = view.messages[2]
+        .usage
+        .as_ref()
+        .and_then(|u| u.context.as_ref())
+        .expect("unnamed_over_200k context");
+    assert_eq!(ctx2.used_tokens, 217_196);
+    assert_eq!(ctx2.context_window_size, 1_048_576);
+    assert!((ctx2.used_percentage - (217_196.0 / 1_048_576.0) * 100.0).abs() < 1e-4);
+}
+
+#[test]
 fn test_filter_chat_and_log_message_indices_by_query_and_kind() {
     let mut err_msg = ev(
         Actor::Gluon,
