@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.52",
+        date: Some("2026-11-12"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Capability-Gated Effort Selector & agy CLI Model-Encoded Effort (hadron-chamber, hadron-gluon, hadron-lattice): Reverted CliSpec::agy().effort_flag to None, suppressed conflicting --effort CLI flags on agy/Gemini CLI and effort-encoded models (*-low/*-medium/*-high/*-xhigh/*-max, gemini-pro-orchestrator), hid the standalone Effort selector in Settings and Quark Info via effort_options_for_seat, cleared stale effort overrides, and added gemini-4-carbon-* fallback models",
+        ],
+    },
+    Release {
         version: "0.33.51",
         date: Some("2026-11-12"),
         added: &[

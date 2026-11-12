@@ -5,6 +5,13 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.52] - 2026-11-12
+
+### Fixed
+- **Capability-Gated Effort Selector & `agy` CLI Model-Encoded Effort (`hadron-chamber`, `hadron-gluon`, `hadron-lattice`)**:
+  - Reverted `CliSpec::agy().effort_flag` to `None`, added `CliSpec::is_agy_cli()` and `hadron_lattice::model_encodes_effort()`, and guarded `CliQuark::build_invocation` and `spec_for_seat` against emitting conflicting `--effort` flags on `agy` CLI, Gemini CLI, and effort-encoded models (`*-low`/`*-medium`/`*-high`/`*-xhigh`/`*-max`, `gemini-pro-orchestrator`) (`crates/hadron-lattice/src/team/transport.rs`, `crates/hadron-lattice/src/team/seat.rs`, `crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/src/adapter/registry/mod.rs`).
+  - Added `effort_options_for_seat` and `seat_allows_persisted_effort` in `hadron-chamber` so **Settings** and **Quark Info** hide the standalone **Effort** dropdown when effort is unsupported or model-encoded, cleared stale effort overrides on save/model switch, and added `gemini-4-carbon-*` fallback models (`crates/hadron-chamber/src/app/settings/mod.rs`, `crates/hadron-chamber/src/app/settings/model_select.rs`).
+
 ## [0.33.51] - 2026-11-12
 
 ### Added
