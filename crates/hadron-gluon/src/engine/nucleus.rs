@@ -58,34 +58,6 @@ pub(crate) use crate::nucleus_status::BUDGET_BYTES as NUCLEUS_INDEX_BUDGET;
 // number a quark is shown instead of the index.
 use crate::nucleus_status::is_lesson_line;
 
-/// A few hundred bytes: one heading per `## ` section in the index, with a count
-/// of lessons under it. What the quark sees instead of the full index when the
-/// index has grown past a size worth always sending in full.
-#[allow(dead_code)]
-pub(crate) fn tag_manifest(index_text: &str) -> String {
-    let mut out = String::new();
-    let mut current: Option<(&str, usize)> = None;
-    for line in index_text.lines() {
-        if let Some(heading) = line.strip_prefix("## ") {
-            if let Some((h, n)) = current.take() {
-                out.push_str(&format!("- {h}: {n} lesson(s)\n"));
-            }
-            current = Some((heading, 0));
-        } else if is_lesson_line(line) {
-            if current.is_none() {
-                current = Some(("General", 0));
-            }
-            if let Some((_, n)) = current.as_mut() {
-                *n += 1;
-            }
-        }
-    }
-    if let Some((h, n)) = current {
-        out.push_str(&format!("- {h}: {n} lesson(s)\n"));
-    }
-    out
-}
-
 /// Read the lessons index. Returns full text and false (truncation removed in Task 4).
 pub(super) fn read_nucleus_index(path: &std::path::Path) -> (String, bool) {
     let raw = fs::read_to_string(path).unwrap_or_default();
@@ -649,7 +621,7 @@ pub(crate) fn rank_lessons(
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_window, rank_lessons, tag_manifest};
+    use super::{bounded_window, rank_lessons};
     use hadron_lattice::{Event, Kind};
     use std::fs;
     use tempfile::TempDir;
@@ -1228,11 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn tag_manifest_and_bounded_window_adversarial() {
-        let malformed_tag_index = "## \n- [a](notes/a.md)\n## 🚨 Header 🚀\n- [b](notes/b.md)\n- **c** — legacy\n";
-        let manifest = tag_manifest(malformed_tag_index);
-        assert!(manifest.contains("lesson(s)"));
-
+    fn bounded_window_adversarial() {
         let events = vec![];
         let window = bounded_window(&events, 1000);
         assert!(window.is_empty());

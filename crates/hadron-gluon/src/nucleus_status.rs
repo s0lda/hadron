@@ -31,9 +31,8 @@ pub fn resolve_budget_bytes(team: &Team) -> usize {
 /// quark cannot check: the summary it is shown INSTEAD of the index.
 ///
 /// **Public, and here rather than in `engine::nucleus`, because there are two
-/// counters.** The engine's `tag_manifest` counts lessons per section for the
-/// over-budget summary; the chamber's `/nucleus` counts them for the human. A plain
-/// `- ` prefix is NOT enough — the index preamble opens with prose bullets ("The
+/// callers.** `engine::nucleus::rank_lessons` parses lessons per section; the
+/// chamber's `/nucleus` counts them for the human. A plain `- ` prefix is NOT enough — the index preamble opens with prose bullets ("The
 /// index lives at…", "Notes live in…"), and the looser predicate counted those,
 /// so `/nucleus` reported four more lessons than the prompt would ever deliver.
 pub fn is_lesson_line(line: &str) -> bool {

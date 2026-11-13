@@ -12,11 +12,11 @@ use crate::field::append_event;
 use crate::preons::{self, Preon};
 use crate::quark::Quark;
 
-// `pub(crate)`, not private: the prompt builder reads `tag_manifest` from here, and
-// tests read `NUCLEUS_INDEX_BUDGET` — the default budget, re-exported from
-// `nucleus_status` so it has ONE home. The RESOLVED (possibly configured) budget the
-// prompt actually enforces travels on `Projection::nucleus_index_budget_bytes`
-// instead — see `Engine::nucleus_index_budget_bytes`.
+// `pub(crate)`, not private: tests read `NUCLEUS_INDEX_BUDGET` — the default budget,
+// re-exported from `nucleus_status` so it has ONE home. The RESOLVED (possibly
+// configured) budget the prompt actually enforces travels on
+// `Projection::nucleus_index_budget_bytes` instead — see
+// `Engine::nucleus_index_budget_bytes`.
 pub mod nucleus;
 pub use nucleus::*;
 pub mod review;
@@ -531,8 +531,6 @@ pub struct Engine {
     pub rpc_bus: hadron_lattice::MicroRpcBus,
     /// Ephemeral peer-to-peer subchannel manager.
     pub subchannel_manager: Arc<AsyncMutex<hadron_lattice::SubChannelManager>>,
-    /// Checkpoints store tracking rewind targets per turn.
-    pub checkpoints: Arc<AsyncMutex<HashMap<String, crate::checkpoint::CheckpointStore>>>,
     /// Content-addressable storage for build and test artifacts.
     pub cas: Option<crate::cas::SemanticCas>,
     git_author_name: Option<String>,
@@ -643,7 +641,6 @@ impl Engine {
                 bus
             },
             subchannel_manager: Arc::new(AsyncMutex::new(hadron_lattice::SubChannelManager::new())),
-            checkpoints: Arc::new(AsyncMutex::new(HashMap::new())),
             cas,
             git_author_name: None,
             git_author_email: None,
@@ -764,11 +761,6 @@ impl Engine {
     /// Subchannel manager for ephemeral peer-to-peer communication.
     pub fn subchannel_manager(&self) -> Arc<AsyncMutex<hadron_lattice::SubChannelManager>> {
         self.subchannel_manager.clone()
-    }
-
-    /// Checkpoints store tracking rewind targets per turn.
-    pub fn checkpoints(&self) -> Arc<AsyncMutex<HashMap<String, crate::checkpoint::CheckpointStore>>> {
-        self.checkpoints.clone()
     }
 
     /// Semantic CAS for build and artifact caching.

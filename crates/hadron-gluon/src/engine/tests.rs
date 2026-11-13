@@ -1958,32 +1958,6 @@ async fn the_shared_nucleus_index_actually_reaches_a_quarks_projection() {
     engine.run_until_quiesce().await.unwrap();
 }
 
-/// The index is in every prompt of every turn, so an unbounded one is a bill that
-/// grows forever. Cap it — but never silently: a lesson dropped for size that nobody
-/// is told about is indistinguishable from a lesson never learned.
-#[test]
-fn tag_manifest_summarises_by_heading_not_by_dropping_lines() {
-    let index = "## GUI\n- **a** — one [tag:gui]\n- **b** — two [tag:gui]\n\
-                 ## IPC\n- **c** — three [tag:ipc]\n";
-    let manifest = super::nucleus::tag_manifest(index);
-    assert!(manifest.contains("GUI") && manifest.contains("2"));
-    assert!(manifest.contains("IPC") && manifest.contains("1"));
-    assert!(manifest.len() < index.len(), "the manifest must be smaller than the full index");
-}
-
-/// The manifest is what a quark sees INSTEAD of the index once the index is over
-/// budget, so it is the one number nobody can sanity-check against the source. It
-/// must therefore count BOTH index shapes: the pointer form the chamber writes now
-/// and the bold form every pre-migration line on disk still uses.
-#[test]
-fn tag_manifest_counts_pointer_lines_as_well_as_the_old_bold_ones() {
-    let index = "## GUI\n- [a](notes/a.md) — one\n- **b** — two\n\
-                 ## IPC\n- [c](notes/c.md) — three\n";
-    let manifest = super::nucleus::tag_manifest(index);
-    assert!(manifest.contains("GUI") && manifest.contains("2"), "{manifest}");
-    assert!(manifest.contains("IPC") && manifest.contains("1"), "{manifest}");
-}
-
 #[test]
 fn an_oversized_index_is_no_longer_truncated() {
     let dir = tempfile::tempdir().unwrap();

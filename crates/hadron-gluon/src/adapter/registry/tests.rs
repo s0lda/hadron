@@ -1172,15 +1172,27 @@ fn build_seat_resolves_the_cloud_vendor_and_wires_its_secret() {
 }
 
 #[test]
-fn vendor_prefers_acp_recognizes_presets_aliases_and_suffixed_ids() {
-    assert!(vendor_prefers_acp("agy"));
-    assert!(vendor_prefers_acp("claude"));
-    assert!(vendor_prefers_acp("codex"));
-    assert!(vendor_prefers_acp("copilot"));
-    assert!(vendor_prefers_acp("gemini"));
-    assert!(vendor_prefers_acp("acp-claude-2"));
-    assert!(!vendor_prefers_acp(""));
-    assert!(!vendor_prefers_acp("unknown-custom-shell"));
+fn agy_bridge_seat_rejects_nonexistent_custom_program_without_blocking_provision() {
+    let mut s = acp_seat("acp-agy", "agy");
+    s.command = Some(AcpCommand {
+        program: "/nonexistent/hadron-test-python-binary".to_string(),
+        args: vec![format!("{USER_HOME_TOKEN}/bridges/agy/agy_acp.py")],
+    });
+    let err = QuarkKind::from_seat(&s)
+        .expect_err("nonexistent custom program must fail validation rather than substituting venv_python");
+    assert!(
+        err.to_string().contains("does not exist"),
+        "expected missing-file error, got: {err}"
+    );
+}
+
+#[test]
+fn registry_cache_staleness_predicate_handles_missing_fresh_and_expired_mtimes() {
+    use std::time::{Duration, SystemTime};
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    assert!(loader::is_registry_cache_stale(None, now));
+    assert!(!loader::is_registry_cache_stale(Some(now - Duration::from_secs(3600)), now));
+    assert!(loader::is_registry_cache_stale(Some(now - Duration::from_secs(86_400)), now));
 }
 
 #[test]

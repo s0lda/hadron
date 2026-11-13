@@ -139,10 +139,6 @@ pub const TRUNCATION_MARKER: &str = "[transcript truncated: older field events w
 /// instructions — survive by construction. If dropping the entire field window is
 /// still not enough (a colossal `git_diff` or task), the diff goes too; a prompt with
 /// no instructions is worse than a prompt with no transcript.
-pub fn fit_prompt(projection: &Projection, self_id: &QuarkId) -> String {
-    fit_prompt_to_budget(projection, self_id, SAFE_ARG_BYTES)
-}
-
 pub fn fit_prompt_to_budget(projection: &Projection, self_id: &QuarkId, max_bytes: usize) -> String {
     fit_projection_to_budget(projection, self_id, max_bytes).1
 }

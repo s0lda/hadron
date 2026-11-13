@@ -634,23 +634,15 @@ impl QuarkKind {
                 // wizard's availability probe (`mark_unseatable`), and greying the row
                 // out on a machine with no venv would leave no way to create the seat
                 // whose Settings page is the only thing that provisions one.
-                let mut program = std::path::Path::new(resolved.program()).to_path_buf();
-                let is_agy_bridge = seat.vendor == "agy"
-                    || ((seat.id.as_str() == "acp-agy" || seat.id.as_str() == "agy")
-                        && seat.vendor != "antigravity");
-                if is_agy_bridge {
-                    let _ = crate::adapter::bridge::materialize_script();
-                    if program.is_absolute() && !program.exists() {
-                        if let Err(e) = crate::adapter::bridge::provision_venv() {
-                            anyhow::bail!(
-                                "Failed to provision `agy` bridge for seat '{}': {e:#}",
-                                seat.id.as_str()
-                            );
-                        }
-                        if let Ok(py) = crate::adapter::bridge::venv_python() {
-                            program = py;
-                        }
-                    }
+                let program = std::path::Path::new(resolved.program());
+                if crate::adapter::bridge::target_uses_agy_bridge(&target) {
+                    use anyhow::Context as _;
+                    crate::adapter::bridge::materialize_script().with_context(|| {
+                        format!(
+                            "failed to materialize `agy` bridge script for seat '{}'",
+                            seat.id.as_str()
+                        )
+                    })?;
                 }
                 if program.is_absolute() && !program.exists() {
                     anyhow::bail!(
@@ -924,24 +916,6 @@ pub fn build_seat_watched(
     store: &dyn hadron_lattice::secrets::SecretStore,
 ) -> anyhow::Result<Box<dyn Quark>> {
     build_watched(spec_for_seat(seat, store)?, Some(live_dir))
-}
-
-/// Return `true` when `vendor` has a native ACP agent preset or registry alias
-/// and therefore prefers the standardized ACP stdio protocol over legacy CLI scraping.
-pub fn vendor_prefers_acp(vendor: &str) -> bool {
-    let trimmed = vendor.trim();
-    let base = match trimmed.rsplit_once('-') {
-        Some((b, suffix)) if !b.is_empty() && suffix.parse::<u32>().is_ok_and(|n| n >= 2) => b,
-        _ => trimmed,
-    };
-    let clean = base.trim_start_matches("acp-").to_ascii_lowercase();
-    if clean.is_empty() {
-        return false;
-    }
-    ACP_AGENTS.iter().any(|p| p.vendor.eq_ignore_ascii_case(&clean))
-        || REGISTRY_ALIASES
-            .iter()
-            .any(|(alias, _)| alias.eq_ignore_ascii_case(&clean))
 }
 
 

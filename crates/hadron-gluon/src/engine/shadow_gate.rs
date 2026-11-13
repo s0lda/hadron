@@ -1,11 +1,8 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use tokio::sync::Mutex as AsyncMutex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShadowState {
     Queued,
-    Compiling,
     Passed,
     Failed,
 }
@@ -24,7 +21,6 @@ pub struct ShadowGate {
     queue: VecDeque<String>,
     states: HashMap<String, ShadowState>,
     speculative_cache: HashMap<(String, String), SpeculativeTestResult>,
-    verified_file_epochs: HashMap<u64, Vec<String>>,
 }
 
 impl ShadowGate {
@@ -34,7 +30,6 @@ impl ShadowGate {
             queue: VecDeque::new(),
             states: HashMap::new(),
             speculative_cache: HashMap::new(),
-            verified_file_epochs: HashMap::new(),
         }
     }
 
@@ -57,27 +52,6 @@ impl ShadowGate {
                 false
             }
         })
-    }
-
-    /// Record files verified clean at a given git epoch.
-    pub fn record_verified_files(&mut self, epoch: u64, files: &[String]) {
-        self.verified_file_epochs.insert(epoch, files.to_vec());
-    }
-
-    /// Check if target files can reuse a clean verification pass from an epoch because
-    /// they are disjoint from files modified in that epoch.
-    pub fn can_reuse_disjoint_pass(&self, epoch: u64, files: &[String]) -> bool {
-        if let Some(verified) = self.verified_file_epochs.get(&epoch) {
-            !files.iter().any(|f| verified.contains(f))
-        } else {
-            false
-        }
-    }
-
-    /// Bisect a batch of branches into two halves for parallel isolate-and-test.
-    pub fn bisect_failing_branches(branches: &[String]) -> (Vec<String>, Vec<String>) {
-        let mid = branches.len() / 2;
-        (branches[..mid].to_vec(), branches[mid..].to_vec())
     }
 
     pub fn enqueue_branch(&mut self, branch: &str) {
@@ -119,53 +93,11 @@ impl ShadowGate {
     pub fn get_speculative_result(&self, branch: &str, head_sha: &str) -> Option<&SpeculativeTestResult> {
         self.speculative_cache.get(&(branch.to_string(), head_sha.to_string()))
     }
-
-    pub async fn run_speculative_test(
-        wt: &crate::worktree::Worktree,
-        runner: &Arc<dyn crate::merge::MergeRunner>,
-        gate: &Arc<AsyncMutex<ShadowGate>>,
-    ) -> anyhow::Result<SpeculativeTestResult> {
-        let head_sha = crate::worktree::head(&wt.path).unwrap_or_default();
-        {
-            let mut g = gate.lock().await;
-            g.states.insert(wt.branch.clone(), ShadowState::Compiling);
-        }
-        let (passed, tail) = runner.tests(wt).await?;
-        let mut g = gate.lock().await;
-        g.record_speculative_result(&wt.branch, &head_sha, passed, &tail);
-        Ok(SpeculativeTestResult {
-            branch: wt.branch.clone(),
-            head_sha,
-            passed,
-            tail,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use std::path::Path;
-    use crate::merge::Landed;
-
-    struct MockRunner {
-        pass: bool,
-    }
-
-    #[async_trait]
-    impl crate::merge::MergeRunner for MockRunner {
-        async fn tests(&self, _wt: &crate::worktree::Worktree) -> anyhow::Result<(bool, String)> {
-            Ok((self.pass, "mock test output".to_string()))
-        }
-        fn land(&self, _repo_root: &Path, _wt: &crate::worktree::Worktree, _base: &str) -> anyhow::Result<Landed> {
-            Ok(Landed::FastForward)
-        }
-    }
 
     #[test]
     fn test_shadow_gate_status_lifecycle() {
@@ -189,23 +121,6 @@ mod tests {
         assert!(res.passed);
         assert_eq!(res.tail, "all tests pass");
         assert!(gate.is_eligible_for_fast_forward("quark/feature-x"));
-    }
-
-    #[tokio::test]
-    async fn test_run_speculative_test_async() {
-        let gate = Arc::new(AsyncMutex::new(ShadowGate::new("main")));
-        let runner: Arc<dyn crate::merge::MergeRunner> = Arc::new(MockRunner { pass: true });
-        let wt = crate::worktree::Worktree {
-            quark: hadron_lattice::QuarkId::new("mock"),
-            path: std::env::current_dir().unwrap(),
-            branch: "quark/feature-spec".to_string(),
-        };
-
-        let result = ShadowGate::run_speculative_test(&wt, &runner, &gate).await.unwrap();
-        assert!(result.passed);
-
-        let g = gate.lock().await;
-        assert!(g.is_eligible_for_fast_forward("quark/feature-spec"));
     }
 
     #[tokio::test]
@@ -239,19 +154,5 @@ mod tests {
             "README.md".to_string(),
             "src/main.rs".to_string(),
         ]));
-    }
-
-    #[test]
-    fn test_disjoint_file_epochs_and_bisect() {
-        let mut gate = ShadowGate::new("main");
-        gate.record_verified_files(1, &["crates/crate-a/src/lib.rs".to_string()]);
-        assert!(gate.can_reuse_disjoint_pass(1, &["crates/crate-b/src/lib.rs".to_string()]));
-        assert!(!gate.can_reuse_disjoint_pass(1, &["crates/crate-a/src/lib.rs".to_string()]));
-        assert!(!gate.can_reuse_disjoint_pass(2, &["crates/crate-b/src/lib.rs".to_string()]));
-
-        let branches = vec!["b1".to_string(), "b2".to_string(), "b3".to_string(), "b4".to_string()];
-        let (left, right) = ShadowGate::bisect_failing_branches(&branches);
-        assert_eq!(left, vec!["b1".to_string(), "b2".to_string()]);
-        assert_eq!(right, vec!["b3".to_string(), "b4".to_string()]);
     }
 }

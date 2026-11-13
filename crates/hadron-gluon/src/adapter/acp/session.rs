@@ -537,8 +537,6 @@ pub(super) struct AcpSession {
     /// rather than silently queued for whatever turn starts next.
     pub(super) in_turn: Arc<std::sync::atomic::AtomicBool>,
     pub(super) live: Option<LiveFeed>,
-    #[allow(dead_code)]
-    pub(super) breakpoints: Arc<Mutex<crate::breakpoints::BreakpointsRegistry>>,
 }
 
 impl AcpSession {
@@ -561,12 +559,6 @@ impl AcpSession {
         } else {
             false
         }
-    }
-
-    /// Set an execution breakpoint condition intercepting tool invocations.
-    #[allow(dead_code)]
-    pub fn set_breakpoint(&self, id: String, cond: crate::breakpoints::BreakpointCondition) {
-        self.breakpoints.lock().unwrap().set_breakpoint(id, cond);
     }
 }
 
@@ -683,9 +675,6 @@ impl super::AcpQuark {
 
         let mode = Arc::new(Mutex::new(Mode::default()));
         let handler_mode = Arc::clone(&mode);
-
-        let breakpoints = Arc::new(Mutex::new(crate::breakpoints::BreakpointsRegistry::new()));
-        let handler_breakpoints = Arc::clone(&breakpoints);
 
         // What the agent says it is running, written once at boot by the pump.
         let model = Arc::new(Mutex::new(None::<String>));
@@ -891,21 +880,10 @@ impl super::AcpQuark {
                         )
                         .on_receive_request(
                             async move |req: RequestPermissionRequest, responder, _cx| {
-                                let tool_name = req.tool_call.fields.title.as_deref().unwrap_or("unknown");
-                                let args_json = req.tool_call.fields.raw_input.as_ref().map(|v| v.to_string()).unwrap_or_default();
-                                let intercepted = {
-                                    let mut bp = handler_breakpoints.lock().unwrap();
-                                    bp.should_intercept(tool_name, &args_json)
-                                };
-
-                                let want = if intercepted.is_some() {
-                                    PermissionOptionKind::RejectOnce
-                                } else {
-                                    permission_choice(
-                                        *handler_mode.lock().unwrap(),
-                                        classify_request(&req),
-                                    )
-                                };
+                                let want = permission_choice(
+                                    *handler_mode.lock().unwrap(),
+                                    classify_request(&req),
+                                );
                                 let chosen = req
                                     .options
                                     .iter()
@@ -1074,7 +1052,7 @@ impl super::AcpQuark {
                             if let Some(want_eff) = effective_effort {
                                 if let Some(selector) = effort_selector(&offered) {
                                     if let Some(value) = resolve_model(&selector, &want_eff) {
-                                        if let Ok(resp) = cx
+                                        match cx
                                             .send_request(SetSessionConfigOptionRequest::new(
                                                 sid.clone(),
                                                 selector.config_id,
@@ -1083,9 +1061,23 @@ impl super::AcpQuark {
                                             .block_task()
                                             .await
                                         {
-                                            offered = resp.config_options;
+                                            Ok(resp) => {
+                                                offered = resp.config_options;
+                                                term::info(
+                                                    Source::Acp,
+                                                    &format!("effort set to {:?}", value),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                term::warn(
+                                                    Source::Acp,
+                                                    &format!(
+                                                        "agent refused effort {:?}: {e}",
+                                                        value
+                                                    ),
+                                                );
+                                            }
                                         }
-                                        term::info(Source::Acp, &format!("effort set to {:?}", value));
                                     }
                                 }
                             }
@@ -1093,12 +1085,31 @@ impl super::AcpQuark {
                             if let Some(want_m) = want_mode {
                                 if let Some(selector) = mode_selector(&offered) {
                                     if let Some(value) = resolve_model(&selector, &want_m) {
-                                        let _ = cx.send_request(SetSessionConfigOptionRequest::new(
-                                            sid.clone(),
-                                            selector.config_id,
-                                            value.as_str(),
-                                        )).block_task().await;
-                                        term::info(Source::Acp, &format!("mode set to {:?}", value));
+                                        match cx
+                                            .send_request(SetSessionConfigOptionRequest::new(
+                                                sid.clone(),
+                                                selector.config_id,
+                                                value.as_str(),
+                                            ))
+                                            .block_task()
+                                            .await
+                                        {
+                                            Ok(_) => {
+                                                term::info(
+                                                    Source::Acp,
+                                                    &format!("mode set to {:?}", value),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                term::warn(
+                                                    Source::Acp,
+                                                    &format!(
+                                                        "agent refused mode {:?}: {e}",
+                                                        value
+                                                    ),
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1193,7 +1204,7 @@ impl super::AcpQuark {
         // `recv` errors only if the thread died without reporting — surface that as a
         // boot failure rather than hanging.
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn, live, breakpoints }),
+            Ok(Ok(())) => Ok(AcpSession { turns: turns_tx, mode, model, cancels: cancels_tx, in_turn, live }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow::anyhow!(
                 "the ACP agent ({}) exited before opening a session",
@@ -1219,6 +1230,11 @@ impl super::AcpQuark {
 
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
+            if crate::adapter::bridge::target_uses_agy_bridge(&self.target) {
+                tokio::task::spawn_blocking(crate::adapter::bridge::ensure_bridge_ready)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("agy bridge check task panicked: {e}"))??;
+            }
             self.session = Some(Self::boot(
                 self.id.clone(),
                 &self.target,

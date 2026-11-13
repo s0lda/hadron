@@ -212,8 +212,50 @@ pub fn fallback_path() -> Option<PathBuf> {
     )
 }
 
+/// Maximum age (24 hours) before a background CDN refresh of `acp_registry.json` is triggered.
+const REGISTRY_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Pure freshness predicate for the cached registry file's modified timestamp.
+pub(crate) fn is_registry_cache_stale(
+    modified: Option<std::time::SystemTime>,
+    now: std::time::SystemTime,
+) -> bool {
+    let Some(mtime) = modified else {
+        return true;
+    };
+    now.duration_since(mtime)
+        .map(|age| age >= REGISTRY_CACHE_TTL)
+        .unwrap_or(false)
+}
+
+#[cfg(not(test))]
+fn trigger_background_registry_refresh_if_stale() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REFRESH_STARTED: AtomicBool = AtomicBool::new(false);
+
+    let modified = cache_path()
+        .and_then(|cp| fs::metadata(cp).ok())
+        .and_then(|m| m.modified().ok());
+    if !is_registry_cache_stale(modified, std::time::SystemTime::now()) {
+        return;
+    }
+    if REFRESH_STARTED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
+        let _ = std::thread::Builder::new()
+            .name("hadron-acp-registry-refresh".to_string())
+            .spawn(|| {
+                let _ = fetch_and_cache_registry();
+            });
+    }
+}
+
 /// Read cached registry data from disk (`~/.hadron/acp_registry.json` or fallback).
 pub fn load_cached_registry() -> Option<AcpRegistryData> {
+    #[cfg(not(test))]
+    trigger_background_registry_refresh_if_stale();
+
     if let Some(cp) = cache_path() {
         if let Ok(contents) = fs::read_to_string(&cp) {
             if let Ok(data) = parse_registry_json(&contents) {

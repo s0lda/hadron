@@ -309,8 +309,7 @@ pub fn selectors_from(options: &[SessionConfigOption]) -> AcpSelectors {
     }
 }
 
-/// Same single boot as [`probe_selector`], but keeps every selector the agent
-/// advertised instead of dropping all but the model.
+/// Same single boot as [`probe`], keeping every selector the agent advertised.
 pub fn probe_selectors(target: &AcpTarget) -> anyhow::Result<AcpSelectors> {
     let (_name, opts) = probe_session(target, None, None)?;
     Ok(selectors_from(&opts))
@@ -329,20 +328,12 @@ pub fn probe_selectors_for_seat(
     Ok(selectors_from(&opts))
 }
 
-/// The agent's advertised **model selector** — the offered models plus its current
-/// (default) pick — or `None` when the agent offers no model picker. Same boot as
-/// [`probe`]; the chamber re-probes with this each time an ACP quark's Settings open,
-/// so the model dropdown reflects the agent's live lineup rather than a cached guess.
-pub fn probe_selector(target: &AcpTarget) -> anyhow::Result<Option<ModelSelector>> {
-    Ok(probe_selectors(target)?.model)
-}
-
 use super::session::{acp_stdio_descriptor, acp_stdio_descriptor_sandboxed, descriptor_runs_via_wsl};
 
 /// Boot an ACP agent, complete `initialize` + `session/new`, read back the agent's
 /// name and its advertised `config_options`, and shut it down. The shared core of
-/// [`probe`] and [`probe_selector`] — one boot path, so a change to the handshake
-/// (or the 120s guard) can never drift between the two callers. **Blocking.**
+/// [`probe`] and [`probe_selectors`] — one boot path, so a change to the handshake
+/// (or the 120s guard) can never drift between the callers. **Blocking.**
 fn probe_session(
     target: &AcpTarget,
     work_dir: Option<&std::path::Path>,

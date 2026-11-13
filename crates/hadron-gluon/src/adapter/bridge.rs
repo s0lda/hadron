@@ -275,6 +275,17 @@ pub fn provision_venv() -> anyhow::Result<PathBuf> {
     Ok(python)
 }
 
+/// Whether `target` invokes the vendored `agy_acp.py` Python bridge under `{hadron}/bridges/agy`.
+pub fn target_uses_agy_bridge(target: &crate::adapter::registry::AcpTarget) -> bool {
+    let norm = |s: &str| s.replace('\\', "/");
+    let prog = norm(&target.program);
+    prog.contains("bridges/agy/")
+        || target.args.iter().any(|a| {
+            let an = norm(a);
+            an.contains("bridges/agy/agy_acp.py") || an.ends_with("/agy_acp.py")
+        })
+}
+
 /// Ensure the bridge script is materialized, venv is provisioned, and packages are up to date.
 /// Must only be invoked from background tasks off the UI thread.
 pub fn ensure_bridge_ready() -> anyhow::Result<PathBuf> {
