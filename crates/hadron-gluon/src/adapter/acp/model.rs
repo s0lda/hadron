@@ -253,23 +253,16 @@ pub fn resolve_model_or_split_effort(
     }) {
         return (None, None);
     }
-    let lower = trimmed.to_ascii_lowercase();
-    for suffix in ["-xhigh", "-medium", "-high", "-low", "-max"] {
-        if let Some(base) = lower.strip_suffix(suffix) {
-            if !base.is_empty() && base != "gemini-pro-orchestrator" {
-                if let Some(hit) = selector
-                    .available
-                    .iter()
-                    .find(|m| m.value.eq_ignore_ascii_case(base))
-                {
-                    let model_change = (hit.value != selector.current).then(|| hit.value.clone());
-                    let effort = suffix.trim_start_matches('-').to_string();
-                    return (model_change, Some(effort));
-                }
-            }
+    let Some((base, effort)) = hadron_lattice::split_model_effort_suffix(trimmed) else {
+        return (None, None);
+    };
+    match selector.available.iter().find(|m| m.value.eq_ignore_ascii_case(base)) {
+        Some(hit) => {
+            let model_change = (hit.value != selector.current).then(|| hit.value.clone());
+            (model_change, Some(effort.to_ascii_lowercase()))
         }
+        None => (None, None),
     }
-    (None, None)
 }
 
 /// Boot an ACP agent, complete the `initialize` handshake, read back who answered,

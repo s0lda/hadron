@@ -310,6 +310,22 @@ impl Seat {
         }
     }
 
+    /// Whether a persisted `effort` on this seat may be carried to the runtime (and shown
+    /// in the roster) before any live probe. The one gate shared by the gluon
+    /// (`spec_for_seat`) and the chamber (roster display, persisted-effort retention).
+    ///
+    /// - `Transport::Acp`: any model that does not encode effort in its id — the live
+    ///   `thought_level` selector offered on `session/new` is authoritative and drops an
+    ///   unsupported effort (native `agy acp` splits `gemini-4-carbon` + `thought_level`,
+    ///   which [`Seat::supports_effort`] rejects pre-probe as a `gemini*` model).
+    /// - Every other transport: exactly [`Seat::supports_effort`].
+    pub fn accepts_effort(&self) -> bool {
+        match self.transport {
+            Transport::Acp => !model_encodes_effort(&self.model),
+            _ => self.supports_effort(),
+        }
+    }
+
     /// A CLI seat — the shape every seat had before ACP. Keeps construction sites
     /// (and tests) from having to spell out two ACP fields they do not care about.
     pub fn cli(id: QuarkId, vendor: impl Into<String>, model: impl Into<String>, flavor: Flavor) -> Seat {

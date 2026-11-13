@@ -947,33 +947,20 @@ fn build_statusline_settings_json(command: &str) -> String {
 ///
 /// Google's `agy` CLI (`BuildStatusLineData` / `Store.ModelMaxTokens`) reports a 1M
 /// (`1_048_576` = $2^{20}$) context window for both Gemini 3.x/4.x and Claude Opus/Sonnet 5.5
-/// seats; non-`agy` Claude CLI models default to `1_000_000` for 1M variants (`claude-opus-5*`,
-/// `claude-sonnet-5*`, `claude-opus-4-6`/`4-7`/`4-8`, or `1m`) and `200_000` otherwise.
+/// seats; non-`agy` Claude CLI models default to `1_000_000` for 1M variants
+/// ([`hadron_lattice::is_1m_context_model`]) and `200_000` otherwise.
 fn default_cli_context_window_size(is_agy: bool, model: Option<&str>) -> u32 {
     if is_agy {
         return 1_048_576;
     }
     if let Some(m) = model {
         let lower = m.to_ascii_lowercase();
-        let is_1m_claude = [
-            "claude-opus-5",
-            "claude-sonnet-5",
-            "claude-opus-4-6",
-            "claude-opus-4-7",
-            "claude-opus-4-8",
-            "opus-5",
-            "sonnet-5",
-            "opus-4-6",
-            "opus-4-7",
-            "opus-4-8",
-        ]
-        .iter()
-        .any(|pat| lower.contains(pat));
-        if is_1m_claude {
+        let is_claude = ["claude", "opus", "sonnet"].iter().any(|p| lower.contains(p));
+        if is_claude && hadron_lattice::is_1m_context_model(&lower) {
             return 1_000_000;
         }
         if lower.contains("claude") {
-            return if lower.contains("1m") { 1_000_000 } else { 200_000 };
+            return 200_000;
         }
     }
     1_048_576
@@ -2465,6 +2452,9 @@ mod tests {
         assert_eq!(default_cli_context_window_size(false, Some("claude-opus-5-5-high")), 1_000_000);
         assert_eq!(default_cli_context_window_size(false, Some("claude-sonnet-5-5-high")), 1_000_000);
         assert_eq!(default_cli_context_window_size(true, Some("claude-3-5-sonnet")), 1_048_576);
+        // Gemini (1M per the lattice SSOT) and unknown models keep the 2^20 window, never Claude's 1_000_000.
+        assert_eq!(default_cli_context_window_size(false, Some("gemini-4-carbon-medium")), 1_048_576);
+        assert_eq!(default_cli_context_window_size(false, None), 1_048_576);
     }
 
     #[tokio::test]

@@ -412,17 +412,16 @@ pub fn collect_process_tree(root_pids: &[u32], dir: &std::path::Path) -> Vec<Pro
 /// Whether a process command line belongs to quark `id`: it names the quark's worktree
 /// (`trees/<id>` or `trees\<id>`) or carries its WSL tag (`hadron:<id>`).
 ///
-/// The id must end at a boundary (end of string, a path separator, whitespace, a quote,
-/// `;`, `,` or NUL), so quark `cli-agy` never claims `trees/cli-agy-2`'s processes.
+/// The id must end at a non-identifier boundary (end of string or any character outside
+/// `[A-Za-z0-9_.-]`, including `/`, `\`, whitespace, quotes, `]`, `;`, `,`, or NUL), so
+/// quark `cli-agy` matches `agy chat [trees/cli-agy]` while never claiming `trees/cli-agy-2`.
 pub fn cmdline_matches_quark_id(cmd: &str, id: &str) -> bool {
     if id.is_empty() {
         return false;
     }
-    let at_boundary = |c: Option<char>| {
-        matches!(
-            c,
-            None | Some('/' | '\\' | ' ' | '\t' | '\n' | '\r' | '"' | '\'' | ';' | ',' | '\0')
-        )
+    let at_boundary = |c: Option<char>| match c {
+        None => true,
+        Some(ch) => !ch.is_ascii_alphanumeric() && !matches!(ch, '-' | '_' | '.'),
     };
     ["trees/", "trees\\", "hadron:"].iter().any(|prefix| {
         let needle = format!("{prefix}{id}");
@@ -442,10 +441,13 @@ mod tests {
         assert!(cmdline_matches_quark_id(r"agy.exe C:\repo\.hadron\trees\cli-agy", "cli-agy"));
         assert!(cmdline_matches_quark_id("bash HADRON_WSL_TAG=hadron:cli-agy", "cli-agy"));
         assert!(cmdline_matches_quark_id("x \"trees/cli-agy\" y", "cli-agy"));
+        assert!(cmdline_matches_quark_id("agy chat [trees/cli-agy]", "cli-agy"));
         // A later exact occurrence still counts after an earlier prefix collision.
         assert!(cmdline_matches_quark_id("trees/cli-agy-2/a trees/cli-agy/b", "cli-agy"));
 
         assert!(!cmdline_matches_quark_id("agy --cwd /home/j/repo/.hadron/trees/cli-agy-2/src", "cli-agy"));
+        assert!(!cmdline_matches_quark_id("trees/cli-agy_worker", "cli-agy"));
+        assert!(!cmdline_matches_quark_id("trees/cli-agy.bak", "cli-agy"));
         assert!(!cmdline_matches_quark_id(r"C:\repo\.hadron\trees\cli-agy-2\x", "cli-agy"));
         assert!(!cmdline_matches_quark_id("HADRON_WSL_TAG=hadron:cli-agy-2", "cli-agy"));
         assert!(!cmdline_matches_quark_id("cli-agy", "cli-agy"), "bare id is not a quark marker");

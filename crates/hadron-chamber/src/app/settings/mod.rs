@@ -725,15 +725,14 @@ pub(super) fn seat_allows_persisted_effort(
     if !effort_options_for_seat(seat, acp_probe).is_empty() {
         return true;
     }
-    if hadron_lattice::model_encodes_effort(&seat.model) {
+    if !seat.accepts_effort() {
         return false;
     }
-    if seat.transport == hadron_lattice::Transport::Acp {
-        let probe_is_ready_without_effort = matches!(
+    // Only a not-yet-`Ready` ACP seat reaches here (any other accepting seat already
+    // offered options above); keep its effort until the live probe says otherwise.
+    seat.transport == hadron_lattice::Transport::Acp
+        && !matches!(
             acp_probe,
             Some(p) if p.id == seat.id.as_str() && matches!(p.state, AcpModelState::Ready { .. })
-        );
-        return !probe_is_ready_without_effort;
-    }
-    false
+        )
 }

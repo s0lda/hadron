@@ -876,14 +876,9 @@ pub fn build_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore)
 /// [`build_seat_watched`] construct from — one place, so a new `Seat` field
 /// reaches the watched path and the unwatched one together.
 fn spec_for_seat(seat: &Seat, store: &dyn hadron_lattice::secrets::SecretStore) -> anyhow::Result<QuarkSpec> {
-    let effort = match seat.transport {
-        // ACP sessions check live `effort_selector(&offered)` on `session/new`, so let
-        // non-effort-encoded models carry `seat.effort` through to `AcpSession::boot`.
-        hadron_lattice::Transport::Acp => (!hadron_lattice::model_encodes_effort(&seat.model))
-            .then(|| seat.effort.clone())
-            .flatten(),
-        _ => seat.supports_effort().then(|| seat.effort.clone()).flatten(),
-    };
+    // ACP sessions check live `effort_selector(&offered)` on `session/new`; the shared
+    // pre-probe gate lives on the seat so the chamber shows exactly what is sent.
+    let effort = seat.accepts_effort().then(|| seat.effort.clone()).flatten();
     Ok(QuarkSpec {
         id: seat.id.clone(),
         flavor: seat.flavor.clone(),

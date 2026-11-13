@@ -8,6 +8,10 @@
 
 use std::path::Path;
 
+/// The project root that owns a field path — one rule, defined in the lattice.
+pub use hadron_lattice::repo_root_of;
+pub use hadron_lattice::sys::paths::strip_unc_prefix;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDiff {
     pub path: String,
@@ -334,34 +338,6 @@ pub fn parse_diff(raw: &str) -> Vec<FileDiff> {
     files
 }
 
-/// The project root that owns a field path — `<root>/.hadron/field.jsonl` → `<root>`.
-/// A field sitting outside a `.hadron/` directory is taken to be in the root already.
-pub fn repo_root_of(field_path: &Path) -> &Path {
-    let Some(parent) = field_path.parent() else {
-        return field_path;
-    };
-    let root = if parent.file_name() == Some(std::ffi::OsStr::new(".hadron")) {
-        parent.parent().unwrap_or(parent)
-    } else {
-        parent
-    };
-    if root.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        root
-    }
-}
-
-/// Strip Windows verbatim UNC prefix (`\\?\` or `\\?\UNC\`).
-pub fn strip_unc_prefix(path_str: &str) -> String {
-    if let Some(stripped) = path_str.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{stripped}")
-    } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
-        stripped.to_string()
-    } else {
-        path_str.to_string()
-    }
-}
 
 /// Formats a repository root path for display in the UI (e.g. `~/dev/project/`),
 /// normalizing WSL UNC paths (`\\wsl.localhost\<distro>\home\<user>\...`) and

@@ -628,25 +628,6 @@ pub struct ProcessRow {
     pub can_stop_or_kill: bool,
 }
 
-fn cmdline_matches_quark_id(cmd: &str, id: &str) -> bool {
-    if id.is_empty() {
-        return false;
-    }
-    let patterns = [
-        format!("trees/{id}"),
-        format!("trees\\{id}"),
-        format!("hadron:{id}"),
-    ];
-    patterns.iter().any(|pat| {
-        cmd.match_indices(pat.as_str()).any(|(idx, matched)| {
-            match cmd[idx + matched.len()..].chars().next() {
-                None => true,
-                Some(ch) => !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.',
-            }
-        })
-    })
-}
-
 /// Builds the Process Manager's complete hierarchy: Hadron main UI, daemon,
 /// adopted Quarks, active PTY terminals, and child subprocesses.
 pub fn build_full_process_rows(
@@ -719,7 +700,7 @@ pub fn build_full_process_rows(
         let matches_quark = |p: &&hadron_lattice::sys::inspect::ProcessInfo| {
             p.pid != chamber_pid
                 && Some(p.pid) != effective_gluon_pid
-                && cmdline_matches_quark_id(&p.cmdline, &r.id)
+                && hadron_lattice::sys::cmdline_matches_quark_id(&p.cmdline, &r.id)
         };
         let matching_pids: std::collections::HashSet<u32> = process_tree
             .iter()
@@ -1081,32 +1062,12 @@ fn render_row(e: &Event, turn_usages: &HashMap<String, hadron_lattice::Usage>) -
     }
 }
 
-fn is_1m_context_model(model: Option<&str>) -> bool {
-    let Some(m) = model else {
-        return false;
-    };
-    let lower = m.to_ascii_lowercase();
-    [
-        "claude-opus-5",
-        "claude-sonnet-5",
-        "claude-opus-4-6",
-        "claude-opus-4-7",
-        "claude-opus-4-8",
-        "opus-5",
-        "sonnet-5",
-        "1m",
-        "gemini",
-    ]
-    .iter()
-    .any(|pat| lower.contains(pat))
-}
-
 /// Normalize `Usage.context` so historical CLI turns that folded cumulative multi-step
 /// `spend.cache_read` into `context.used_tokens` (`used_tokens == input + cache_read`)
 /// or recorded stale `200_000` windows for 1M-context models / `>200k` single-step
 /// occupancy are corrected to accurate single-window occupancy.
 fn normalize_usage_context(mut usage: hadron_lattice::Usage) -> hadron_lattice::Usage {
-    let model_is_1m = is_1m_context_model(usage.model.as_deref());
+    let model_is_1m = usage.model.as_deref().is_some_and(hadron_lattice::is_1m_context_model);
     if let Some(ctx) = &mut usage.context {
         if let (Some(input), Some(cache_read)) = (usage.spend.input, usage.spend.cache_read) {
             if input > 0 && cache_read > 0 && ctx.used_tokens == input.saturating_add(cache_read) {
@@ -1270,12 +1231,7 @@ pub fn project_with_team(events: &[Event], team: &Team, global: &Team) -> Chambe
             // Legibility comes from the resolved team if the quark is adopted, else
             // from the catalogue (available-but-off), else it is an event-only id we
             // know nothing about (a live participant with no seat).
-            let seat_shows_effort = |s: &hadron_lattice::Seat| {
-                s.supports_effort()
-                    || (s.transport == hadron_lattice::Transport::Acp
-                        && s.vendor.eq_ignore_ascii_case("antigravity")
-                        && !hadron_lattice::model_encodes_effort(&s.model))
-            };
+            let seat_shows_effort = |s: &hadron_lattice::Seat| s.accepts_effort();
             let (display_name, vendor, model, flavor, transport, effort, enabled, adopted) =
                 match (team.get(&qid), global.get(&qid)) {
                     (Some(s), _) => (
