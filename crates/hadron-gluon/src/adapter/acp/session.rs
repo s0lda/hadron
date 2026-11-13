@@ -647,6 +647,85 @@ impl LiveFeed {
     }
 }
 
+/// Outcome of applying a session config option (`effort`, `mode`, ...).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ConfigOptionOutcome {
+    pub(super) level: term::Level,
+    pub(super) message: String,
+    pub(super) fresh_options: Option<Vec<agent_client_protocol::schema::v1::SessionConfigOption>>,
+}
+
+/// Interpret the agent's response to `session/set_config_option` without
+/// silently logging success on failure.
+pub(super) fn interpret_config_option_response(
+    kind: &str,
+    value: &str,
+    res: Result<
+        agent_client_protocol::schema::v1::SetSessionConfigOptionResponse,
+        agent_client_protocol::Error,
+    >,
+) -> ConfigOptionOutcome {
+    match res {
+        Ok(resp) => ConfigOptionOutcome {
+            level: term::Level::Info,
+            message: format!("{kind} set to {value:?}"),
+            fresh_options: Some(resp.config_options),
+        },
+        Err(e) => ConfigOptionOutcome {
+            level: term::Level::Warn,
+            message: format!("agent refused {kind} {value:?}: {e}"),
+            fresh_options: None,
+        },
+    }
+}
+
+async fn apply_config_selector<F>(
+    kind: &str,
+    want: Option<&str>,
+    offered: &mut Vec<agent_client_protocol::schema::v1::SessionConfigOption>,
+    pick_selector: F,
+    cx: &ConnectionTo<Agent>,
+    sid: &agent_client_protocol::schema::v1::SessionId,
+) where
+    F: FnOnce(
+        &[agent_client_protocol::schema::v1::SessionConfigOption],
+    ) -> Option<super::model::ModelSelector>,
+{
+    let Some(want) = want else { return };
+    let Some(selector) = pick_selector(offered) else {
+        return;
+    };
+    let Some(value) = resolve_model(&selector, want) else {
+        return;
+    };
+    let res = cx
+        .send_request(SetSessionConfigOptionRequest::new(
+            sid.clone(),
+            selector.config_id,
+            value.as_str(),
+        ))
+        .block_task()
+        .await;
+    let outcome = interpret_config_option_response(kind, &value, res);
+    if let Some(fresh) = outcome.fresh_options {
+        *offered = fresh;
+    }
+    term::print(term::Stream::Err, Source::Acp, outcome.level, &outcome.message);
+}
+
+/// Point a relative or bare-command bridge target at the provisioned `venv` python
+/// path returned by `ensure_bridge_ready`, leaving already-absolute custom overrides alone.
+pub(super) fn apply_bridge_venv_to_target(
+    target: &AcpTarget,
+    venv_py: &std::path::Path,
+) -> AcpTarget {
+    let mut boot_target = target.clone();
+    if !std::path::Path::new(&boot_target.program).is_absolute() {
+        boot_target.program = venv_py.to_string_lossy().into_owned();
+    }
+    boot_target
+}
+
 impl super::AcpQuark {
     /// Boot the agent and open one session in `cwd`. Blocks until the agent has
     /// answered `initialize` and `session/new`, so a boot failure (missing `npx`, a
@@ -1049,70 +1128,25 @@ impl super::AcpQuark {
                                 }
                             }
 
-                            if let Some(want_eff) = effective_effort {
-                                if let Some(selector) = effort_selector(&offered) {
-                                    if let Some(value) = resolve_model(&selector, &want_eff) {
-                                        match cx
-                                            .send_request(SetSessionConfigOptionRequest::new(
-                                                sid.clone(),
-                                                selector.config_id,
-                                                value.as_str(),
-                                            ))
-                                            .block_task()
-                                            .await
-                                        {
-                                            Ok(resp) => {
-                                                offered = resp.config_options;
-                                                term::info(
-                                                    Source::Acp,
-                                                    &format!("effort set to {:?}", value),
-                                                );
-                                            }
-                                            Err(e) => {
-                                                term::warn(
-                                                    Source::Acp,
-                                                    &format!(
-                                                        "agent refused effort {:?}: {e}",
-                                                        value
-                                                    ),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            let _ = apply_config_selector(
+                                "effort",
+                                effective_effort.as_deref(),
+                                &mut offered,
+                                effort_selector,
+                                &cx,
+                                &sid,
+                            )
+                            .await;
 
-                            if let Some(want_m) = want_mode {
-                                if let Some(selector) = mode_selector(&offered) {
-                                    if let Some(value) = resolve_model(&selector, &want_m) {
-                                        match cx
-                                            .send_request(SetSessionConfigOptionRequest::new(
-                                                sid.clone(),
-                                                selector.config_id,
-                                                value.as_str(),
-                                            ))
-                                            .block_task()
-                                            .await
-                                        {
-                                            Ok(_) => {
-                                                term::info(
-                                                    Source::Acp,
-                                                    &format!("mode set to {:?}", value),
-                                                );
-                                            }
-                                            Err(e) => {
-                                                term::warn(
-                                                    Source::Acp,
-                                                    &format!(
-                                                        "agent refused mode {:?}: {e}",
-                                                        value
-                                                    ),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            let _ = apply_config_selector(
+                                "mode",
+                                want_mode.as_deref(),
+                                &mut offered,
+                                mode_selector,
+                                &cx,
+                                &sid,
+                            )
+                            .await;
 
                             // The agent is up and has a session. Unblock `boot`.
                             let _ = ready_tx.send(Ok(()));
@@ -1230,14 +1264,18 @@ impl super::AcpQuark {
 
         // Boot on the first turn, in the quark's own worktree, and keep it.
         if self.session.is_none() {
-            if crate::adapter::bridge::target_uses_agy_bridge(&self.target) {
-                tokio::task::spawn_blocking(crate::adapter::bridge::ensure_bridge_ready)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("agy bridge check task panicked: {e}"))??;
-            }
+            let boot_target = if crate::adapter::bridge::target_uses_agy_bridge(&self.target) {
+                let venv_py =
+                    tokio::task::spawn_blocking(crate::adapter::bridge::ensure_bridge_ready)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("agy bridge check task panicked: {e}"))??;
+                apply_bridge_venv_to_target(&self.target, &venv_py)
+            } else {
+                self.target.clone()
+            };
             self.session = Some(Self::boot(
                 self.id.clone(),
-                &self.target,
+                &boot_target,
                 turn.cwd.clone(),
                 self.model.clone(),
                 self.effort.clone(),

@@ -52,16 +52,71 @@ pub struct GenericLspClient {
     root_path: String,
 }
 
+/// Hard ceiling on a single incoming JSON-RPC message (32 MiB), preventing an
+/// out-of-memory panic on a corrupt or hostile `Content-Length` header.
+const MAX_LSP_MESSAGE: usize = 32 * 1024 * 1024;
+
 /// `file://` URI for an absolute filesystem path: `file:///C:/x` for a drive path and
-/// `file://server/share/x` for a UNC path.
+/// `file://server/share/x` for a UNC path. Percent-encodes `%`, spaces, `#`, and `?`
+/// (`%` first so injected escapes are not double-encoded).
 fn file_uri(path: &str) -> String {
-    let p = path.replace('\\', "/");
+    let p = path
+        .replace('\\', "/")
+        .replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('#', "%23")
+        .replace('?', "%3F");
     if p.starts_with("//") {
         format!("file:{p}")
     } else if p.starts_with('/') {
         format!("file://{p}")
     } else {
         format!("file:///{p}")
+    }
+}
+
+async fn read_lsp_frame<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> Result<Option<Vec<u8>>, String> {
+    loop {
+        let mut line = String::new();
+        let mut content_len: Option<usize> = None;
+
+        // Read headers until empty line "\r\n"
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => return Ok(None), // EOF
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = trimmed.split_once(':') {
+                        if k.trim().eq_ignore_ascii_case("content-length") {
+                            if let Ok(len) = v.trim().parse::<usize>() {
+                                content_len = Some(len);
+                            }
+                        }
+                    }
+                }
+                Err(e) => return Err(format!("LSP header read failed: {e}")),
+            }
+        }
+
+        if let Some(len) = content_len {
+            if len > MAX_LSP_MESSAGE {
+                return Err(format!(
+                    "LSP Content-Length {len} exceeds {MAX_LSP_MESSAGE} byte cap"
+                ));
+            }
+            let mut body_buf = vec![0u8; len];
+            reader
+                .read_exact(&mut body_buf)
+                .await
+                .map_err(|e| format!("LSP body read failed: {e}"))?;
+            return Ok(Some(body_buf));
+        }
     }
 }
 
@@ -153,59 +208,39 @@ impl GenericLspClient {
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             loop {
-                let mut line = String::new();
-                let mut content_len: Option<usize> = None;
-
-                // Read headers until empty line "\r\n"
-                loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) => return, // EOF
-                        Ok(_) => {
-                            let trimmed = line.trim();
-                            if trimmed.is_empty() {
-                                break;
-                            }
-                            if let Some((k, v)) = trimmed.split_once(':') {
-                                if k.trim().eq_ignore_ascii_case("content-length") {
-                                    if let Ok(len) = v.trim().parse::<usize>() {
-                                        content_len = Some(len);
-                                    }
-                                }
-                            }
+                let body_buf = match read_lsp_frame(&mut reader).await {
+                    Ok(Some(buf)) => buf,
+                    Ok(None) => return,
+                    Err(err) => {
+                        let mut map = pending_clone.write().await;
+                        for (_, tx) in map.drain() {
+                            let _ = tx.send(Err(err.clone()));
                         }
-                        Err(_) => return,
-                    }
-                }
-
-                if let Some(len) = content_len {
-                    let mut body_buf = vec![0u8; len];
-                    if reader.read_exact(&mut body_buf).await.is_err() {
                         return;
                     }
+                };
 
-                    if let Ok(val) = serde_json::from_slice::<Value>(&body_buf) {
-                        // A message with a `method` is the server talking to us (a request
-                        // such as `window/workDoneProgress/create`, or a notification). Its
-                        // `id` lives in the server's id space, so it must never resolve one of
-                        // our pending requests. Requests get a null result so the server is
-                        // not left waiting.
-                        if val.get("method").is_some() {
-                            if let Some(id) = val.get("id") {
-                                let ack = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null });
-                                let _ = reply_tx.send(ack.to_string()).await;
-                            }
-                            continue;
+                if let Ok(val) = serde_json::from_slice::<Value>(&body_buf) {
+                    // A message with a `method` is the server talking to us (a request
+                    // such as `window/workDoneProgress/create`, or a notification). Its
+                    // `id` lives in the server's id space, so it must never resolve one of
+                    // our pending requests. Requests get a null result so the server is
+                    // not left waiting.
+                    if val.get("method").is_some() {
+                        if let Some(id) = val.get("id") {
+                            let ack = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null });
+                            let _ = reply_tx.send(ack.to_string()).await;
                         }
-                        if let Some(id) = val.get("id").and_then(|i| i.as_i64()) {
-                            let mut map = pending_clone.write().await;
-                            if let Some(sender) = map.remove(&id) {
-                                if let Some(err) = val.get("error") {
-                                    let _ = sender.send(Err(err.to_string()));
-                                } else {
-                                    let result = val.get("result").cloned().unwrap_or(Value::Null);
-                                    let _ = sender.send(Ok(result));
-                                }
+                        continue;
+                    }
+                    if let Some(id) = val.get("id").and_then(|i| i.as_i64()) {
+                        let mut map = pending_clone.write().await;
+                        if let Some(sender) = map.remove(&id) {
+                            if let Some(err) = val.get("error") {
+                                let _ = sender.send(Err(err.to_string()));
+                            } else {
+                                let result = val.get("result").cloned().unwrap_or(Value::Null);
+                                let _ = sender.send(Ok(result));
                             }
                         }
                     }
@@ -257,7 +292,7 @@ impl GenericLspClient {
         if self.opened.read().await.contains(rel_path) {
             return Ok(());
         }
-        let abs = std::path::Path::new(&self.root_path).join(rel_path);
+        let abs = crate::file::resolve_jailed_path(&Root::new(&self.root_path), rel_path)?;
         let text = tokio::fs::read_to_string(&abs)
             .await
             .map_err(|e| ForgeError::Io(format!("failed to read {rel_path}: {e}")))?;
@@ -521,5 +556,56 @@ mod tests {
         let syms = client.query_document_symbols("src/lib.rs").await.unwrap();
         assert_eq!(syms.len(), 1);
         assert_eq!(syms[0].name, "calculate_hash");
+    }
+
+    #[test]
+    fn file_uri_percent_encodes_reserved_characters() {
+        assert_eq!(
+            file_uri("/tmp/my work/100% done#1?v=2.rs"),
+            "file:///tmp/my%20work/100%25%20done%231%3Fv=2.rs"
+        );
+        assert_eq!(
+            file_uri(r"C:\Users\Alice Smith\src#2\main.rs"),
+            "file:///C:/Users/Alice%20Smith/src%232/main.rs"
+        );
+        assert_eq!(
+            file_uri(r"\\server\my share\file?q.rs"),
+            "file://server/my%20share/file%3Fq.rs"
+        );
+    }
+
+    #[tokio::test]
+    async fn ensure_open_jails_path_against_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let client = GenericLspClient {
+            next_request_id: Arc::new(AtomicI64::new(1)),
+            pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            writer_tx: None,
+            _child: None,
+            opened: Arc::new(RwLock::new(HashSet::new())),
+            is_mock: false,
+            root_path: tmp.path().to_string_lossy().into_owned(),
+        };
+
+        let escape_err = client.ensure_open("../outside.rs").await.unwrap_err();
+        assert_eq!(escape_err, ForgeError::OutsideRoot);
+
+        let abs_err = client.ensure_open("/etc/passwd").await.unwrap_err();
+        assert_eq!(abs_err, ForgeError::OutsideRoot);
+    }
+
+    #[tokio::test]
+    async fn read_lsp_frame_caps_content_length_at_32_mib() {
+        let oversized = format!("Content-Length: {}\r\n\r\n{{}}", MAX_LSP_MESSAGE + 1);
+        let mut reader = BufReader::new(oversized.as_bytes());
+        let err = read_lsp_frame(&mut reader).await.unwrap_err();
+        assert!(err.contains("exceeds"), "expected cap error, got: {err}");
+
+        let ok_body = br#"{"jsonrpc":"2.0","id":1}"#;
+        let valid = format!("Content-Length: {}\r\n\r\n", ok_body.len());
+        let mut bytes = valid.into_bytes();
+        bytes.extend_from_slice(ok_body);
+        let mut reader = BufReader::new(bytes.as_slice());
+        assert_eq!(read_lsp_frame(&mut reader).await.unwrap().as_deref(), Some(ok_body.as_slice()));
     }
 }

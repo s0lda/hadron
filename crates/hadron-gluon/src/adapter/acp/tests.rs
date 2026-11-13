@@ -1807,6 +1807,56 @@ fn live_agy_acp_probe_selectors_for_seat_returns_xhigh_for_hydrogen() {
     );
 }
 
+#[test]
+fn apply_bridge_venv_to_target_captures_venv_only_when_program_is_not_absolute() {
+    let venv_py = std::env::temp_dir().join("bridge-venv").join("python");
+
+    let relative = AcpTarget {
+        program: "python3".into(),
+        args: vec!["/hadron/bridges/agy/agy_acp.py".into()],
+        env: vec![],
+    };
+    let rewritten = super::session::apply_bridge_venv_to_target(&relative, &venv_py);
+    assert_eq!(rewritten.program, venv_py.to_string_lossy());
+    assert_eq!(rewritten.args, relative.args);
+
+    let abs_prog = std::env::temp_dir().join("custom").join("python");
+    let absolute = AcpTarget {
+        program: abs_prog.to_string_lossy().into_owned(),
+        args: vec!["/hadron/bridges/agy/agy_acp.py".into()],
+        env: vec![],
+    };
+    let kept = super::session::apply_bridge_venv_to_target(&absolute, &venv_py);
+    assert_eq!(kept.program, absolute.program);
+}
+
+#[test]
+fn failed_set_session_config_option_for_effort_and_mode_warns_without_setting_log() {
+    use agent_client_protocol::schema::v1::SetSessionConfigOptionResponse;
+
+    let err = agent_client_protocol::Error::invalid_params();
+    let eff_err = super::session::interpret_config_option_response("effort", "xhigh", Err(err.clone()));
+    assert_eq!(eff_err.level, hadron_lattice::term::Level::Warn);
+    assert!(eff_err.fresh_options.is_none());
+    assert!(eff_err.message.contains("agent refused effort \"xhigh\""));
+    assert!(!eff_err.message.contains("effort set"));
+
+    let mode_err = super::session::interpret_config_option_response("mode", "plan", Err(err));
+    assert_eq!(mode_err.level, hadron_lattice::term::Level::Warn);
+    assert!(mode_err.fresh_options.is_none());
+    assert!(mode_err.message.contains("agent refused mode \"plan\""));
+    assert!(!mode_err.message.contains("mode set"));
+
+    let eff_ok = super::session::interpret_config_option_response(
+        "effort",
+        "high",
+        Ok(SetSessionConfigOptionResponse::new(vec![])),
+    );
+    assert_eq!(eff_ok.level, hadron_lattice::term::Level::Info);
+    assert_eq!(eff_ok.message, "effort set to \"high\"");
+    assert_eq!(eff_ok.fresh_options, Some(vec![]));
+}
+
 
 
 

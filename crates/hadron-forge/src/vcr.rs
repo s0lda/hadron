@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -97,14 +97,7 @@ impl VcrUpstream {
             ))
         })?;
         let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
-        let (host, port) = match authority.rsplit_once(':') {
-            Some((h, p)) => (
-                h,
-                p.parse::<u16>()
-                    .map_err(|_| ForgeError::Rejected(format!("bad port in target_url {url:?}")))?,
-            ),
-            None => (authority, 80),
-        };
+        let (host, port) = parse_authority(authority, url)?;
         if host.is_empty() {
             return Err(ForgeError::Rejected(format!("target_url {url:?} has no host")));
         }
@@ -117,11 +110,44 @@ impl VcrUpstream {
     }
 
     fn host_header(&self) -> String {
-        if self.port == 80 {
-            self.host.clone()
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
         } else {
-            format!("{}:{}", self.host, self.port)
+            self.host.clone()
+        };
+        if self.port == 80 {
+            host
+        } else {
+            format!("{host}:{}", self.port)
         }
+    }
+}
+
+fn parse_authority<'a>(authority: &'a str, url: &str) -> Result<(&'a str, u16), ForgeError> {
+    if let Some(after_open) = authority.strip_prefix('[') {
+        let Some((host, after_close)) = after_open.split_once(']') else {
+            return Err(ForgeError::Rejected(format!(
+                "unclosed IPv6 bracket in target_url {url:?}"
+            )));
+        };
+        if after_close.is_empty() {
+            return Ok((host, 80));
+        }
+        let Some(port_str) = after_close.strip_prefix(':') else {
+            return Err(ForgeError::Rejected(format!("bad authority in target_url {url:?}")));
+        };
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|_| ForgeError::Rejected(format!("bad port in target_url {url:?}")))?;
+        return Ok((host, port));
+    }
+    match authority.rsplit_once(':') {
+        Some((h, p)) => Ok((
+            h,
+            p.parse::<u16>()
+                .map_err(|_| ForgeError::Rejected(format!("bad port in target_url {url:?}")))?,
+        )),
+        None => Ok((authority, 80)),
     }
 }
 
@@ -364,6 +390,34 @@ fn is_hop_header(name: &str) -> bool {
     )
 }
 
+const VCR_IO_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn reject_crlf(label: &str, value: &str) -> std::io::Result<()> {
+    if value.contains(['\r', '\n']) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("CRLF injection rejected in {label}"),
+        ));
+    }
+    Ok(())
+}
+
+/// Prefer an exact `(method, request_path)` match before falling back to a prefix match.
+fn find_replay_interaction<'a>(
+    interactions: &'a [VcrInteraction],
+    method: &str,
+    path: &str,
+) -> Option<&'a VcrInteraction> {
+    interactions
+        .iter()
+        .find(|i| i.request_method.eq_ignore_ascii_case(method) && i.request_path == path)
+        .or_else(|| {
+            interactions.iter().find(|i| {
+                i.request_method.eq_ignore_ascii_case(method) && path.starts_with(&i.request_path)
+            })
+        })
+}
+
 /// Forward one request to `upstream` and return its `(status, headers, body)`.
 ///
 /// Sent as HTTP/1.0 with `Connection: close`, so the upstream answers with a plain
@@ -375,19 +429,52 @@ async fn forward_upstream(
     headers: &BTreeMap<String, String>,
     body: &[u8],
 ) -> std::io::Result<(u16, BTreeMap<String, String>, String)> {
-    let mut conn = TcpStream::connect((upstream.host.as_str(), upstream.port)).await?;
-    let mut req = format!("{method} {}{path} HTTP/1.0\r\nHost: {}\r\n", upstream.prefix, upstream.host_header());
+    forward_upstream_with_timeout(upstream, method, path, headers, body, VCR_IO_TIMEOUT).await
+}
+
+async fn forward_upstream_with_timeout(
+    upstream: &VcrUpstream,
+    method: &str,
+    path: &str,
+    headers: &BTreeMap<String, String>,
+    body: &[u8],
+    io_timeout: Duration,
+) -> std::io::Result<(u16, BTreeMap<String, String>, String)> {
+    reject_crlf("HTTP method", method)?;
+    reject_crlf("HTTP path", path)?;
+    let mut req = format!(
+        "{method} {}{path} HTTP/1.0\r\nHost: {}\r\n",
+        upstream.prefix,
+        upstream.host_header()
+    );
     for (k, v) in headers.iter().filter(|(k, _)| !is_hop_header(k)) {
+        reject_crlf("header name", k)?;
+        reject_crlf("header value", v)?;
         req.push_str(&format!("{k}: {v}\r\n"));
     }
     req.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", body.len()));
     let mut wire = req.into_bytes();
     wire.extend_from_slice(body);
-    conn.write_all(&wire).await?;
-    conn.flush().await?;
+
+    let mut conn = tokio::time::timeout(
+        io_timeout,
+        TcpStream::connect((upstream.host.as_str(), upstream.port)),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "upstream connect timed out"))??;
+
+    tokio::time::timeout(io_timeout, async {
+        conn.write_all(&wire).await?;
+        conn.flush().await
+    })
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "upstream write timed out"))??;
 
     let mut raw = Vec::new();
-    (&mut conn).take(MAX_HTTP_MESSAGE as u64).read_to_end(&mut raw).await?;
+    tokio::time::timeout(io_timeout, (&mut conn).take(MAX_HTTP_MESSAGE as u64).read_to_end(&mut raw))
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "upstream read timed out"))??;
+
     let head_end = raw
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -413,7 +500,11 @@ async fn handle_vcr_client(
     root: Root,
     cassette_name: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let Some((first_line, headers, body)) = read_http_request(&mut stream).await? else {
+    let Some((first_line, headers, body)) =
+        tokio::time::timeout(VCR_IO_TIMEOUT, read_http_request(&mut stream))
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "client HTTP read timed out"))??
+    else {
         return Ok(());
     };
     let mut parts = first_line.split_whitespace();
@@ -424,10 +515,7 @@ async fn handle_vcr_client(
     let (status, mut resp_headers, resp_body) = match &upstream {
         None => {
             let list = interactions.read().await;
-            if let Some(found) = list.iter().find(|i| {
-                i.request_method.eq_ignore_ascii_case(&method)
-                    && (i.request_path == path || path.starts_with(&i.request_path))
-            }) {
+            if let Some(found) = find_replay_interaction(&list, &method, &path) {
                 (found.response_status, found.response_headers.clone(), found.response_body.clone())
             } else {
                 (
@@ -622,13 +710,89 @@ mod tests {
             VcrUpstream::parse("http://example.com").unwrap(),
             VcrUpstream { host: "example.com".into(), port: 80, prefix: String::new() }
         );
+        assert_eq!(
+            VcrUpstream::parse("http://[::1]:8080/api/").unwrap(),
+            VcrUpstream { host: "::1".into(), port: 8080, prefix: "/api".into() }
+        );
+        let ipv6_default = VcrUpstream::parse("http://[::1]").unwrap();
+        assert_eq!(ipv6_default, VcrUpstream { host: "::1".into(), port: 80, prefix: String::new() });
+        assert_eq!(ipv6_default.host_header(), "[::1]");
+        assert_eq!(
+            VcrUpstream { host: "::1".into(), port: 8080, prefix: String::new() }.host_header(),
+            "[::1]:8080"
+        );
         assert!(VcrUpstream::parse("https://example.com").is_err());
         assert!(VcrUpstream::parse("http://:80").is_err());
+        assert!(VcrUpstream::parse("http://[::1").is_err());
+        assert!(VcrUpstream::parse("http://[::1]:notaport").is_err());
         assert!(VcrUpstream::parse("http://h:notaport").is_err());
 
         assert!(validate_cassette_name("api_v1.2-x").is_ok());
         for bad in ["", "../escape", "a/b", r"a\b", ".hidden"] {
             assert!(validate_cassette_name(bad).is_err(), "{bad:?} must be rejected");
         }
+    }
+
+    #[tokio::test]
+    async fn vcr_forwarding_rejects_crlf_and_times_out_on_stalled_upstream() {
+        let up = VcrUpstream::parse("http://127.0.0.1:9999").unwrap();
+        let err = forward_upstream(&up, "GET\r\nInjected: 1", "/", &BTreeMap::new(), b"")
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        let err = forward_upstream(&up, "GET", "/ok\nHTTP/1.1", &BTreeMap::new(), b"")
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        let mut bad_headers = BTreeMap::new();
+        bad_headers.insert("x-test".into(), "val\r\nEvil: 1".into());
+        let err = forward_upstream(&up, "GET", "/", &bad_headers, b"").await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        // Stalled upstream accepts connection and never responds -> TimedOut.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _server = tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        });
+        let stalled = VcrUpstream { host: "127.0.0.1".into(), port, prefix: String::new() };
+        let err = forward_upstream_with_timeout(
+            &stalled,
+            "GET",
+            "/slow",
+            &BTreeMap::new(),
+            b"",
+            Duration::from_millis(50),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn replay_prefers_exact_method_and_path_before_prefix_fallback() {
+        let make = |path: &str, body: &str| VcrInteraction {
+            request_method: "GET".into(),
+            request_path: path.into(),
+            request_headers: BTreeMap::new(),
+            request_body: String::new(),
+            response_status: 200,
+            response_headers: BTreeMap::new(),
+            response_body: body.into(),
+        };
+        let list = vec![make("/v1", "prefix-hit"), make("/v1/users", "exact-hit")];
+
+        assert_eq!(
+            find_replay_interaction(&list, "get", "/v1/users").unwrap().response_body,
+            "exact-hit"
+        );
+        assert_eq!(
+            find_replay_interaction(&list, "GET", "/v1/other").unwrap().response_body,
+            "prefix-hit"
+        );
+        assert!(find_replay_interaction(&list, "POST", "/v1/users").is_none());
     }
 }
