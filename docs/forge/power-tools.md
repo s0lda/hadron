@@ -52,7 +52,6 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Worktree Micro-Checkpointing** | `hadron_forge_tree_checkpoint` | Fast atomic worktree snapshots, diffing, rollback, and pruning for safe speculative editing. |
 | **Deterministic Network VCR** | `hadron_forge_vcr` | Loopback-bound HTTP/RPC cassette recording and deterministic offline playback. |
 | **Headless Profiler Runner** | `hadron_forge_profile_runner` | Automated CPU/heap execution sampling and SVG flamegraph generation. |
-| **Headless DAP Debugger** | `hadron_forge_dap_debug` | Breakpoint management, execution stepping, call stack inspection, and local variable evaluation. |
 | **Micro-Filesystem Transactions** | `hadron_forge_fs_tx` | ACID staging buffer for scratch files and multi-file code modifications with atomic commit and rollback. |
 | **Concurrent Mutation Tree Guard** | `hadron_forge_tree_guard` | Hash-anchored file modification guard detecting background file mutations and preventing stale buffer overwrites. |
 | **Resident LSP Service** | `hadron_forge_lsp_daemon` | Persistent LSP supervisor wrapping GenericLspClient for type definitions, references, and document symbol queries. |
@@ -341,7 +340,7 @@ Fast atomic worktree snapshots for safe speculative editing:
 ## 41. Deterministic Network & RPC VCR
 
 Loopback-bound recording and replay for network and IPC testing:
-- **Cassette Recording**: Records outgoing and incoming HTTP/RPC traffic into YAML cassette files (`hadron_forge_vcr`).
+- **Cassette Recording**: Record mode forwards each request to a plain-HTTP `target_url` (`http://host[:port][/prefix]`) and saves the real exchange as a JSON cassette under `.hadron/cassettes/` (`hadron_forge_vcr`).
 - **Deterministic Replay**: Serves recorded responses offline with exact header and status fidelity.
 - **Hermetic Isolation**: Eliminates external network dependencies and flakes during integration testing.
 
@@ -351,15 +350,3 @@ Automated execution profiling and SVG flamegraph generation:
 - **Sampling Execution**: Runs target commands under native sampling profilers (`hadron_forge_profile_runner`).
 - **Flamegraph Rendering**: Automatically converts folded stack samples into interactive SVG flamegraphs stored under `.hadron/profiles/`.
 - **Hotspot Analysis**: Reports top CPU and memory hotspot functions directly to the agent.
-
-## 43. Headless DAP Runtime Debugger
-
-Interactive runtime debugging via Debug Adapter Protocol (DAP):
-- **Breakpoint Management**: Adds, lists, and removes line and condition breakpoints across source files (`hadron_forge_dap_debug`).
-- **Execution Stepping**: Controls debug targets with `continue`, `next`, `stepIn`, `stepOut`, and `pause` actions.
-- **Stack & Variable Inspection**: Inspects call frame stacks and evaluates in-scope local and global variables.
-
-
-
-
-

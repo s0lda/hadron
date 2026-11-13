@@ -5,7 +5,7 @@
 //!
 //! Provides compiler-grade symbol definitions, references, and outlines.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -43,35 +43,70 @@ pub struct GenericLspClient {
     next_request_id: Arc<AtomicI64>,
     pending_requests: Arc<RwLock<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>,
     writer_tx: Option<tokio::sync::mpsc::Sender<String>>,
+    /// The server process, killed when the last clone of this client drops.
+    _child: Option<Arc<tokio::sync::Mutex<tokio::process::Child>>>,
+    /// Documents already announced with `textDocument/didOpen`.
+    opened: Arc<RwLock<HashSet<String>>>,
+    #[cfg(test)]
     is_mock: bool,
     root_path: String,
 }
 
+/// `file://` URI for an absolute filesystem path: `file:///C:/x` for a drive path and
+/// `file://server/share/x` for a UNC path.
+fn file_uri(path: &str) -> String {
+    let p = path.replace('\\', "/");
+    if p.starts_with("//") {
+        format!("file:{p}")
+    } else if p.starts_with('/') {
+        format!("file://{p}")
+    } else {
+        format!("file:///{p}")
+    }
+}
+
+/// LSP `languageId` for a workspace-relative path.
+fn language_id(rel_path: &str) -> &'static str {
+    match crate::lang::lang_for_path(rel_path) {
+        crate::lang::Lang::Rust => "rust",
+        crate::lang::Lang::Python => "python",
+        crate::lang::Lang::TypeScript if rel_path.ends_with(".tsx") => "typescriptreact",
+        crate::lang::Lang::TypeScript => "typescript",
+        crate::lang::Lang::JavaScript => "javascript",
+        crate::lang::Lang::Go => "go",
+        crate::lang::Lang::C => "c",
+        crate::lang::Lang::Cpp => "cpp",
+        _ => "plaintext",
+    }
+}
+
 impl GenericLspClient {
     /// Create a mock LSP client for fast unit tests without external binaries.
+    #[cfg(test)]
     pub fn new_mock() -> Self {
         Self {
             next_request_id: Arc::new(AtomicI64::new(1)),
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
             writer_tx: None,
+            _child: None,
+            opened: Arc::new(RwLock::new(HashSet::new())),
             is_mock: true,
             root_path: "/mock/root".into(),
         }
     }
 
-    /// Spawn a language server subprocess and attach JSON-RPC 2.0 stdio pipes.
+    /// Spawn a language server subprocess, attach JSON-RPC 2.0 stdio pipes, and complete
+    /// the `initialize` handshake. Fails if the server cannot start or rejects `initialize`.
     pub async fn spawn(
         server_bin: &str,
         server_args: &[&str],
         root: &Root,
     ) -> Result<Self, ForgeError> {
-        let cwd = root
-            .path()
-            .canonicalize()
+        let cwd = hadron_lattice::sys::paths::canonicalize(root.path())
             .map_err(|e| ForgeError::Io(e.to_string()))?;
 
         let mut cmd = tokio::process::Command::new(server_bin);
-        cmd.args(server_args).current_dir(&cwd);
+        cmd.args(server_args).current_dir(&cwd).kill_on_drop(true);
 
         #[cfg(unix)]
         {
@@ -114,6 +149,7 @@ impl GenericLspClient {
 
         // Reader task: parse Content-Length headers and dispatch responses
         let pending_clone = Arc::clone(&pending_requests);
+        let reply_tx = writer_tx.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -149,6 +185,18 @@ impl GenericLspClient {
                     }
 
                     if let Ok(val) = serde_json::from_slice::<Value>(&body_buf) {
+                        // A message with a `method` is the server talking to us (a request
+                        // such as `window/workDoneProgress/create`, or a notification). Its
+                        // `id` lives in the server's id space, so it must never resolve one of
+                        // our pending requests. Requests get a null result so the server is
+                        // not left waiting.
+                        if val.get("method").is_some() {
+                            if let Some(id) = val.get("id") {
+                                let ack = serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": null });
+                                let _ = reply_tx.send(ack.to_string()).await;
+                            }
+                            continue;
+                        }
                         if let Some(id) = val.get("id").and_then(|i| i.as_i64()) {
                             let mut map = pending_clone.write().await;
                             if let Some(sender) = map.remove(&id) {
@@ -169,6 +217,9 @@ impl GenericLspClient {
             next_request_id: Arc::new(AtomicI64::new(1)),
             pending_requests,
             writer_tx: Some(writer_tx),
+            _child: Some(Arc::new(tokio::sync::Mutex::new(child))),
+            opened: Arc::new(RwLock::new(HashSet::new())),
+            #[cfg(test)]
             is_mock: false,
             root_path: cwd.to_string_lossy().to_string(),
         };
@@ -176,7 +227,7 @@ impl GenericLspClient {
         // Initialize server
         let init_params = serde_json::json!({
             "processId": std::process::id(),
-            "rootUri": format!("file://{}", client.root_path),
+            "rootUri": file_uri(&client.root_path),
             "capabilities": {
                 "textDocument": {
                     "definition": { "dynamicRegistration": false },
@@ -186,48 +237,52 @@ impl GenericLspClient {
             }
         });
 
-        let _ = client.send_request("initialize", init_params).await;
-        let _ = client.send_notification("initialized", serde_json::json!({})).await;
+        client.send_request("initialize", init_params).await?;
+        client.send_notification("initialized", serde_json::json!({})).await?;
 
         Ok(client)
     }
 
+    fn uri_for(&self, rel_path: &str) -> String {
+        file_uri(&format!("{}/{}", self.root_path.trim_end_matches(['/', '\\']), rel_path))
+    }
+
+    /// Announce `rel_path` with `textDocument/didOpen` once, so servers that only answer
+    /// for open documents (e.g. `typescript-language-server`) can resolve positions in it.
+    async fn ensure_open(&self, rel_path: &str) -> Result<(), ForgeError> {
+        #[cfg(test)]
+        if self.is_mock {
+            return Ok(());
+        }
+        if self.opened.read().await.contains(rel_path) {
+            return Ok(());
+        }
+        let abs = std::path::Path::new(&self.root_path).join(rel_path);
+        let text = tokio::fs::read_to_string(&abs)
+            .await
+            .map_err(|e| ForgeError::Io(format!("failed to read {rel_path}: {e}")))?;
+        self.send_notification(
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": self.uri_for(rel_path),
+                    "languageId": language_id(rel_path),
+                    "version": 1,
+                    "text": text
+                }
+            }),
+        )
+        .await?;
+        self.opened.write().await.insert(rel_path.to_string());
+        Ok(())
+    }
+
     /// Send a JSON-RPC 2.0 request and await the response.
     pub async fn send_request(&self, method: &str, params: Value) -> Result<Value, ForgeError> {
+        #[cfg(test)]
         if self.is_mock {
-            return match method {
-                "initialize" => Ok(serde_json::json!({ "capabilities": {} })),
-                "textDocument/definition" => Ok(serde_json::json!([
-                    {
-                        "uri": format!("file://{}/src/lib.rs", self.root_path),
-                        "range": {
-                            "start": { "line": 10, "character": 4 },
-                            "end": { "line": 10, "character": 20 }
-                        }
-                    }
-                ])),
-                "textDocument/references" => Ok(serde_json::json!([
-                    {
-                        "uri": format!("file://{}/src/main.rs", self.root_path),
-                        "range": {
-                            "start": { "line": 25, "character": 8 },
-                            "end": { "line": 25, "character": 24 }
-                        }
-                    }
-                ])),
-                "textDocument/documentSymbol" => Ok(serde_json::json!([
-                    {
-                        "name": "calculate_hash",
-                        "kind": 12,
-                        "detail": "fn(data: &[u8]) -> Hash",
-                        "range": {
-                            "start": { "line": 5, "character": 0 },
-                            "end": { "line": 15, "character": 1 }
-                        }
-                    }
-                ])),
-                _ => Ok(serde_json::json!({})),
-            };
+            let _ = params;
+            return Ok(mock_response(method, &self.root_path));
         }
 
         let Some(tx) = &self.writer_tx else {
@@ -267,6 +322,7 @@ impl GenericLspClient {
 
     /// Send a JSON-RPC 2.0 notification (fire-and-forget).
     pub async fn send_notification(&self, method: &str, params: Value) -> Result<(), ForgeError> {
+        #[cfg(test)]
         if self.is_mock {
             return Ok(());
         }
@@ -295,7 +351,8 @@ impl GenericLspClient {
         line: usize,
         col: usize,
     ) -> Result<Vec<LspLocation>, ForgeError> {
-        let uri = format!("file://{}/{}", self.root_path.trim_end_matches('/'), rel_path);
+        self.ensure_open(rel_path).await?;
+        let uri = self.uri_for(rel_path);
         let params = serde_json::json!({
             "textDocument": { "uri": uri },
             "position": { "line": line.saturating_sub(1), "character": col.saturating_sub(1) }
@@ -313,7 +370,8 @@ impl GenericLspClient {
         col: usize,
         include_declaration: bool,
     ) -> Result<Vec<LspLocation>, ForgeError> {
-        let uri = format!("file://{}/{}", self.root_path.trim_end_matches('/'), rel_path);
+        self.ensure_open(rel_path).await?;
+        let uri = self.uri_for(rel_path);
         let params = serde_json::json!({
             "textDocument": { "uri": uri },
             "position": { "line": line.saturating_sub(1), "character": col.saturating_sub(1) },
@@ -329,7 +387,8 @@ impl GenericLspClient {
         &self,
         rel_path: &str,
     ) -> Result<Vec<LspSymbol>, ForgeError> {
-        let uri = format!("file://{}/{}", self.root_path.trim_end_matches('/'), rel_path);
+        self.ensure_open(rel_path).await?;
+        let uri = self.uri_for(rel_path);
         let params = serde_json::json!({
             "textDocument": { "uri": uri }
         });
@@ -363,7 +422,7 @@ impl GenericLspClient {
 
 fn parse_locations(val: &Value, root_path: &str) -> Vec<LspLocation> {
     let mut locs = Vec::new();
-    let root_prefix = format!("file://{}/", root_path.trim_end_matches('/'));
+    let root_prefix = format!("{}/", file_uri(root_path.trim_end_matches(['/', '\\'])));
 
     let items: Vec<&Value> = match val {
         Value::Array(arr) => arr.iter().collect(),
@@ -396,6 +455,45 @@ fn parse_locations(val: &Value, root_path: &str) -> Vec<LspLocation> {
     }
 
     locs
+}
+
+/// Canned answers for [`GenericLspClient::new_mock`]. Test-only: production code must
+/// never hand an agent a fabricated location.
+#[cfg(test)]
+fn mock_response(method: &str, root_path: &str) -> Value {
+    match method {
+        "initialize" => serde_json::json!({ "capabilities": {} }),
+        "textDocument/definition" => serde_json::json!([
+            {
+                "uri": format!("file://{root_path}/src/lib.rs"),
+                "range": {
+                    "start": { "line": 10, "character": 4 },
+                    "end": { "line": 10, "character": 20 }
+                }
+            }
+        ]),
+        "textDocument/references" => serde_json::json!([
+            {
+                "uri": format!("file://{root_path}/src/main.rs"),
+                "range": {
+                    "start": { "line": 25, "character": 8 },
+                    "end": { "line": 25, "character": 24 }
+                }
+            }
+        ]),
+        "textDocument/documentSymbol" => serde_json::json!([
+            {
+                "name": "calculate_hash",
+                "kind": 12,
+                "detail": "fn(data: &[u8]) -> Hash",
+                "range": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 15, "character": 1 }
+                }
+            }
+        ]),
+        _ => serde_json::json!({}),
+    }
 }
 
 #[cfg(test)]

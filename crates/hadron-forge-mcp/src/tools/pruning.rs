@@ -67,7 +67,7 @@ impl ToolFilter {
             return true;
         }
         if self.categories.contains(&ToolCategory::Debugger)
-            && (tool.contains("dap") || tool.contains("breakpoint") || tool.contains("vcr"))
+            && (tool.contains("breakpoint") || tool.contains("vcr"))
         {
             return true;
         }
@@ -106,11 +106,11 @@ mod tests {
         let filter = ToolFilter::from_skill("writing-plans");
         assert!(filter.matches_tool("hadron_forge_read_file"));
         assert!(filter.matches_tool("hadron_forge_nucleus_list"));
-        assert!(!filter.matches_tool("hadron_forge_dap_launch"));
+        assert!(!filter.matches_tool("hadron_forge_vcr"));
         assert!(!filter.matches_tool("hadron_forge_flamegraph"));
 
         let debug_filter = ToolFilter::from_skill("systematic-debugging");
-        assert!(debug_filter.matches_tool("hadron_forge_dap_launch"));
+        assert!(debug_filter.matches_tool("hadron_forge_vcr"));
         assert!(debug_filter.matches_tool("hadron_forge_read_file"));
     }
 }

@@ -9,10 +9,16 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct VcrArgs {
+    /// start_proxy, record_cassette, replay_cassette, stop_proxy, or list_cassettes.
     pub action: String,
+    /// Cassette to record into / replay from (letters, digits, '-', '_', '.').
     pub cassette_name: Option<String>,
+    /// Proxy port to bind (start) or stop; a free port is chosen when omitted on start.
     pub port: Option<u16>,
+    /// "record" (default), "replay", or "verify".
     pub mode: Option<String>,
+    /// Upstream the proxy forwards to in record mode: http://host[:port][/prefix]. Required to record.
+    pub target_url: Option<String>,
 }
 
 #[tool_router(router = vcr_router, vis = "pub(super)")]
@@ -43,7 +49,7 @@ impl ForgeMcpServer {
 
                 match self
                     .vcr_manager
-                    .start_proxy(self.root.clone(), name, mode, args.port)
+                    .start_proxy(self.root.clone(), name, mode, args.port, args.target_url)
                     .await
                 {
                     Ok(summary) => {
@@ -112,6 +118,7 @@ mod tests {
                 cassette_name: None,
                 port: None,
                 mode: None,
+                target_url: None,
             }))
             .await;
         assert!(res.0.ok);

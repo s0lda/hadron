@@ -5,7 +5,8 @@
 
 use super::{ForgeMcpServer, ToolResponse};
 use hadron_forge::ast_symbols::{
-    extract_file_symbols, find_symbol_callers, query_type_hierarchy,
+    extract_file_symbols, find_symbol_callers, find_symbol_definitions, identifier_at,
+    query_type_hierarchy,
 };
 use hadron_forge::file::resolve_jailed_path;
 use rmcp::handler::server::wrapper::{Json, Parameters};
@@ -207,47 +208,60 @@ impl ForgeMcpServer {
         Parameters(args): Parameters<SymbolDefinitionArgs>,
     ) -> Json<ToolResponse> {
         // Validate path jail
-        if let Err(e) = resolve_jailed_path(&self.root, &args.path) {
-            return Json(ToolResponse::error(e.to_string()));
-        }
+        let abs_path = match resolve_jailed_path(&self.root, &args.path) {
+            Ok(p) => p,
+            Err(e) => return Json(ToolResponse::error(e.to_string())),
+        };
 
-        // Tier 2: Resident LSP daemon query
-        let lsp_res = self
-            .get_or_init_lsp_daemon()
-            .await
-            .goto_definition(&args.path, args.line, args.col)
-            .await;
-
-        if let Ok(locs) = lsp_res {
-            if !locs.is_empty() {
-                let mut out = format!("Definition (LSP, {} location(s)):\n", locs.len());
-                for loc in locs {
-                    out.push_str(&format!(
-                        "- {}:{}:{} - {}:{}\n",
-                        loc.file, loc.start_line, loc.start_col, loc.end_line, loc.end_col
-                    ));
+        // Tier 2: resident language server, when one is installed for this project.
+        let lsp_note = match self.get_or_init_lsp_daemon().await {
+            Some(daemon) => match daemon.goto_definition(&args.path, args.line, args.col).await {
+                Ok(locs) if !locs.is_empty() => {
+                    let mut out = format!("Definition (LSP, {} location(s)):\n", locs.len());
+                    for loc in locs {
+                        out.push_str(&format!(
+                            "- {}:{}:{} - {}:{}\n",
+                            loc.file, loc.start_line, loc.start_col, loc.end_line, loc.end_col
+                        ));
+                    }
+                    return Json(ToolResponse::success(Some(out)));
                 }
-                return Json(ToolResponse::success(Some(out)));
-            }
-        }
+                Ok(_) => "language server found no definition",
+                Err(_) => "language server query failed",
+            },
+            None => "no language server installed",
+        };
 
-        // Tier 1 fallback: scan document outline to find matching symbol span
-        match extract_file_symbols(&self.root, &args.path) {
-            Ok(symbols) => {
-                let matching = symbols.iter().find(|s| s.line == args.line);
-                if let Some(sym) = matching {
-                    Json(ToolResponse::success(Some(format!(
-                        "Definition: [{}] `{}` at {}:{}:{}",
-                        sym.kind, sym.name, sym.file, sym.line, sym.col
-                    ))))
-                } else {
-                    Json(ToolResponse::success(Some(format!(
-                        "No local definition found at {}:{}:{}",
-                        args.path, args.line, args.col
-                    ))))
+        // Tier 1 fallback: the identifier under the cursor, resolved against every AST
+        // definition of that name in the workspace.
+        let source = match tokio::fs::read_to_string(&abs_path).await {
+            Ok(s) => s,
+            Err(e) => return Json(ToolResponse::error(format!("Failed to read {}: {e}", args.path))),
+        };
+        let Some(ident) = identifier_at(&source, args.line, args.col) else {
+            return Json(ToolResponse::success(Some(format!(
+                "{lsp_note}; no identifier at {}:{}:{}",
+                args.path, args.line, args.col
+            ))));
+        };
+        let root = self.root.clone();
+        let name = ident.clone();
+        match tokio::task::spawn_blocking(move || find_symbol_definitions(&root, &name)).await {
+            Ok(Ok(defs)) if defs.is_empty() => Json(ToolResponse::success(Some(format!(
+                "{lsp_note}; Tier-1 AST found 0 definitions of `{ident}`"
+            )))),
+            Ok(Ok(defs)) => {
+                let mut out = format!(
+                    "Definition of `{ident}` (Tier-1 AST, {} match(es); {lsp_note}):\n",
+                    defs.len()
+                );
+                for d in defs {
+                    out.push_str(&format!("- [{}] {}:{}:{}\n", d.kind, d.file, d.line, d.col));
                 }
+                Json(ToolResponse::success(Some(out)))
             }
-            Err(e) => Json(ToolResponse::error(e.to_string())),
+            Ok(Err(e)) => Json(ToolResponse::error(e.to_string())),
+            Err(e) => Json(ToolResponse::error(format!("definition search panicked: {e}"))),
         }
     }
 
@@ -364,7 +378,31 @@ impl Auth for User {
             }))
             .await;
         assert!(def_res.0.ok);
-        assert!(def_res.0.blocks.unwrap().contains("Definition"));
+        let def_blocks = def_res.0.blocks.unwrap();
+        assert!(def_blocks.contains("Definition of `User` (Tier-1 AST"), "{def_blocks}");
+        assert!(def_blocks.contains("src/models.rs:2:"), "{def_blocks}");
+        assert!(def_blocks.contains("no language server installed"), "{def_blocks}");
+        assert!(!def_blocks.contains("src/lib.rs:11"), "a fabricated mock location leaked");
+
+        // A use site resolves to the definition in the file that declares it.
+        fs::write(src_dir.join("main.rs"), "fn run(u: User) {}\n").unwrap();
+        let use_res = server
+            .symbol_definition(Parameters(SymbolDefinitionArgs {
+                path: "src/main.rs".into(),
+                line: 1,
+                col: 12,
+            }))
+            .await;
+        assert!(use_res.0.blocks.unwrap().contains("src/models.rs:2:"));
+
+        let blank_res = server
+            .symbol_definition(Parameters(SymbolDefinitionArgs {
+                path: "src/models.rs".into(),
+                line: 1,
+                col: 1,
+            }))
+            .await;
+        assert!(blank_res.0.blocks.unwrap().contains("no identifier at src/models.rs:1:1"));
 
         let slice_res = server
             .ast_slice(Parameters(AstSliceArgs {

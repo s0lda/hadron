@@ -54,7 +54,6 @@ pub mod trace_slicer;
 pub mod tree_checkpoint;
 pub mod vcr;
 pub mod profile_runner;
-pub mod dap;
 pub mod pruning;
 pub mod scratch;
 pub mod clipboard;
@@ -64,7 +63,6 @@ use hadron_forge::mock::MockServerManager;
 use hadron_forge::process::ProcessManager;
 use hadron_forge::pty::PtyManager;
 use hadron_forge::vcr::VcrProxyManager;
-use hadron_forge::dap::DapSessionManager;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::schemars::JsonSchema;
 use rmcp::{tool_handler, ServerHandler};
@@ -82,8 +80,9 @@ pub struct ForgeMcpServer {
     pub pty_manager: PtyManager,
     pub mock_manager: MockServerManager,
     pub vcr_manager: VcrProxyManager,
-    pub dap_manager: DapSessionManager,
-    pub lsp_daemon: std::sync::Arc<tokio::sync::RwLock<Option<hadron_forge::lsp_daemon::LspDaemon>>>,
+    /// The resident language server, probed once on first use; `None` inside means no
+    /// server could be started and Tier-1 AST lookups answer instead.
+    pub lsp_daemon: std::sync::Arc<tokio::sync::OnceCell<Option<hadron_forge::lsp_daemon::LspDaemon>>>,
 }
 
 impl ForgeMcpServer {
@@ -122,8 +121,7 @@ impl ForgeMcpServer {
         let pty_manager = PtyManager::new(root.clone());
         let mock_manager = MockServerManager::new();
         let vcr_manager = VcrProxyManager::new();
-        let dap_manager = DapSessionManager::new();
-        let lsp_daemon = std::sync::Arc::new(tokio::sync::RwLock::new(None));
+        let lsp_daemon = std::sync::Arc::new(tokio::sync::OnceCell::new());
 
         let mut tool_router = Self::edit_router()
             + Self::exec_router()
@@ -148,7 +146,6 @@ impl ForgeMcpServer {
         }
         if filter.categories.contains(&pruning::ToolCategory::Debugger) {
             tool_router = tool_router
-                + Self::dap_router()
                 + Self::breakpoints_router()
                 + Self::vcr_router();
         }
@@ -207,26 +204,18 @@ impl ForgeMcpServer {
             pty_manager,
             mock_manager,
             vcr_manager,
-            dap_manager,
             lsp_daemon,
         }
     }
 
-    /// Retrieve or lazily initialize resident LspDaemon.
-    pub async fn get_or_init_lsp_daemon(&self) -> hadron_forge::lsp_daemon::LspDaemon {
-        {
-            let guard = self.lsp_daemon.read().await;
-            if let Some(d) = guard.as_ref() {
-                return d.clone();
-            }
-        }
-        let mut guard = self.lsp_daemon.write().await;
-        if let Some(d) = guard.as_ref() {
-            return d.clone();
-        }
-        let daemon = hadron_forge::lsp_daemon::LspDaemon::new_mock(self.root.path());
-        *guard = Some(daemon.clone());
-        daemon
+    /// The resident language server for this workspace, started on first call via
+    /// [`LspDaemon::discover_and_spawn`](hadron_forge::lsp_daemon::LspDaemon::discover_and_spawn).
+    /// `None` (also cached) when no installed server matches the project.
+    pub async fn get_or_init_lsp_daemon(&self) -> Option<hadron_forge::lsp_daemon::LspDaemon> {
+        self.lsp_daemon
+            .get_or_init(|| hadron_forge::lsp_daemon::LspDaemon::discover_and_spawn(&self.root))
+            .await
+            .clone()
     }
 
     /// Grant external roots to the **project** root only.
@@ -245,7 +234,6 @@ impl ForgeMcpServer {
         self.pty_manager = PtyManager::new(self.root.clone());
         self.mock_manager = MockServerManager::new();
         self.vcr_manager = VcrProxyManager::new();
-        self.dap_manager = DapSessionManager::new();
         self
     }
 }

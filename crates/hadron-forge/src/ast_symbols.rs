@@ -565,6 +565,37 @@ pub fn find_symbol_callers(root: &Root, symbol: &str) -> Result<Vec<SymbolCallSi
     Ok(callers)
 }
 
+/// The identifier (`[A-Za-z0-9_]+`) under the 1-indexed `(line, col)` of `source`, if any.
+pub fn identifier_at(source: &str, line: usize, col: usize) -> Option<String> {
+    let text = source.lines().nth(line.checked_sub(1)?)?;
+    let chars: Vec<char> = text.chars().collect();
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+    let at = col.checked_sub(1)?;
+    if !chars.get(at).copied().is_some_and(is_ident) {
+        return None;
+    }
+    let start = chars[..at].iter().rposition(|c| !is_ident(*c)).map_or(0, |i| i + 1);
+    let end = chars[at..].iter().position(|c| !is_ident(*c)).map_or(chars.len(), |i| at + i);
+    Some(chars[start..end].iter().collect())
+}
+
+/// Every Tier-1 AST definition named exactly `name` across the worktree.
+pub fn find_symbol_definitions(root: &Root, name: &str) -> Result<Vec<SymbolDefinition>, ForgeError> {
+    let base_path = root.path();
+    let mut files = Vec::new();
+    collect_code_files(base_path, base_path, &mut files)?;
+    let mut defs = Vec::new();
+    for rel in files {
+        let Ok(content) = fs::read_to_string(base_path.join(&rel)) else { continue };
+        defs.extend(
+            extract_source_symbols(lang_for_path(&rel), &rel, &content)
+                .into_iter()
+                .filter(|d| d.name == name),
+        );
+    }
+    Ok(defs)
+}
+
 fn collect_code_files(base: &Path, current: &Path, acc: &mut Vec<String>) -> Result<(), ForgeError> {
     if !current.exists() || !current.is_dir() {
         return Ok(());
@@ -750,5 +781,22 @@ fn other() {
         let syms = extract_file_symbols(&root, "src/calc.rs").unwrap();
         assert_eq!(syms.len(), 1);
         assert_eq!(syms[0].name, "calculate_metrics");
+
+        let defs = find_symbol_definitions(&root, "calculate_metrics").unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].file.replace('\\', "/"), "src/calc.rs");
+        assert!(find_symbol_definitions(&root, "run_missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn identifier_at_expands_around_a_1_indexed_cursor() {
+        let src = "fn main() {\n    let x = foo_bar(1);\n}\n";
+        assert_eq!(identifier_at(src, 2, 13).as_deref(), Some("foo_bar"));
+        assert_eq!(identifier_at(src, 2, 9).as_deref(), Some("x"));
+        assert_eq!(identifier_at(src, 1, 1).as_deref(), Some("fn"));
+        assert_eq!(identifier_at(src, 2, 1), None, "whitespace");
+        assert_eq!(identifier_at(src, 2, 99), None, "past end of line");
+        assert_eq!(identifier_at(src, 99, 1), None, "past end of file");
+        assert_eq!(identifier_at(src, 0, 1), None, "lines are 1-indexed");
     }
 }
