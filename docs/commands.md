@@ -14,7 +14,7 @@ Hadron provides an interactive suite of `/slash` commands directly inside the Ch
 | `/schedule` | `/schedule [list\|add\|remove\|run\|skip\|enable\|disable\|settings]` | List, add, remove, run, skip, enable, disable, or open Settings for recurring scheduled tasks (`.hadron/schedules/`). | `/schedule add daily-sec @daily Run security audit` |
 | `/absorb` | `/absorb [options]` | Scan foreign assistant folders (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) and distill memories, skills, invariants, and plans into `.hadron/`. | `/absorb` |
 | `/dream` | `/dream` | Trigger an immediate idle workspace maintenance cycle (compaction & worktree cleanup). | `/dream` |
-| `/scout` | `/scout <prompt>` | Spawn ephemeral read-only sub-worker for zero-footprint codebase search. | `/scout find all references to IntentLockTable` |
+| `/scout` | `/scout <prompt>` | Run zero-footprint, read-only workspace keyword and path search (skipping symlinks, binaries, `.hadron`/`.git`/`target`, and files `>512 KiB`; returns top 25 scored matches). | `/scout find all references to IntentLockTable` |
 
 ---
 
@@ -100,7 +100,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/revert` | `/revert` | Revert the last landed commit on `main` via `git revert`. | `/revert` |
 | `/prune` | `/prune [dry-run]` | Safely clean up merged and stale quark worktrees and branches. | `/prune` |
 | `/radar` | `/radar [@Quark]` | Run human intent drift radar against in-flight git diff to detect goal divergence. | `/radar @Quark` |
-| `/baseline` | `/baseline` | Snapshot pre-turn baseline test health and quarantine pre-existing failures (Rule 5). | `/baseline` |
+| `/baseline` | `/baseline` | Snapshot pre-turn baseline test health via real `cargo test --workspace -- --test-threads=4` execution and quarantine pre-existing failures (Rule 5). | `/baseline` |
 | `/preview-rebase` | `/preview-rebase [@Quark]` | Dry-run rebase inspection of a quark branch onto main to preview incoming conflicts. | `/preview-rebase @Quark` |
 
 ---
@@ -113,7 +113,7 @@ Skill commands post a message carrying canonical triggers so the Gluon engine au
 | `/learn-global` | `/learn-global <fact>` | Pin a lesson into your global nucleus across all repositories. | `/learn-global use locked dependencies` |
 | `/learn-std-model` | `/learn-std-model <law>` | Add a standard law to this repo (`laws.md`). | `/learn-std-model verify caller before reporting` |
 | `/learn-std-model-global`| `/learn-std-model-global <law>` | Add a standard law across every repo you run Hadron in. | `/learn-std-model-global push constraints to types` |
-| `/nucleus` | `/nucleus [sync \| search <query> \| note <slug>]` | Show nucleus index size vs resolved budget, or run global sync, semantic search, or note inspection. | `/nucleus` |
+| `/nucleus` | `/nucleus [sync \| search <query> \| note <slug>]` | Show nucleus index size vs resolved budget, or run global sync, background lexical search (`search <query>`), or note inspection (`note <slug>`). | `/nucleus` |
 | `/compact-nucleus` | `/compact-nucleus [budget_kb]` | Audit, rank, and compact nucleus index against target budget. | `/compact-nucleus 32` |
 | `/doctor` | `/doctor` | Run automated system diagnostics on daemon, lockfiles, nucleus budget, fonts, and worktrees. | `/doctor` |
 | `/vocabulary` | `/vocabulary` | Display the definitive Hadron particle physics mental model and glossary. | `/vocabulary` |

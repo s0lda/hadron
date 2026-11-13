@@ -20,7 +20,7 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Runtime Service & Crash Watchdog** | `hadron_forge_service_watchdog` | Real-time monitoring of service log buffers for panics, tracebacks, port conflicts, and automated remediation advice. |
 | **AST Symbol Hierarchy** | `hadron_forge_symbol_hierarchy`, `hadron_forge_lsp_query` | Line-range scoped symbol tree with nested signatures across 14+ languages and generic in-process LSP queries. |
 | **Background Processes** | `process_start`, `process_logs`, `process_list`, `process_send_stdin`, `process_kill` | Process group isolation (`PGID`), ring-buffer streaming logs, dev server supervision. |
-| **3-Tier Code Intelligence** | `hadron_forge_symbol_lookup`, `hadron_forge_find_callers`, `hadron_forge_lsp_definition`, `hadron_forge_lsp_references` | Universal symbol indexing, caller resolution (Rule 1), and generic STDIO JSON-RPC 2.0 LSP client. |
+| **3-Tier Code Intelligence** | `hadron_forge_symbol_definition`, `hadron_forge_symbol_find_callers`, `hadron_forge_symbol_document_outline` | Real `LspDaemon::discover_and_spawn` + Tier-1 AST fallback, caller resolution (Rule 1), and generic STDIO JSON-RPC 2.0 LSP client. |
 | **Headless Browser** | `hadron_forge_browser_navigate`, `hadron_forge_browser_snapshot`, `hadron_forge_browser_screenshot`, `hadron_forge_browser_click`, `hadron_forge_browser_fill`, `hadron_forge_browser_eval` | Local CDP bridge (`localhost`, `127.0.0.1`, `file://`), accessibility tree snapshots, DOM inspection, UI testing. |
 | **Jailed Screenshots** | `hadron_forge_screenshot_capture`, `hadron_forge_screenshot_list`, `hadron_forge_screenshot_prune` | Strict `<repo_root>/.hadron/screenshots/` containment (gitignored), window/process capture, zero PII leakage. |
 | **Interactive PTY** | `hadron_forge_pty_start`, `hadron_forge_pty_write`, `hadron_forge_pty_read`, `hadron_forge_pty_resize`, `hadron_forge_pty_kill`, `hadron_forge_pty_list` | Unix pseudo-terminals (`libc::openpty`), raw keystrokes, interactive CLIs/TUIs. |
@@ -50,7 +50,7 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Structured Research Documents** | `hadron_forge_research_write`, `hadron_forge_research_list`, `hadron_forge_research_read` | Architectural investigation documents, topic syntheses in `.hadron/docs/research/`, and task synchronisation. |
 | **Diagnostic & Trace Slicer** | `hadron_forge_trace_slicer` | Semantic compaction and deduplication of backtraces, compiler errors, and log streams. |
 | **Worktree Micro-Checkpointing** | `hadron_forge_tree_checkpoint` | Fast atomic worktree snapshots, diffing, rollback, and pruning for safe speculative editing. |
-| **Deterministic Network VCR** | `hadron_forge_vcr` | Loopback-bound HTTP/RPC cassette recording and deterministic offline playback. |
+| **Deterministic Network VCR** | `hadron_forge_vcr` | Loopback-bound HTTP upstream recording (`target_url`) with `15s` timeouts, CRLF rejection, IPv6 support, and deterministic exact-first offline replay. |
 | **Headless Profiler Runner** | `hadron_forge_profile_runner` | Automated CPU/heap execution sampling and SVG flamegraph generation. |
 | **Micro-Filesystem Transactions** | `hadron_forge_fs_tx` | ACID staging buffer for scratch files and multi-file code modifications with atomic commit and rollback. |
 | **Concurrent Mutation Tree Guard** | `hadron_forge_tree_guard` | Hash-anchored file modification guard detecting background file mutations and preventing stale buffer overwrites. |
@@ -71,9 +71,9 @@ Allows Quarks to boot long-running servers, test harnesses, or watcher processes
 
 ## 2. 3-Tier Polyglot Code Intelligence
 
-Operationalizes Standard Model Rule 1 ("Prove it runs. Find its caller") with compiler-grade precision:
-- **Tier 1: Embedded Tree-Sitter AST (Zero-Config Fallback)**: In-process AST symbol and caller extraction across 14+ languages with zero external dependencies.
-- **Tier 2: Generic STDIO LSP Client**: JSON-RPC 2.0 client connecting dynamically to installed language servers (`rust-analyzer`, `vtsls`/`tsserver`, `pyright`, `gopls`, `clangd`).
+Operationalizes Standard Model Rule 1 ("Prove it runs. Find its caller") with compiler-grade precision (`hadron_forge_symbol_definition`, `hadron_forge_symbol_find_callers`, `hadron_forge_symbol_document_outline`):
+- **Tier 1: Embedded Tree-Sitter AST (Zero-Config Fallback)**: In-process AST symbol, definition, and caller extraction across 14+ languages with zero external dependencies.
+- **Tier 2: Generic STDIO LSP Client**: Cached `LspDaemon::discover_and_spawn` JSON-RPC 2.0 client connecting dynamically to installed language servers (`rust-analyzer`, `vtsls`/`tsserver`, `pyright`, `gopls`, `clangd`), enforcing `32 MiB` frame caps, `resolve_jailed_path` on `textDocument/didOpen`, percent-encoded `file://` URIs, and `kill_on_drop` teardown.
 - **Tier 3: Ecosystem Context (Context7)**: Integration with third-party library signatures and public documentation.
 
 ## 3. Headless Browser Verification Bridge
@@ -340,8 +340,8 @@ Fast atomic worktree snapshots for safe speculative editing:
 ## 41. Deterministic Network & RPC VCR
 
 Loopback-bound recording and replay for network and IPC testing:
-- **Cassette Recording**: Record mode forwards each request to a plain-HTTP `target_url` (`http://host[:port][/prefix]`) and saves the real exchange as a JSON cassette under `.hadron/cassettes/` (`hadron_forge_vcr`).
-- **Deterministic Replay**: Serves recorded responses offline with exact header and status fidelity.
+- **Cassette Recording**: Record mode forwards each request to a plain-HTTP `target_url` (`http://host[:port][/prefix]`, including bracketed IPv6 `[::1]:port` literals) with `15s` socket I/O timeouts and CRLF injection rejection, saving real exchanges into path-traversal-jailed JSON cassettes under `.hadron/cassettes/` (`hadron_forge_vcr`).
+- **Deterministic Replay**: Serves recorded responses offline with exact `(method, request_path)` matching prioritized before prefix fallback.
 - **Hermetic Isolation**: Eliminates external network dependencies and flakes during integration testing.
 
 ## 42. Headless Profiler Runner

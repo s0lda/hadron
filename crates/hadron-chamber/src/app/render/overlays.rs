@@ -20,6 +20,20 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.53",
+        date: Some("2026-11-13"),
+        added: &[
+            "Cross-Crate SSOT Helpers, Real /scout Search & 24h ACP Registry Refresh (hadron-lattice, hadron-gluon): Added split_model_effort_suffix, is_1m_context_model, Seat::accepts_effort, and delimiter-bounded cmdline_matches_quark_id in hadron-lattice and routed Chamber/Gluon callers onto them; wired real read-only workspace keyword search in /scout (skipping symlinks/binaries/.hadron/.git/target and >512 KiB files) and 24h background ACP registry refresh (fetch_and_cache_registry)",
+        ],
+        changed: &[
+            "Borderless Chat-Inspector Split, Off-Thread UI Polling, Native agy acp Config & Dead-Code Pruning (hadron-chamber, hadron-gluon, hadron-forge): Replaced h_resizable with a borderless floating-island flex split + invisible drag splitter, moved 3-way diff, plan DAG, nucleus graph, bridge checks, and seq-guarded ACP probes off the UI thread, updated native agy acp dynamic config_options refresh + Gemini 4 Hydrogen/Orchestrator fallbacks + WSL UNC translation, and pruned dap, replay.rs, unused Gluon/Chamber modules, and all baseline warnings",
+        ],
+        fixed: &[
+            "Real LSP Definitions, Real VCR Recording & Security Bounds (hadron-forge, hadron-forge-mcp): Wired symbol_definition to cached LspDaemon::discover_and_spawn + Tier-1 AST fallback, gated mock LSP to tests, enforced 32 MiB frame caps, resolve_jailed_path on ensure_open, percent-encoded file:// URIs, and kill_on_drop; wired real VCR target_url recording with 15s timeouts, CRLF rejection, [::1]:port IPv6 support, exact-first Replay matching, and jailed cassette names",
+            "ACP Bridge Boot, Config Error Logging, Per-Turn Spend Deduplication & Slash Commands (hadron-gluon, hadron-chamber): Captured ensure_bridge_ready() venv_py onto non-absolute ACP boot targets, warned on failed effort/mode SetSessionConfigOptionRequest without false set logs, deduplicated per-turn spend_timeline/fold_stats, dropped --no-run from /baseline, ran /nucleus lexical search off-thread, and wired /bakeoff tracked_quarks",
+        ],
+    },
+    Release {
         version: "0.33.52",
         date: Some("2026-11-12"),
         added: &[],

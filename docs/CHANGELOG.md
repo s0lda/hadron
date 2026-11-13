@@ -5,6 +5,27 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.53] - 2026-11-13
+
+### Added
+- **Cross-Crate SSOT Helpers, Real `/scout` Search, and 24h ACP Registry Refresh (`hadron-lattice`, `hadron-gluon`)**:
+  - Added canonical SSOT helpers in `hadron-lattice`: `split_model_effort_suffix`, `is_1m_context_model`, `Seat::accepts_effort`, and `sys::inspect::cmdline_matches_quark_id` (enforcing non-`[A-Za-z0-9_.-]` delimiter boundaries so `cli-agy` never collides with `trees/cli-agy-2`), and routed Chamber and Gluon callers (`repo_root_of`, `strip_unc_prefix`, `model_encodes_effort`, `resolve_model_or_split_effort`, `project_with_team`, `seat_allows_persisted_effort`) onto them (`crates/hadron-lattice/src/team/seat.rs`, `crates/hadron-lattice/src/sys/inspect.rs`, `crates/hadron-chamber/src/model/mod.rs`, `crates/hadron-chamber/src/vcs.rs`, `crates/hadron-chamber/src/app/settings/mod.rs`, `crates/hadron-gluon/src/adapter/cli.rs`, `crates/hadron-gluon/src/adapter/acp/model.rs`, `crates/hadron-gluon/src/adapter/registry/mod.rs`).
+  - Wired read-only workspace keyword & path search in `/scout` (`crates/hadron-gluon/src/scout.rs` — skipping symlinks, binaries, `.hadron`/`.git`/`target`, and files `>512 KiB`) and wired 24h once-per-process background CDN refresh (`fetch_and_cache_registry`) in `crates/hadron-gluon/src/adapter/registry/loader.rs`.
+
+### Changed
+- **Borderless Chat↔Inspector Split, Off-Thread UI Polling, Native `agy acp` Config & Dead-Code Pruning (`hadron-chamber`, `hadron-gluon`, `hadron-forge`, `hadron-forge-mcp`)**:
+  - Replaced `h_resizable` in `Chamber::body` (`crates/hadron-chamber/src/app/render/mod.rs`) with a borderless floating-island flex layout and invisible `#chat-inspector-splitter` drag handle; moved 3-way diff, plan DAG, nucleus graph, bridge checks, and `acp_probe_seq`-guarded ACP probing off the render/UI thread (`crates/hadron-chamber/src/app/render/diff_inspector.rs`, `crates/hadron-chamber/src/app/render/dag_visualizer.rs`, `crates/hadron-chamber/src/app/render/nucleus_graph.rs`, `crates/hadron-chamber/src/app/reload.rs`, `crates/hadron-chamber/src/app/settings/acp_probe.rs`).
+  - Updated native `agy acp` boot and config selection to refresh `config_options` dynamically after model changes, split CLI-suffixed model IDs, exempt `gemini-pro-orchestrator-*`, add Gemini 4 Hydrogen and Orchestrator fallbacks, and translate WSL UNC `session_cwd` + `/mnt/<drive>` `hadron-forge-mcp` paths for in-distro WSL ACP agents (`crates/hadron-gluon/src/adapter/acp/model.rs`, `crates/hadron-gluon/src/adapter/acp/session.rs`, `crates/hadron-chamber/src/app/settings/model_select.rs`, `crates/hadron-lattice/src/wsl.rs`).
+  - Pruned dead modules and helpers across crates (`dap`, `replay.rs`, `AuthMethod`/`ProviderState::NeedsAuth`, `QuarkHomeState`/`avg_latency_ms`, unused Gluon `breakpoints`/`vcr`/`checkpoint`/`mesh`/`pair_quark`, and `parse_wsl_which_output`), resolving all baseline compiler warnings (`0` warnings workspace-wide).
+
+### Fixed
+- **Real LSP Definitions, Real VCR Recording & Bounds Hardening (`hadron-forge`, `hadron-forge-mcp`)**:
+  - Wired `symbol_definition` to cached `LspDaemon::discover_and_spawn` + Tier-1 AST fallback (`identifier_at` + `find_symbol_definitions`), gated mock LSP to `cfg(test)`, enforced `kill_on_drop`, `textDocument/didOpen` before queries, `32 MiB` `Content-Length` frame caps (`read_lsp_frame`), `resolve_jailed_path` on `ensure_open`, percent-encoding in `file_uri`, `initialize` error propagation, and server-request ID isolation (`crates/hadron-forge/src/lsp.rs`, `crates/hadron-forge/src/lsp_daemon.rs`, `crates/hadron-forge/src/ast_symbols.rs`, `crates/hadron-forge-mcp/src/tools/symbols.rs`).
+  - Wired `VcrProxyManager` Record mode to real plain-HTTP `target_url` forwarding with `15s` socket I/O timeouts, CRLF injection rejection, bracketed IPv6 `[::1]:port` authority support, exact-before-prefix Replay matching, `502` on dead upstreams, and path-traversal-jailed cassette names (`crates/hadron-forge/src/vcr.rs`, `crates/hadron-forge-mcp/src/tools/vcr.rs`).
+- **ACP Bridge Boot, Config Failure Logging, Per-Turn Spend Deduplication & Slash Command Execution (`hadron-gluon`, `hadron-chamber`)**:
+  - Propagated `materialize_script()` errors without blocking seating, captured `ensure_bridge_ready()`'s `venv_py` onto non-absolute ACP boot targets (`apply_bridge_venv_to_target`), and unified `effort`/`mode` `SetSessionConfigOptionRequest` handling so refused config changes warn via `term::Level::Warn` without logging `"effort set"`/`"mode set"` (`crates/hadron-gluon/src/adapter/acp/session.rs`, `crates/hadron-gluon/src/adapter/registry/mod.rs`).
+  - Fixed 4–6× per-turn spend inflation by deduplicating `spend_timeline` and `fold_stats` by turn ID (`crates/hadron-chamber/src/model/stats.rs`), dropped `--no-run` from `/baseline`, moved `/nucleus` (`search` lexical scoring + `note`) off the UI thread, and wired `/bakeoff` `tracked_quarks` + `save_active` (`crates/hadron-chamber/src/app/actions.rs`).
+
 ## [0.33.52] - 2026-11-12
 
 ### Fixed
