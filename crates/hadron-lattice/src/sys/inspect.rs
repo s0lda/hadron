@@ -409,10 +409,48 @@ pub fn collect_process_tree(root_pids: &[u32], dir: &std::path::Path) -> Vec<Pro
     tree
 }
 
+/// Whether a process command line belongs to quark `id`: it names the quark's worktree
+/// (`trees/<id>` or `trees\<id>`) or carries its WSL tag (`hadron:<id>`).
+///
+/// The id must end at a boundary (end of string, a path separator, whitespace, a quote,
+/// `;`, `,` or NUL), so quark `cli-agy` never claims `trees/cli-agy-2`'s processes.
+pub fn cmdline_matches_quark_id(cmd: &str, id: &str) -> bool {
+    if id.is_empty() {
+        return false;
+    }
+    let at_boundary = |c: Option<char>| {
+        matches!(
+            c,
+            None | Some('/' | '\\' | ' ' | '\t' | '\n' | '\r' | '"' | '\'' | ';' | ',' | '\0')
+        )
+    };
+    ["trees/", "trees\\", "hadron:"].iter().any(|prefix| {
+        let needle = format!("{prefix}{id}");
+        cmd.match_indices(&needle)
+            .any(|(at, _)| at_boundary(cmd[at + needle.len()..].chars().next()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn cmdline_matches_quark_id_requires_a_boundary_after_the_id() {
+        assert!(cmdline_matches_quark_id("agy --cwd /home/j/repo/.hadron/trees/cli-agy/src", "cli-agy"));
+        assert!(cmdline_matches_quark_id(r"agy.exe C:\repo\.hadron\trees\cli-agy", "cli-agy"));
+        assert!(cmdline_matches_quark_id("bash HADRON_WSL_TAG=hadron:cli-agy", "cli-agy"));
+        assert!(cmdline_matches_quark_id("x \"trees/cli-agy\" y", "cli-agy"));
+        // A later exact occurrence still counts after an earlier prefix collision.
+        assert!(cmdline_matches_quark_id("trees/cli-agy-2/a trees/cli-agy/b", "cli-agy"));
+
+        assert!(!cmdline_matches_quark_id("agy --cwd /home/j/repo/.hadron/trees/cli-agy-2/src", "cli-agy"));
+        assert!(!cmdline_matches_quark_id(r"C:\repo\.hadron\trees\cli-agy-2\x", "cli-agy"));
+        assert!(!cmdline_matches_quark_id("HADRON_WSL_TAG=hadron:cli-agy-2", "cli-agy"));
+        assert!(!cmdline_matches_quark_id("cli-agy", "cli-agy"), "bare id is not a quark marker");
+        assert!(!cmdline_matches_quark_id("trees/cli-agy", ""), "empty id never matches");
+    }
 
     #[test]
     fn format_rss_converts_bytes_to_readable_units() {

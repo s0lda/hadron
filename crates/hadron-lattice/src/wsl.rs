@@ -703,18 +703,6 @@ pub fn build_wsl_gluon_command(
     )
 }
 
-/// Parse raw `command -v hadron-gluon` stdout from `wsl.exe`, ignoring WSL mount/relay
-/// noise and Windows `/mnt/` paths, and returning the in-distro Linux binary path.
-pub fn parse_wsl_which_output(bytes: &[u8]) -> Option<String> {
-    decode_wsl_output(bytes)
-        .into_iter()
-        .find(|line| {
-            line.starts_with('/')
-                && !line.starts_with("/mnt/")
-                && (line.ends_with("/hadron-gluon") || line == "/hadron-gluon")
-        })
-}
-
 /// Probe whether a Linux-native `hadron-gluon` binary is installed inside `distro` and
 /// opted into via `HADRON_WSL_GLUON=1` (`true`).
 ///
@@ -1025,16 +1013,6 @@ mod tests {
                 "/home/jake/dev/hadron/.hadron/field.jsonl",
             ]
         );
-
-        let noisy_stdout = b"<3>WSL (99) ERROR: CreateProcessParseCommon:711: Failed to translate Z:\\\r\n/home/jake/.local/bin/hadron-gluon\r\n";
-        assert_eq!(
-            parse_wsl_which_output(noisy_stdout),
-            Some("/home/jake/.local/bin/hadron-gluon".to_string())
-        );
-
-        // Windows /mnt/c paths must be rejected so we only use genuine Linux binaries
-        let mnt_stdout = b"/mnt/c/Users/Jake/bin/hadron-gluon\r\n";
-        assert_eq!(parse_wsl_which_output(mnt_stdout), None);
 
         assert_eq!(
             windows_drive_to_wsl_mnt(Path::new(

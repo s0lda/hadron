@@ -18,7 +18,7 @@ mod migrate;
 mod tests;
 
 pub use transport::{Transport, AcpCommand, PromptChannel, ResumeMode, TimeoutArg, PostureMap, CliProbeSpec, CliSpec, StreamSpec, StreamFormat};
-pub use seat::{model_encodes_effort, ExternalRootSpec, ModelParams, SandboxMode, Seat, SeatCommands, SeatOverride};
+pub use seat::{is_1m_context_model, model_encodes_effort, split_model_effort_suffix, ExternalRootSpec, ModelParams, SandboxMode, Seat, SeatCommands, SeatOverride};
 pub use io::{is_global_team_config_path, parse_team, load_team, merge_wsl_catalogue, repo_team_for_field, save_team, team_config_path, team_for_field, team_for_repo, load_team_for_repo, user_hadron_dir, home_dir as user_home_dir};
 pub use migrate::{migrate_to_catalogue, seat_override_delta, orphan_overrides, legacy_id_renames, rename_legacy_ids, id_follows_convention};
 

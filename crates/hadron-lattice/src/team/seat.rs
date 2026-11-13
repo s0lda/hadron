@@ -501,16 +501,45 @@ impl SeatOverride {
 /// `gemini-pro-orchestrator-argon`), making a separate effort selector redundant
 /// and (on `agy` CLI) conflicting.
 pub fn model_encodes_effort(model: &str) -> bool {
-    let m = model.trim().to_ascii_lowercase();
-    if m.is_empty() {
-        return false;
+    is_fixed_effort_orchestrator(&model.trim().to_ascii_lowercase())
+        || split_model_effort_suffix(model).is_some()
+}
+
+/// The effort tiers a model id may carry as a trailing `-<tier>` suffix.
+const EFFORT_SUFFIXES: [&str; 5] = ["-low", "-medium", "-high", "-xhigh", "-max"];
+
+/// `gemini-pro-orchestrator` and its `-<variant>` family run at a fixed effort, so a
+/// trailing `-<word>` on them names a variant, never an effort tier. Takes a lowercased id.
+fn is_fixed_effort_orchestrator(lower: &str) -> bool {
+    lower == "gemini-pro-orchestrator" || lower.starts_with("gemini-pro-orchestrator-")
+}
+
+/// Split a model id with a baked effort suffix into `(base_model, effort)`, e.g.
+/// `"gemini-4-hydrogen-xhigh"` → `("gemini-4-hydrogen", "xhigh")`. Matching is
+/// case-insensitive; both halves are slices of the trimmed input (original case).
+///
+/// `None` when there is no recognised suffix, the base would be empty, or the id is a
+/// fixed-effort orchestrator model (see [`model_encodes_effort`]).
+pub fn split_model_effort_suffix(model: &str) -> Option<(&str, &str)> {
+    let trimmed = model.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if is_fixed_effort_orchestrator(&lower) {
+        return None;
     }
-    if m == "gemini-pro-orchestrator" || m.starts_with("gemini-pro-orchestrator-") {
-        return true;
-    }
-    ["-low", "-medium", "-high", "-xhigh", "-max"]
+    // ASCII lowercasing preserves byte offsets, so a suffix found in `lower` sits at
+    // the same (char-boundary) offset in `trimmed`.
+    let suffix = EFFORT_SUFFIXES.iter().find(|s| lower.ends_with(*s))?;
+    let base_len = trimmed.len() - suffix.len();
+    (base_len > 0).then(|| (&trimmed[..base_len], &trimmed[base_len + 1..]))
+}
+
+/// Whether `model` runs with a ~1M-token context window: Claude Opus/Sonnet 5.x,
+/// Opus 4.6–4.8, any explicit `1m` variant, and Gemini models.
+pub fn is_1m_context_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    ["opus-5", "sonnet-5", "opus-4-6", "opus-4-7", "opus-4-8", "1m", "gemini"]
         .iter()
-        .any(|suffix| m.ends_with(suffix))
+        .any(|pat| lower.contains(pat))
 }
 
 #[cfg(test)]

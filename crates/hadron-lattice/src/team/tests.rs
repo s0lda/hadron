@@ -1561,3 +1561,37 @@ fn seat_supports_effort_per_transport_and_vendor() {
     assert!(!super::model_encodes_effort(""));
 }
 
+#[test]
+fn split_model_effort_suffix_splits_baked_tiers_but_not_orchestrator_variants() {
+    use super::split_model_effort_suffix as split;
+    assert_eq!(split("gemini-4-hydrogen-xhigh"), Some(("gemini-4-hydrogen", "xhigh")));
+    assert_eq!(split("gemini-4-hydrogen-high"), Some(("gemini-4-hydrogen", "high")));
+    assert_eq!(split(" Claude-Opus-5-5-MAX "), Some(("Claude-Opus-5-5", "MAX")));
+    assert_eq!(split("gpt-oss-120b-medium"), Some(("gpt-oss-120b", "medium")));
+    assert_eq!(split("gemini-pro-orchestrator"), None);
+    assert_eq!(split("gemini-pro-orchestrator-high"), None, "orchestrator suffix is a variant");
+    assert_eq!(split("gemini-4-hydrogen"), None);
+    assert_eq!(split("-high"), None, "an empty base is not a model");
+    assert_eq!(split(""), None);
+}
+
+#[test]
+fn is_1m_context_model_covers_claude_5_opus_4_6_plus_gemini_and_explicit_1m() {
+    use super::is_1m_context_model as is_1m;
+    for m in [
+        "claude-opus-5-5",
+        "claude-sonnet-5-5-high",
+        "claude-opus-4-7",
+        "opus-4-8",
+        "opus[1m]",
+        "claude-sonnet-4-5-1m",
+        "gemini-4-hydrogen",
+        "Gemini-3.8-Flash",
+    ] {
+        assert!(is_1m(m), "{m} should be 1M");
+    }
+    for m in ["claude-sonnet-4-5", "claude-opus-4-5", "gpt-5.4", "haiku", ""] {
+        assert!(!is_1m(m), "{m} should not be 1M");
+    }
+}
+

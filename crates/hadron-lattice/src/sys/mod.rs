@@ -4,7 +4,7 @@ pub mod process;
 pub mod shell;
 
 pub use inspect::{
-    collect_process_tree, format_rss, inspect_process, is_process_alive, is_process_alive_in_dir,
+    cmdline_matches_quark_id, collect_process_tree, format_rss, inspect_process, is_process_alive, is_process_alive_in_dir,
     is_process_alive_named_in_dir, ProcessInfo,
 };
 pub use paths::{normalize_path, normalize_path_str};
