@@ -26,7 +26,6 @@ use gpui_component::input::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::{ContextMenuExt, DropdownMenu, PopupMenuItem};
-use gpui_component::resizable::{h_resizable, resizable_panel};
 pub use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
 use gpui_component::switch::Switch;
 // tab imports removed
@@ -113,7 +112,6 @@ mod terminal;
 mod reload;
 pub mod update;
 pub use update::UpdateState;
-pub mod replay;
 pub mod audio;
 pub mod audio_intercom;
 #[allow(unused_imports)]
@@ -371,10 +369,14 @@ struct Chamber {
     plan_scroll: ScrollHandle,
     /// Scroll position of the Execution Topology & Wave DAG row.
     pub(super) dag_waves_scroll: ScrollHandle,
-    /// Scroll position of the Mission Nucleus / secondary scroll container.
-    pub(super) mission_plan_scroll: ScrollHandle,
     /// Cached parsed Plan DAG, waves, and merged-commit status.
     pub(super) cached_plan_dag: std::cell::RefCell<Option<CachedPlanDag>>,
+    /// Cached 3-way diff inspector state, computed off-thread.
+    pub(super) cached_three_way_diff:
+        std::cell::RefCell<Option<render::diff_inspector::CachedDiffInspector>>,
+    pub(super) cached_three_way_diff_loading: std::cell::Cell<bool>,
+    /// Active drag state for the borderless Chat <-> Inspector splitter `(start_x, start_width)`.
+    pub(super) inspector_resize_drag: Option<(f32, f32)>,
     /// Scroll position of the Tasks pane.
     tasks_scroll: ScrollHandle,
     /// Scroll position of the Time Travel inspector pane.
@@ -398,8 +400,6 @@ struct Chamber {
     log_list_state: gpui::ListState,
     /// Log rows (by message index) the user has clicked to expand to their full body.
     log_expanded: std::collections::HashSet<usize>,
-    #[allow(dead_code)] // only read by the superseded message_row
-    log_expanded_ixs: std::collections::HashSet<usize>,
     /// Maps a virtual list item index to the message's true index in `view.messages`,
     /// narrowed by `chat_search_query`.
     chat_message_ixs: Vec<usize>,
@@ -540,6 +540,8 @@ struct Chamber {
     /// Offered-model probe for the ACP quark whose Settings are open — drives the model
     /// dropdown. `None` for a non-ACP target or before the first probe. See `providers`.
     acp_model_probe: Option<AcpModelProbe>,
+    /// Monotonic generation counter guarding async ACP/CLI model probes against stale overwrites.
+    acp_probe_seq: u64,
     /// Native SelectState dropdown for Settings Model list of an ACP quark.
     acp_model_select_state: Entity<SelectState<ModelSelectDelegate>>,
     acp_model_select_key: Option<(String, Vec<String>)>,
@@ -727,6 +729,7 @@ struct Chamber {
     pub(super) cached_skill_ids: Vec<String>,
     pub(super) cached_plan_paths: Vec<(std::time::SystemTime, String)>,
     pub(super) cached_active_plan_content: Option<(String, String)>,
+    pub(super) cached_plan_landed_commits: std::collections::HashSet<String>,
     pub(super) cached_nucleus_docs: (Option<String>, Option<String>, Option<String>),
     pub(super) cached_nucleus_fingerprint: u64,
     pub(super) git_ready: bool,
@@ -1687,21 +1690,47 @@ impl Chamber {
         } else {
             crate::text::custom_skill_names(Some(&repo_root))
         };
-        let (cached_plan_paths, cached_nucleus_docs, cached_nucleus_fingerprint) =
-            if workspace_mode == WorkspaceMode::Selector || is_wsl {
-                (Vec::new(), (None, None, None), 0)
-            } else {
-                let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+        let (
+            cached_plan_paths,
+            cached_active_plan_content,
+            cached_plan_landed_commits,
+            cached_nucleus_docs,
+            cached_nucleus_fingerprint,
+        ) = if workspace_mode == WorkspaceMode::Selector || is_wsl {
+            (
+                Vec::new(),
+                None,
+                std::collections::HashSet::new(),
+                (None, None, None),
+                0,
+            )
+        } else {
+            let nucleus_dir = repo_root.join(".hadron").join("nucleus");
+            let plan_paths = reload::scan_all_plan_paths(&repo_root);
+            let active_plan = reload::resolve_active_plan_with_plans(
+                &repo_root,
+                &view.messages,
+                &plan_paths,
+            );
+            let active_content = active_plan.and_then(|rel| {
+                crate::sys::read_workspace_file(&repo_root, &rel).map(|body| (rel, body))
+            });
+            let landed = active_content
+                .as_ref()
+                .map(|(_, body)| reload::collect_plan_landed_commits(&repo_root, body))
+                .unwrap_or_default();
+            (
+                plan_paths,
+                active_content,
+                landed,
                 (
-                    reload::scan_all_plan_paths(&repo_root),
-                    (
-                        std::fs::read_to_string(nucleus_dir.join("features.md")).ok(),
-                        std::fs::read_to_string(nucleus_dir.join("invariants").join("always.md")).ok(),
-                        std::fs::read_to_string(nucleus_dir.join("index.md")).ok(),
-                    ),
-                    render::visualizer::compute_nucleus_graph_fingerprint(&repo_root),
-                )
-            };
+                    std::fs::read_to_string(nucleus_dir.join("features.md")).ok(),
+                    std::fs::read_to_string(nucleus_dir.join("invariants").join("always.md")).ok(),
+                    std::fs::read_to_string(nucleus_dir.join("index.md")).ok(),
+                ),
+                render::visualizer::compute_nucleus_graph_fingerprint(&repo_root),
+            )
+        };
         let alias_map: std::collections::HashMap<String, hadron_lattice::QuarkId> = view
             .roster
             .iter()
@@ -1832,8 +1861,10 @@ impl Chamber {
             git_graph_list,
             plan_scroll: ScrollHandle::new(),
             dag_waves_scroll: ScrollHandle::new(),
-            mission_plan_scroll: ScrollHandle::new(),
             cached_plan_dag: std::cell::RefCell::new(None),
+            cached_three_way_diff: std::cell::RefCell::new(None),
+            cached_three_way_diff_loading: std::cell::Cell::new(false),
+            inspector_resize_drag: None,
             tasks_scroll: ScrollHandle::new(),
             time_travel_scroll: ScrollHandle::new(),
             task_scrub: None,
@@ -1852,7 +1883,6 @@ impl Chamber {
             chat_list_state,
             log_list_state,
             log_expanded: std::collections::HashSet::new(),
-            log_expanded_ixs: std::collections::HashSet::new(),
             chat_message_ixs,
             log_message_ixs,
             chat_search_query: String::new(),
@@ -1915,6 +1945,7 @@ impl Chamber {
             providers,
             wizard_state: WizardState::None,
             acp_model_probe: None,
+            acp_probe_seq: 0,
             acp_model_select_state,
             acp_model_select_key: None,
             http_model_probe: None,
@@ -2041,7 +2072,8 @@ impl Chamber {
             field_write_queue: reload::FieldWriteQueue::new(),
             cached_skill_ids,
             cached_plan_paths,
-            cached_active_plan_content: None,
+            cached_active_plan_content,
+            cached_plan_landed_commits,
             cached_nucleus_docs,
             cached_nucleus_fingerprint,
             git_ready,

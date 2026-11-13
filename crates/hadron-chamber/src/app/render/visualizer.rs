@@ -1965,7 +1965,11 @@ impl super::Chamber {
                         }
                     }
                     had_crate_in_mem = chamber.cached_crate_graph.borrow().is_some();
-                    had_nucleus_in_mem = chamber.cached_nucleus_graph.borrow().is_some();
+                    had_nucleus_in_mem = chamber
+                        .cached_nucleus_graph
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|ng| ng.nodes.is_empty() || !ng.note_bodies.is_empty());
                     if hydrated {
                         cx.notify();
                     }

@@ -17,10 +17,10 @@ mod overlays;
 pub mod visualizer;
 mod breadcrumb;
 mod repl_overlay;
-mod dag_visualizer;
+pub(super) mod dag_visualizer;
 pub(crate) mod pty_grid;
 mod flamechart;
-mod diff_inspector;
+pub(super) mod diff_inspector;
 mod scrubber;
 mod artifacts;
 pub mod split_canvas;
@@ -232,44 +232,10 @@ impl Chamber {
     pub(super) fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let roster_collapsed = self.prefs.roster_collapsed;
         let inspector_collapsed = self.prefs.inspector_collapsed;
-        let chamber = cx.entity();
-
-        let group_id = SharedString::from(format!("chamber-body-{}", inspector_collapsed as u8));
-
-        let mut group = h_resizable(group_id).on_resize(move |state, _window, app| {
-            let sizes = state.read(app).sizes().clone();
-            chamber.update(app, |this, _cx| {
-                // Only the terminal carries a stored width now; it's the last
-                // panel in the group (chat is the flex first panel).
-                if !this.prefs.inspector_collapsed {
-                    if let Some(w) = sizes.last() {
-                        this.prefs.inspector_width = w.as_f32();
-                    }
-                }
-                let _ = config::save(&this.prefs);
-            });
-        });
-
-        // Chat: flex (no fixed size) so it absorbs slack on resize, but floored
-        // at CHAT_MIN so the terminal can't stretch over it entirely.
-        group = group.child(
-            resizable_panel()
-                .size_range(px(CHAT_MIN)..px(TERMINAL_MAX))
-                .child(self.chat_pane(window, cx)),
-        );
-        if !inspector_collapsed {
-            group = group.child(
-                resizable_panel()
-                    .size(px(self.prefs.inspector_width))
-                    // No real upper cap — the terminal/multitool can take most of
-                    // the window; the chat's own min keeps it from vanishing.
-                    .size_range(px(RAIL_MIN)..px(TERMINAL_MAX))
-                    .child(self.terminal_pane(cx)),
-            );
-        }
+        let left_width = if roster_collapsed { RAIL_STRIP } else { self.prefs.roster_width };
 
         // Left rail: a fixed-width column (locked, not draggable) or a thin strip
-        // when collapsed — a sibling of the group, never part of the drag.
+        // when collapsed.
         let left = if roster_collapsed {
             self.rail_strip(Rail::Roster, cx).into_any_element()
         } else {
@@ -281,22 +247,96 @@ impl Chamber {
                 .into_any_element()
         };
 
+        let mut split = h_flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(CHAT_MIN))
+                    .h_full()
+                    .overflow_hidden()
+                    .child(self.chat_pane(window, cx)),
+            );
+
+        if !inspector_collapsed {
+            split = split
+                .child(
+                    div()
+                        .id("chat-inspector-splitter")
+                        .flex_none()
+                        .w(px(8.0))
+                        .mx(px(-4.0))
+                        .h_full()
+                        .cursor_col_resize()
+                        .bg(gpui::transparent_black())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, ev: &gpui::MouseDownEvent, _window, cx| {
+                                this.inspector_resize_drag = Some((
+                                    f32::from(ev.position.x),
+                                    this.prefs.inspector_width,
+                                ));
+                                cx.stop_propagation();
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(self.prefs.inspector_width))
+                        .h_full()
+                        .overflow_hidden()
+                        .child(self.terminal_pane(cx)),
+                );
+        }
+
         h_flex()
+            .id("chamber-body-row")
             .flex_1()
             // Bound the height so children shrink to it instead of growing to
             // their content — without this, the chat's min-content height
             // propagates up and nothing below can scroll (it just pushes down).
             .min_h_0()
             .w_full()
+            .on_mouse_move(cx.listener(move |this, ev: &gpui::MouseMoveEvent, window, cx| {
+                let Some((start_x, start_w)) = this.inspector_resize_drag else {
+                    return;
+                };
+                if ev.pressed_button == Some(MouseButton::Left) {
+                    let cur_x = f32::from(ev.position.x);
+                    let available = (f32::from(window.viewport_size().width) - left_width)
+                        .max(RAIL_MIN + CHAT_MIN);
+                    let max_w = (available - CHAT_MIN).clamp(RAIL_MIN, TERMINAL_MAX);
+                    this.prefs.inspector_width =
+                        (start_w - (cur_x - start_x)).clamp(RAIL_MIN, max_w);
+                    cx.notify();
+                } else {
+                    this.inspector_resize_drag = None;
+                    let _ = config::save(&this.prefs);
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &gpui::MouseUpEvent, _window, cx| {
+                    if this.inspector_resize_drag.take().is_some() {
+                        let _ = config::save(&this.prefs);
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _ev: &gpui::MouseUpEvent, _window, cx| {
+                    if this.inspector_resize_drag.take().is_some() {
+                        let _ = config::save(&this.prefs);
+                        cx.notify();
+                    }
+                }),
+            )
             .child(left)
-            // The resizable group renders itself `size_full` (width: 100%). As a
-            // direct flex item that resolves against the *whole* row, so it fights
-            // its fixed-width siblings (the roster, and the collapsed terminal
-            // strip) for the same pixels and pushes them past the right edge — the
-            // strip vanishes and the chat's own right inset is clipped away. Boxing
-            // it in a flex-1 (min-w-0) cell makes that 100% resolve against the
-            // slack the siblings *leave*, which is what it always meant.
-            .child(div().flex_1().min_w_0().h_full().child(group))
+            .child(split)
             .when(inspector_collapsed, |this| {
                 this.child(self.rail_strip(Rail::Inspector, cx))
             })

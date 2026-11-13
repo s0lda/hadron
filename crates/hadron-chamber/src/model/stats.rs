@@ -1,20 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::DateTime;
 
 use super::{message_fresh, MessageRow, QuarkStats, SessionStats, SpendPoint, SpendTimeline, StatsWindow, TurnSpend};
 
 impl super::ChamberView {
-    /// Aggregate the session's telemetry, per quark and in total.
-    ///
-    /// A quark is one that holds a **roster seat** — `actor_str` renders a quark
-    /// as its bare id, so testing `from` for an `@` sigil matches nothing and
-    /// silently zeroes every statistic.
-    #[allow(dead_code)] // exercised by tests; no live GUI caller yet
-    pub fn session_stats(&self) -> SessionStats {
-        self.fold_stats(self.messages.iter())
-    }
-
     /// Aggregate telemetry over a [`StatsWindow`]. `archived` is the projected
     /// messages of the archived sessions (`load_archived_messages`); it is ignored for
     /// [`StatsWindow::Session`] (live field only) and, for the wider windows, merged
@@ -83,6 +73,7 @@ impl super::ChamberView {
         let mut cum = vec![0f64; order.len()];
         let mut team = 0f64;
         let mut points: Vec<SpendPoint> = Vec::new();
+        let mut counted_turns: HashSet<String> = HashSet::new();
 
         for m in self.windowed_messages(archived, window, now) {
             let Some(&qi) = index.get(m.from.as_str()) else {
@@ -91,6 +82,11 @@ impl super::ChamberView {
             let Some(f) = message_fresh(m, self.roster[qi].transport).filter(|f| *f > 0) else {
                 continue;
             };
+            if let Some(tid) = m.turn.as_deref() {
+                if !counted_turns.insert(tid.to_string()) {
+                    continue;
+                }
+            }
             cum[qi] += f as f64;
             team += f as f64;
             points.push(SpendPoint {
@@ -115,12 +111,13 @@ impl super::ChamberView {
         }
     }
 
-    /// The shared fold behind [`Self::session_stats`] and [`Self::stats_for`]: sum the
-    /// given messages per quark (attributed via the live roster) and in total.
+    /// The shared fold behind [`Self::stats_for`]: sum the given messages per quark
+    /// (attributed via the live roster) and in total, deduplicating spend per turn id.
     fn fold_stats<'a>(&self, messages: impl Iterator<Item = &'a MessageRow>) -> SessionStats {
         let roster_map: HashMap<&str, &super::RosterRow> =
             self.roster.iter().map(|r| (r.id.as_str(), r)).collect();
         let mut stats: HashMap<&str, QuarkStats> = HashMap::new();
+        let mut counted_turns: HashSet<String> = HashSet::new();
         let mut out = SessionStats::default();
 
         for m in messages {
@@ -158,53 +155,64 @@ impl super::ChamberView {
                 _ => {}
             }
 
-            let fresh = message_fresh(m, row.transport);
+            let has_spend_payload = m.usage.is_some() || m.legacy_used_tokens.is_some();
+            let count_spend = match m.turn.as_deref() {
+                Some(tid) if has_spend_payload => counted_turns.insert(tid.to_string()),
+                Some(_) => false,
+                None => true,
+            };
 
-            if let Some(f) = fresh {
-                s.fresh = s.fresh.saturating_add(f as u64);
-                out.total_fresh = out.total_fresh.saturating_add(f as u64);
+            if count_spend {
+                let fresh = message_fresh(m, row.transport);
 
-                let cost_usd = m.usage.as_ref().and_then(|u| u.cost_usd());
-                if let Some(c) = cost_usd {
-                    s.cost_usd = Some(s.cost_usd.unwrap_or(0.0) + c);
-                    out.total_cost_usd = Some(out.total_cost_usd.unwrap_or(0.0) + c);
+                if let Some(f) = fresh {
+                    s.fresh = s.fresh.saturating_add(f as u64);
+                    out.total_fresh = out.total_fresh.saturating_add(f as u64);
+
+                    let cost_usd = m.usage.as_ref().and_then(|u| u.cost_usd());
+                    if let Some(c) = cost_usd {
+                        s.cost_usd = Some(s.cost_usd.unwrap_or(0.0) + c);
+                        out.total_cost_usd = Some(out.total_cost_usd.unwrap_or(0.0) + c);
+                    }
+
+                    s.spend_history.push(TurnSpend {
+                        turn: s.turns,
+                        fresh: f,
+                        cost_usd,
+                    });
+                    out.spend_history.push(TurnSpend {
+                        turn: out.total_turns,
+                        fresh: f,
+                        cost_usd,
+                    });
                 }
 
-                s.spend_history.push(TurnSpend {
-                    turn: s.turns,
-                    fresh: f,
-                    cost_usd,
-                });
-                out.spend_history.push(TurnSpend {
-                    turn: out.total_turns,
-                    fresh: f,
-                    cost_usd,
-                });
+                if let Some(u) = &m.usage {
+                    if let Some(i) = u.spend.input {
+                        s.input_tokens = s.input_tokens.saturating_add(i as u64);
+                        out.total_input = out.total_input.saturating_add(i as u64);
+                    }
+                    if let Some(o) = u.spend.output {
+                        s.output_tokens = s.output_tokens.saturating_add(o as u64);
+                        out.total_output = out.total_output.saturating_add(o as u64);
+                    }
+                    if let Some(cr) = u.spend.cache_read {
+                        s.cache_read = s.cache_read.saturating_add(cr as u64);
+                        out.total_cache_read = out.total_cache_read.saturating_add(cr as u64);
+                    }
+                    if let Some(cw) = u.spend.cache_write {
+                        s.cache_write = s.cache_write.saturating_add(cw as u64);
+                        out.total_cache_write = out.total_cache_write.saturating_add(cw as u64);
+                    }
+
+                    if let Some(c) = u.spend.cached() {
+                        s.cached = s.cached.saturating_add(c as u64);
+                        out.total_cached = out.total_cached.saturating_add(c as u64);
+                    }
+                }
             }
 
             let Some(u) = &m.usage else { continue };
-
-            if let Some(i) = u.spend.input {
-                s.input_tokens = s.input_tokens.saturating_add(i as u64);
-                out.total_input = out.total_input.saturating_add(i as u64);
-            }
-            if let Some(o) = u.spend.output {
-                s.output_tokens = s.output_tokens.saturating_add(o as u64);
-                out.total_output = out.total_output.saturating_add(o as u64);
-            }
-            if let Some(cr) = u.spend.cache_read {
-                s.cache_read = s.cache_read.saturating_add(cr as u64);
-                out.total_cache_read = out.total_cache_read.saturating_add(cr as u64);
-            }
-            if let Some(cw) = u.spend.cache_write {
-                s.cache_write = s.cache_write.saturating_add(cw as u64);
-                out.total_cache_write = out.total_cache_write.saturating_add(cw as u64);
-            }
-
-            if let Some(c) = u.spend.cached() {
-                s.cached = s.cached.saturating_add(c as u64);
-                out.total_cached = out.total_cached.saturating_add(c as u64);
-            }
             if let Some(ctx) = &u.context {
                 s.context = Some(ctx.clone());
             }

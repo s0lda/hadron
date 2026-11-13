@@ -164,6 +164,8 @@ pub struct CachedNucleusGraph {
     pub orphaned_notes: Vec<String>,
     pub force_graph: ForceDirectedGraph,
     pub positions: HashMap<String, (f32, f32)>,
+    #[serde(default)]
+    pub note_bodies: HashMap<String, String>,
 }
 
 /// Replaces broken wiki-links (`[[target_slug]]`) and markdown links (`[label](notes/target_slug.md)`)
@@ -287,6 +289,7 @@ impl CachedNucleusGraph {
 
         let mut force_graph = ForceDirectedGraph::new();
         let mut orphaned_notes = Vec::new();
+        let mut note_bodies = HashMap::new();
 
         // Seed nodes on a Vogel golden-angle sunflower spiral so 200+ notes start evenly
         // distributed across the 2D disc rather than crowded onto a 1D perimeter ring.
@@ -300,6 +303,10 @@ impl CachedNucleusGraph {
 
             if hadron_forge::nucleus_graph::is_orphan_node(node) {
                 orphaned_notes.push(slug.clone());
+            }
+
+            if let Ok(body) = std::fs::read_to_string(nucleus_dir.join(&node.path)) {
+                note_bodies.insert(slug.clone(), body);
             }
 
             for target in &node.outgoing_links {
@@ -323,81 +330,13 @@ impl CachedNucleusGraph {
             orphaned_notes,
             force_graph,
             positions,
+            note_bodies,
         }
     }
 }
 
-/// Projects 2D simulation coordinates into `(origin_x, origin_y, w, h)` screen bounds,
-/// scaling X and Y independently with padding so large graphs fill wide or tall viewports cleanly.
-pub(crate) fn compute_nucleus_projection(
-    positions_map: &HashMap<String, (f32, f32)>,
-    origin_x: f32,
-    origin_y: f32,
-    w: f32,
-    h: f32,
-) -> (f32, f32, f32, f32, f32, f32) {
-    let cx_pt = origin_x + w / 2.0;
-    let cy_pt = origin_y + h / 2.0;
-
-    let mut min_x = f32::MAX;
-    let mut max_x = f32::MIN;
-    let mut min_y = f32::MAX;
-    let mut max_y = f32::MIN;
-
-    for &(x, y) in positions_map.values() {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-
-    if min_x > max_x {
-        min_x = 0.0;
-        max_x = 100.0;
-        min_y = 0.0;
-        max_y = 100.0;
-    }
-
-    let range_x = (max_x - min_x).max(60.0);
-    let range_y = (max_y - min_y).max(60.0);
-
-    let avail_w = (w - 56.0).max(40.0);
-    let avail_h = (h - 56.0).max(40.0);
-    let scale_x = (avail_w / range_x).min(2.5);
-    let scale_y = (avail_h / range_y).min(2.5);
-
-    let center_orig_x = (min_x + max_x) * 0.5;
-    let center_orig_y = (min_y + max_y) * 0.5;
-
-    (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y)
-}
-
 pub const NUCLEUS_ZOOM_MIN: f32 = 0.5;
 pub const NUCLEUS_ZOOM_MAX: f32 = 24.0;
-
-/// Projects 2D simulation coordinates into screen bounds with interactive `zoom` and `(pan_x, pan_y)` offset.
-pub(crate) fn compute_nucleus_projection_with_view(
-    positions_map: &HashMap<String, (f32, f32)>,
-    origin_x: f32,
-    origin_y: f32,
-    w: f32,
-    h: f32,
-    zoom: f32,
-    pan_x: f32,
-    pan_y: f32,
-) -> (f32, f32, f32, f32, f32, f32) {
-    let (cx_pt, cy_pt, center_orig_x, center_orig_y, base_scale_x, base_scale_y) =
-        compute_nucleus_projection(positions_map, origin_x, origin_y, w, h);
-    let clamped_zoom = zoom.clamp(NUCLEUS_ZOOM_MIN, NUCLEUS_ZOOM_MAX);
-    (
-        cx_pt + pan_x,
-        cy_pt + pan_y,
-        center_orig_x,
-        center_orig_y,
-        base_scale_x * clamped_zoom,
-        base_scale_y * clamped_zoom,
-    )
-}
 
 /// Applies a zoom delta anchored at `cursor_pos` relative to `canvas_center` so the graph point
 /// directly under the mouse cursor stays stationary on screen while zooming in or out.
@@ -987,7 +926,6 @@ impl super::Chamber {
                 // 3. Project Nodes into 3D Spherical Coordinates
                 struct ProjNode {
                     slug: String,
-                    title: String,
                     is_orphan: bool,
                     has_dead_link: bool,
                     is_invariant_linked: bool,
@@ -1015,7 +953,6 @@ impl super::Chamber {
                         slug.clone(),
                         ProjNode {
                             slug: slug.clone(),
-                            title: sp_node.title.clone(),
                             is_orphan: sp_node.is_orphan,
                             has_dead_link: sp_node.has_dead_link,
                             is_invariant_linked: sp_node.is_invariant_linked,
@@ -1588,41 +1525,12 @@ impl super::Chamber {
 
         // Selected Note Inspector Panel
         let selected_note_panel = selected_note.as_ref().and_then(|slug| cached.nodes.get(slug)).map(|n| {
-            struct CachedNotePreview {
-                path: std::path::PathBuf,
-                mtime_nanos: u128,
-                content: String,
-            }
-
-            thread_local! {
-                static NOTE_PREVIEW_CACHE: std::cell::RefCell<Option<CachedNotePreview>> = const { std::cell::RefCell::new(None) };
-            }
-
             let n_slug = n.slug.clone();
-            let note_path = repo_root.join(".hadron/nucleus").join(&n.path);
-            let mtime_nanos = std::fs::metadata(&note_path)
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-
-            let content_preview = NOTE_PREVIEW_CACHE.with(|cache| {
-                let mut cache = cache.borrow_mut();
-                if let Some(ref c) = *cache {
-                    if c.path == note_path && c.mtime_nanos == mtime_nanos {
-                        return c.content.clone();
-                    }
-                }
-                let content = std::fs::read_to_string(&note_path)
-                    .unwrap_or_else(|_| "Note file content unavailable".to_string());
-                *cache = Some(CachedNotePreview {
-                    path: note_path.clone(),
-                    mtime_nanos,
-                    content: content.clone(),
-                });
-                content
-            });
+            let content_preview = cached
+                .note_bodies
+                .get(&n_slug)
+                .cloned()
+                .unwrap_or_else(|| "Note file content unavailable".to_string());
             let is_orphan = cached.orphaned_notes.contains(&n_slug);
             let note_dead_targets: Vec<String> = cached
                 .dead_links
@@ -2000,71 +1908,22 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_nucleus_projection_distributes_across_viewport() {
-        let mut positions = HashMap::new();
-        for i in 0..240 {
-            let r = 22.0 * ((i + 1) as f32).sqrt();
-            let angle = (i as f32) * 2.399_963_1;
-            positions.insert(
-                format!("note-{i}"),
-                (400.0 + r * angle.cos(), 300.0 + r * angle.sin()),
-            );
-        }
-
-        let (cx_pt, cy_pt, center_orig_x, center_orig_y, scale_x, scale_y) =
-            compute_nucleus_projection(&positions, 0.0, 0.0, 900.0, 400.0);
-
-        let mut min_sy = f32::MAX;
-        let mut max_sy = f32::MIN;
-        for &(x, y) in positions.values() {
-            let sx = cx_pt + (x - center_orig_x) * scale_x;
-            let sy = cy_pt + (y - center_orig_y) * scale_y;
-            assert!(sx >= 20.0 && sx <= 880.0, "sx out of viewport bounds: {sx}");
-            assert!(sy >= 20.0 && sy <= 380.0, "sy out of viewport bounds: {sy}");
-            min_sy = min_sy.min(sy);
-            max_sy = max_sy.max(sy);
-        }
-        assert!(max_sy - min_sy > 300.0, "Nodes should span vertical viewport height");
-    }
-
-    #[test]
     fn test_nucleus_zoom_and_cursor_anchored_pan() {
-        let mut positions = HashMap::new();
-        positions.insert("center".to_string(), (400.0, 300.0));
-        positions.insert("right".to_string(), (500.0, 300.0));
-        positions.insert("left".to_string(), (300.0, 200.0));
-
         let canvas_center = (450.0, 200.0);
         let cursor = (520.0, 230.0);
+        let initial_pan = (10.0, -5.0);
 
-        // Project "right" before zoom
-        let (cx1, cy1, ox1, oy1, sx1, sy1) =
-            compute_nucleus_projection_with_view(&positions, 0.0, 0.0, 900.0, 400.0, 1.0, 0.0, 0.0);
-        let target_screen_x = cx1 + (500.0 - ox1) * sx1;
-        let target_screen_y = cy1 + (300.0 - oy1) * sy1;
-
-        // Place cursor directly over the "right" node and zoom in by +50%
-        let (new_zoom, (pan_x, pan_y)) = apply_nucleus_zoom_at_cursor(
-            1.0,
-            (0.0, 0.0),
-            0.5,
-            (target_screen_x, target_screen_y),
-            canvas_center,
-        );
+        // Cursor position relative to initial pan stays anchored at the same world point after zoom.
+        let (new_zoom, (pan_x, pan_y)) =
+            apply_nucleus_zoom_at_cursor(1.0, initial_pan, 0.5, cursor, canvas_center);
         assert!((new_zoom - 1.5).abs() < 1e-4);
 
-        let (cx2, cy2, ox2, oy2, sx2, sy2) = compute_nucleus_projection_with_view(
-            &positions, 0.0, 0.0, 900.0, 400.0, new_zoom, pan_x, pan_y,
-        );
-        // Scale should increase by 1.5x, separating tightly clustered nodes
-        assert!((sx2 - sx1 * 1.5).abs() < 1e-4);
-        assert!((sy2 - sy1 * 1.5).abs() < 1e-4);
-
-        // And the node under the cursor stays at the exact same screen coordinates
-        let after_screen_x = cx2 + (500.0 - ox2) * sx2;
-        let after_screen_y = cy2 + (300.0 - oy2) * sy2;
-        assert!((after_screen_x - target_screen_x).abs() < 1e-3);
-        assert!((after_screen_y - target_screen_y).abs() < 1e-3);
+        let dx_before = (cursor.0 - (canvas_center.0 + initial_pan.0)) / 1.0;
+        let dy_before = (cursor.1 - (canvas_center.1 + initial_pan.1)) / 1.0;
+        let dx_after = (cursor.0 - (canvas_center.0 + pan_x)) / new_zoom;
+        let dy_after = (cursor.1 - (canvas_center.1 + pan_y)) / new_zoom;
+        assert!((dx_after - dx_before).abs() < 1e-3);
+        assert!((dy_after - dy_before).abs() < 1e-3);
 
         // Clamping bounds (0.5x to 24.0x)
         let (max_z, _) = apply_nucleus_zoom_at_cursor(20.0, (pan_x, pan_y), 0.5, cursor, canvas_center);

@@ -18,8 +18,28 @@ pub(super) struct WorkspaceScan {
     pub(super) remote_tracking: Option<crate::vcs::RemoteTrackingInfo>,
     pub(super) plan_paths: Vec<(std::time::SystemTime, String)>,
     pub(super) active_plan_content: Option<(String, String)>,
+    pub(super) plan_landed_commits: std::collections::HashSet<String>,
     pub(super) nucleus_docs: (Option<String>, Option<String>, Option<String>),
     pub(super) nucleus_fingerprint: u64,
+}
+
+/// Resolve which commit hashes referenced by an active plan have landed in `main`.
+/// Runs off the UI thread (in `WorkspaceScan::gather`, `refresh_mission_plan`, or `Chamber::new`).
+pub(super) fn collect_plan_landed_commits(
+    repo_root: &Path,
+    content: &str,
+) -> std::collections::HashSet<String> {
+    let mut candidates = crate::app::mentions::collect_plan_commit_hashes(content);
+    let graph = hadron_lattice::task_graph::TaskGraph::parse_from_markdown(content);
+    for task in &graph.tasks {
+        if let Some(ref hash) = task.commit_hash {
+            candidates.insert(hash.clone());
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|hash| crate::vcs::is_commit_merged(repo_root, hash, "main"))
+        .collect()
 }
 
 pub(super) fn gather_overdue_schedule_jobs(
@@ -129,6 +149,13 @@ impl WorkspaceScan {
         let active_plan_content = target_plan_rel.and_then(|rel| {
             crate::sys::read_workspace_file(repo_root, &rel).map(|body| (rel, body))
         });
+        if scan_git && git_branch_fingerprint.as_deref() != prev_branch_fingerprint {
+            crate::vcs::clear_unmerged_commit_cache();
+        }
+        let plan_landed_commits = active_plan_content
+            .as_ref()
+            .map(|(_, body)| collect_plan_landed_commits(repo_root, body))
+            .unwrap_or_default();
         let nucleus_dir = repo_root.join(".hadron").join("nucleus");
         let nucleus_docs = (
             std::fs::read_to_string(nucleus_dir.join("features.md")).ok(),
@@ -153,6 +180,7 @@ impl WorkspaceScan {
             remote_tracking,
             plan_paths,
             active_plan_content,
+            plan_landed_commits,
             nucleus_docs,
             nucleus_fingerprint,
         })
@@ -526,9 +554,6 @@ impl super::Chamber {
     pub(super) fn update_active_plan(&mut self) {
         let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
         let is_wsl = crate::wsl::is_wsl_unc_path(&repo);
-        if self.cached_plan_paths.is_empty() && !is_wsl {
-            self.cached_plan_paths = scan_all_plan_paths(&repo);
-        }
         let all_plans = self.cached_plan_paths.clone();
 
         let new_plan_from_msg = if let Some(start_ix) = self.manual_plan_override_at_message_len {
@@ -550,7 +575,7 @@ impl super::Chamber {
             Some(p)
         } else if self.manual_plan_override_at_message_len.is_some() {
             if let Some(ref manual) = self.last_plan_path {
-                if all_plans.iter().any(|(_, p)| p == manual) || (!is_wsl && repo.join(manual).is_file()) {
+                if all_plans.iter().any(|(_, p)| p == manual) {
                     Some(manual.clone())
                 } else {
                     self.manual_plan_override_at_message_len = None;
@@ -574,14 +599,7 @@ impl super::Chamber {
                 Some((cached_rel, cached_body)) if cached_rel == &rel_path => {
                     Some(cached_body.clone())
                 }
-                _ if is_wsl => None,
-                _ => {
-                    let loaded = crate::sys::read_workspace_file(&repo, &rel_path);
-                    if let Some(ref body) = loaded {
-                        self.cached_active_plan_content = Some((rel_path.clone(), body.clone()));
-                    }
-                    loaded
-                }
+                _ => None,
             };
             if let Some(content) = content_opt {
                 let tasks = parse_plan_tasks(&content);
@@ -747,7 +765,8 @@ impl super::Chamber {
                 let plan_paths_changed = scan.plan_paths != self.cached_plan_paths;
                 let plan_content_changed = scan.active_plan_content.is_some()
                     && scan.active_plan_content != self.cached_active_plan_content;
-                if plan_paths_changed || plan_content_changed {
+                let plan_landed_changed = scan.plan_landed_commits != self.cached_plan_landed_commits;
+                if plan_paths_changed || plan_content_changed || plan_landed_changed {
                     if plan_paths_changed {
                         self.cached_plan_paths = scan.plan_paths;
                         self.manual_plan_override_at_message_len = None;
@@ -757,6 +776,7 @@ impl super::Chamber {
                     } else if plan_paths_changed {
                         self.cached_active_plan_content = None;
                     }
+                    self.cached_plan_landed_commits = scan.plan_landed_commits;
                     *self.cached_plan_dag.borrow_mut() = None;
                     self.update_active_plan();
                     changed = true;
@@ -804,6 +824,7 @@ impl super::Chamber {
                 // `if tab == Changes` guard did.
                 if scan.working_diff.is_some() && scan.working_diff != self.working_diff {
                     self.working_diff = scan.working_diff;
+                    *self.cached_three_way_diff.borrow_mut() = None;
                     changed = true;
                 }
 
@@ -817,6 +838,7 @@ impl super::Chamber {
                     if fp_changed {
                         crate::vcs::clear_unmerged_commit_cache();
                         *self.cached_plan_dag.borrow_mut() = None;
+                        *self.cached_three_way_diff.borrow_mut() = None;
                     }
                     if let Some(branches) = scan.git_branches {
                         self.git_branches = Some(branches);
@@ -958,9 +980,10 @@ impl super::Chamber {
         let root = crate::vcs::repo_root_of(&self.path).to_path_buf();
         let active_hint = self.last_plan_path.clone();
         cx.spawn(async move |this, cx| {
-            let (fp, plan_paths, active_content) = cx
+            let (fp, plan_paths, active_content, landed_commits) = cx
                 .background_executor()
                 .spawn(async move {
+                    crate::vcs::clear_unmerged_commit_cache();
                     let fp = crate::vcs::branch_fingerprint(&root);
                     let plan_paths = scan_all_plan_paths(&root);
                     let target = active_hint
@@ -968,18 +991,18 @@ impl super::Chamber {
                     let active_content = target.and_then(|rel| {
                         crate::sys::read_workspace_file(&root, &rel).map(|body| (rel, body))
                     });
-                    (fp, plan_paths, active_content)
+                    let landed_commits = active_content
+                        .as_ref()
+                        .map(|(_, body)| collect_plan_landed_commits(&root, body))
+                        .unwrap_or_default();
+                    (fp, plan_paths, active_content, landed_commits)
                 })
                 .await;
             let _ = this.update(cx, |chamber, cx| {
-                crate::vcs::clear_unmerged_commit_cache();
                 chamber.git_branch_fingerprint = Some(fp);
                 chamber.cached_plan_paths = plan_paths;
-                if let Some(content) = active_content {
-                    chamber.cached_active_plan_content = Some(content);
-                } else {
-                    chamber.cached_active_plan_content = None;
-                }
+                chamber.cached_active_plan_content = active_content;
+                chamber.cached_plan_landed_commits = landed_commits;
                 *chamber.cached_plan_dag.borrow_mut() = None;
                 chamber.update_active_plan();
                 cx.notify();
@@ -999,12 +1022,12 @@ pub(crate) fn resolve_active_plan(repo: &Path, messages: &[crate::model::Message
 }
 
 pub(crate) fn resolve_active_plan_with_plans(
-    repo: &Path,
+    _repo: &Path,
     messages: &[crate::model::MessageRow],
     all_plans: &[(std::time::SystemTime, String)],
 ) -> Option<String> {
     let newest_disk = newest_plan_from_list_with_mtime(all_plans);
-    let newest_msg = resolve_active_plan_from_messages_with_plans_and_ts(repo, messages, all_plans);
+    let newest_msg = resolve_active_plan_from_messages_with_plans_and_ts(messages, all_plans);
 
     match (newest_msg, newest_disk) {
         (Some((msg_ts, msg_plan)), Some((disk_mtime, disk_plan))) => {
@@ -1022,69 +1045,25 @@ pub(crate) fn resolve_active_plan_with_plans(
 }
 
 pub(crate) fn resolve_active_plan_from_messages_with_plans(
-    repo: &Path,
+    _repo: &Path,
     messages: &[crate::model::MessageRow],
     all_plans: &[(std::time::SystemTime, String)],
 ) -> Option<String> {
-    resolve_active_plan_from_messages_with_plans_and_ts(repo, messages, all_plans)
+    resolve_active_plan_from_messages_with_plans_and_ts(messages, all_plans)
         .map(|(_, plan)| plan)
 }
 
 fn resolve_active_plan_from_messages_with_plans_and_ts(
-    repo: &Path,
     messages: &[crate::model::MessageRow],
     all_plans: &[(std::time::SystemTime, String)],
 ) -> Option<(chrono::DateTime<chrono::Utc>, String)> {
     messages.iter().rev().find_map(|m| {
-        find_plan_mention_in_text_with_plans(repo, &m.body, all_plans)
+        find_plan_mention_in_text_with_plans(&m.body, all_plans)
             .map(|plan| (m.ts, plan))
     })
 }
 
-fn resolve_plan_path(repo: &Path, raw_path: &str) -> Option<String> {
-    let clean = raw_path
-        .strip_prefix("file://")
-        .or_else(|| raw_path.strip_prefix("file:"))
-        .unwrap_or(raw_path);
-    let clean = crate::vcs::strip_unc_prefix(clean);
-    let is_wsl = hadron_lattice::wsl::is_wsl_unc_path(repo);
-
-    let joined = repo.join(&clean);
-    if joined.is_file() {
-        if !is_wsl {
-            if let (Ok(canon_repo), Ok(canon_full)) = (repo.canonicalize(), joined.canonicalize()) {
-                if canon_full.starts_with(&canon_repo) {
-                    if let Ok(rel) = canon_full.strip_prefix(&canon_repo) {
-                        return Some(rel.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-        if let Ok(rel) = joined.strip_prefix(repo) {
-            return Some(rel.to_string_lossy().to_string());
-        }
-        return Some(clean);
-    }
-    let abs_p = Path::new(&clean);
-    if abs_p.is_file() {
-        if let Ok(rel) = abs_p.strip_prefix(repo) {
-            return Some(rel.to_string_lossy().to_string());
-        }
-        if !is_wsl {
-            if let (Ok(canon_repo), Ok(canon_abs)) = (repo.canonicalize(), abs_p.canonicalize()) {
-                if canon_abs.starts_with(&canon_repo) {
-                    if let Ok(rel) = canon_abs.strip_prefix(&canon_repo) {
-                        return Some(rel.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 fn find_plan_mention_in_text_with_plans(
-    repo: &Path,
     text: &str,
     all_plans: &[(std::time::SystemTime, String)],
 ) -> Option<String> {
@@ -1097,11 +1076,6 @@ fn find_plan_mention_in_text_with_plans(
             rel == clean || rel.ends_with(&format!("/{clean}")) || clean.ends_with(rel.as_str())
         }) {
             return Some(rel.clone());
-        }
-        if !hadron_lattice::wsl::is_wsl_unc_path(repo) {
-            if let Some(resolved) = resolve_plan_path(repo, &p) {
-                return Some(resolved);
-            }
         }
     }
 

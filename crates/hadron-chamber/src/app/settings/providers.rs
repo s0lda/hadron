@@ -2900,41 +2900,6 @@ impl super::Chamber {
                             ))))
                             .into_any_element()
                     }
-                    ProviderState::NeedsAuth(methods) => {
-                        let mut auth_list = v_flex().gap_2();
-                        for method in methods {
-                            let desc_inner = desc.clone();
-                            auth_list = auth_list.child(
-                                v_flex()
-                                    .gap_2()
-                                    .p_3()
-                                    .border_1()
-                                    .border_color(theme::border())
-                                    .rounded_md()
-                                    .child(
-                                        div().text_color(theme::text()).child(method.name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(theme::text_muted())
-                                            .child(method.description.clone()),
-                                    )
-                                    .child(
-                                        text_button(
-                                            &format!("auth-btn-{}", method.id),
-                                            &method.name,
-                                        )
-                                        .on_click(cx.listener(
-                                            move |this, _, _, cx| {
-                                                this.start_acp_preset_probe(desc_inner.clone(), cx);
-                                            },
-                                        )),
-                                    ),
-                            );
-                        }
-                        auth_list.into_any_element()
-                    }
                     ProviderState::Ready { model } => {
                         let desc_inner = desc.clone();
                         let model_inner = model.clone();
@@ -3205,8 +3170,6 @@ impl super::Chamber {
                         )))
                         .into_any_element()
                     }
-                    // A keyless local server has no auth flow to complete.
-                    ProviderState::NeedsAuth(_) => div().into_any_element(),
                     ProviderState::Ready { model: _ } => {
                         let picker = self.wizard_model_select(window, cx);
                         let typed = self.local_base_url.read(cx).value().trim().to_string();

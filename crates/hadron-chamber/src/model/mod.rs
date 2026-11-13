@@ -628,61 +628,23 @@ pub struct ProcessRow {
     pub can_stop_or_kill: bool,
 }
 
-/// Builds the Process Manager's basic row list: the `hadron-gluon` daemon first,
-/// then every *adopted* roster seat.
-pub fn build_process_rows(gluon_running: bool, roster: &[RosterRow]) -> Vec<ProcessRow> {
-    let mut rows = vec![ProcessRow {
-        id: "gluon".to_string(),
-        label: "hadron-gluon (daemon)".to_string(),
-        status: if gluon_running { "Running".to_string() } else { "Stopped".to_string() },
-        kind: ProcessKind::Gluon,
-        section: ProcessSection::LiveProcess,
-        pid: None,
-        ppid: None,
-        rss_bytes: None,
-        command: None,
-        backing_badge: None,
-        can_restart: true,
-        can_toggle: false,
-        enabled: gluon_running,
-        can_stop_or_kill: gluon_running,
-    }];
-    rows.extend(roster.iter().filter(|r| r.adopted).map(|r| {
-        let status = if !r.enabled {
-            "Disabled".to_string()
-        } else {
-            match r.state {
-                QuarkState::Excited => "Excited".to_string(),
-                QuarkState::Thinking => "Thinking".to_string(),
-                QuarkState::Waiting => "Waiting".to_string(),
-                QuarkState::Blocked => "Blocked".to_string(),
-                QuarkState::Error => "Error".to_string(),
-                QuarkState::Ground => "Idle".to_string(),
+fn cmdline_matches_quark_id(cmd: &str, id: &str) -> bool {
+    if id.is_empty() {
+        return false;
+    }
+    let patterns = [
+        format!("trees/{id}"),
+        format!("trees\\{id}"),
+        format!("hadron:{id}"),
+    ];
+    patterns.iter().any(|pat| {
+        cmd.match_indices(pat.as_str()).any(|(idx, matched)| {
+            match cmd[idx + matched.len()..].chars().next() {
+                None => true,
+                Some(ch) => !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_' && ch != '.',
             }
-        };
-        let is_active = r.enabled && matches!(r.state, QuarkState::Excited | QuarkState::Thinking);
-        ProcessRow {
-            id: r.id.clone(),
-            label: r.display_name.clone().unwrap_or_else(|| r.id.clone()),
-            status,
-            kind: ProcessKind::Quark,
-            section: if is_active {
-                ProcessSection::LiveProcess
-            } else {
-                ProcessSection::StandbyQuark
-            },
-            pid: None,
-            ppid: None,
-            rss_bytes: None,
-            command: None,
-            backing_badge: quark_backing_badge(r, false),
-            can_restart: r.enabled && matches!(r.transport, hadron_lattice::Transport::Acp),
-            can_toggle: true,
-            enabled: r.enabled,
-            can_stop_or_kill: is_active,
-        }
-    }));
-    rows
+        })
+    })
 }
 
 /// Builds the Process Manager's complete hierarchy: Hadron main UI, daemon,
@@ -754,15 +716,10 @@ pub fn build_full_process_rows(
                 QuarkState::Ground => "Idle".to_string(),
             }
         };
-        let tree_fwd = format!("trees/{}", r.id);
-        let tree_back = format!("trees\\{}", r.id);
-        let wsl_tag = format!("hadron:{}", r.id);
         let matches_quark = |p: &&hadron_lattice::sys::inspect::ProcessInfo| {
             p.pid != chamber_pid
                 && Some(p.pid) != effective_gluon_pid
-                && (p.cmdline.contains(&tree_fwd)
-                    || p.cmdline.contains(&tree_back)
-                    || p.cmdline.contains(&wsl_tag))
+                && cmdline_matches_quark_id(&p.cmdline, &r.id)
         };
         let matching_pids: std::collections::HashSet<u32> = process_tree
             .iter()

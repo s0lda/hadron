@@ -1,5 +1,5 @@
 //! Provider/agent wizard + settings value types: the descriptors and state enums for
-//! connecting a quark to a backing provider ([`AgentDescriptor`], [`AuthMethod`],
+//! connecting a quark to a backing provider ([`AgentDescriptor`],
 //! [`ProviderState`], [`ConfiguredQuark`], [`WizardState`]), the [`SettingsTarget`] the
 //! Settings overlay edits, plus the provider-roster and one-shot catalogue-migration
 //! helpers. Value + file-I/O work — no `Chamber`.
@@ -18,18 +18,9 @@ pub(super) struct AgentDescriptor {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(super) struct AuthMethod {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-}
-
-#[derive(Clone, PartialEq, Eq)]
 pub(super) enum ProviderState {
     NotConnected,
     Connecting,
-    #[allow(dead_code)] // half-wired auth flow: matched in render, not yet constructed
-    NeedsAuth(Vec<AuthMethod>),
     Ready { model: String },
     Failed(String),
 }
@@ -206,6 +197,7 @@ pub(super) fn prompt_channel_from(choice: CliChannelChoice, flag: &str) -> hadro
 /// can't populate another quark's list.
 pub(super) struct AcpModelProbe {
     pub id: String,
+    pub seq: u64,
     pub state: AcpModelState,
 }
 

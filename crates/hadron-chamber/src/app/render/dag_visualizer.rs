@@ -59,21 +59,19 @@ pub fn compute_dag_scroll_offset(
 }
 
 impl Chamber {
-    pub(super) fn resolve_cached_plan_dag(
-        &self,
-        repo: &std::path::Path,
-        content: &str,
-    ) -> CachedPlanDag {
+    pub(super) fn resolve_cached_plan_dag(&self, content: &str) -> CachedPlanDag {
         let content_hash = compute_plan_content_hash(content);
         let head_oid = self.git_branch_fingerprint.clone();
 
         if let Some(cached) = self.cached_plan_dag.borrow().as_ref() {
-            if cached.content_hash == content_hash && cached.head_oid == head_oid {
+            if cached.content_hash == content_hash
+                && cached.head_oid == head_oid
+                && cached.landed_commits == self.cached_plan_landed_commits
+            {
                 return cached.clone();
             }
         }
 
-        crate::vcs::clear_unmerged_commit_cache();
         let graph = TaskGraph::parse_from_markdown(content);
         let waves = match graph.compute_waves() {
             Ok(w) => w,
@@ -81,16 +79,11 @@ impl Chamber {
         };
         let ready_ids: std::collections::HashSet<String> =
             graph.ready_tasks().into_iter().map(|t| t.id).collect();
-        let mut landed_commits = std::collections::HashSet::new();
-        for task in &graph.tasks {
-            if let Some(ref hash) = task.commit_hash {
-                if crate::vcs::is_commit_merged(repo, hash, "main") {
-                    landed_commits.insert(hash.clone());
-                }
-            }
-        }
-        let progress = crate::app::mentions::parse_plan_progress_with_status(repo, content);
-        let task_groups = crate::app::mentions::parse_plan_tasks_with_status(repo, content);
+        let landed_commits = self.cached_plan_landed_commits.clone();
+        let progress =
+            crate::app::mentions::parse_plan_progress_with_landed(content, &landed_commits);
+        let task_groups =
+            crate::app::mentions::parse_plan_tasks_with_landed(content, &landed_commits);
 
         let built = CachedPlanDag {
             content_hash,
@@ -109,8 +102,7 @@ impl Chamber {
     /// Renders the Interactive Plan DAG & Wave Visualizer (Capability #11).
     #[allow(dead_code)]
     pub(super) fn plan_dag_visualizer(&self, content: &str, cx: &mut Context<Self>) -> impl IntoElement {
-        let repo = crate::vcs::repo_root_of(&self.path).to_path_buf();
-        let cached = self.resolve_cached_plan_dag(&repo, content);
+        let cached = self.resolve_cached_plan_dag(content);
         let graph = &cached.graph;
         if graph.tasks.is_empty() {
             return div().into_any_element();

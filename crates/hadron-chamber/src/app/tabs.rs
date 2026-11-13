@@ -25,12 +25,6 @@ pub(super) enum ChatTab {
 impl ChatTab {
     pub(super) const ALL: [ChatTab; 3] = [ChatTab::Chat, ChatTab::Log, ChatTab::Stats];
 
-    /// Sizes every per-tab array. A tab added to `ALL` without growing those
-    /// arrays is an index-out-of-bounds the moment the tab is opened, so they
-    /// take their length from here rather than restating it.
-    #[cfg(test)]
-    pub(super) const COUNT: usize = Self::ALL.len();
-
     pub(super) fn index(self) -> usize {
         match self {
             ChatTab::Chat => 0,
@@ -202,10 +196,6 @@ impl VisualizerMode {
             VisualizerMode::CratesAndModules => 1,
             VisualizerMode::NucleusGraph => 2,
         }
-    }
-
-    pub(super) fn from_index(ix: usize) -> Self {
-        Self::ALL.get(ix).copied().unwrap_or(VisualizerMode::Swarm3D)
     }
 
     pub(super) fn label(self) -> &'static str {
@@ -387,10 +377,6 @@ mod tests {
         assert_eq!(VisualizerMode::Swarm3D.index(), 0);
         assert_eq!(VisualizerMode::CratesAndModules.index(), 1);
         assert_eq!(VisualizerMode::NucleusGraph.index(), 2);
-        assert_eq!(VisualizerMode::from_index(0), VisualizerMode::Swarm3D);
-        assert_eq!(VisualizerMode::from_index(1), VisualizerMode::CratesAndModules);
-        assert_eq!(VisualizerMode::from_index(2), VisualizerMode::NucleusGraph);
-        assert_eq!(VisualizerMode::from_index(99), VisualizerMode::Swarm3D);
         assert_eq!(VisualizerMode::Swarm3D.label(), "Swarm 3D");
         assert_eq!(VisualizerMode::CratesAndModules.label(), "Dependencies");
         assert_eq!(VisualizerMode::NucleusGraph.label(), "Nucleus Graph");

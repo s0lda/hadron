@@ -32,8 +32,6 @@ pub(super) fn seat_by_mention<'a>(
     })
 }
 
-use std::path::Path;
-
 /// Status of a task step in an implementation plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StepStatus {
@@ -59,10 +57,55 @@ impl StepStatus {
     }
 }
 
-/// Parse a plan's markdown checklist into `(total, landed, branch_completed, items)`.
-pub(super) fn parse_plan_progress_with_status(
-    repo: &Path,
+/// Extract all `(commit <hash>)` annotations referenced by completed checklist items.
+pub(super) fn collect_plan_commit_hashes(content: &str) -> std::collections::HashSet<String> {
+    let mut hashes = std::collections::HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            let body = &trimmed[5..];
+            if let Some(pos) = body.find("(commit ") {
+                if let Some(end) = body[pos..].find(')') {
+                    let hash = body[pos + 8..pos + end].trim();
+                    if !hash.is_empty() {
+                        hashes.insert(hash.to_string());
+                    }
+                }
+            }
+        }
+    }
+    hashes
+}
+
+fn step_status_from_line(
+    trimmed: &str,
+    landed_commits: &std::collections::HashSet<String>,
+) -> Option<StepStatus> {
+    if trimmed.starts_with("- [ ]") {
+        Some(StepStatus::Pending)
+    } else if trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
+        Some(StepStatus::BranchCompleted)
+    } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+        let body = &trimmed[5..];
+        if let Some(pos) = body.find("(commit ") {
+            if let Some(end) = body[pos..].find(')') {
+                let hash = body[pos + 8..pos + end].trim();
+                if landed_commits.contains(hash) {
+                    return Some(StepStatus::MainLanded);
+                }
+                return Some(StepStatus::BranchCompleted);
+            }
+        }
+        Some(StepStatus::MainLanded)
+    } else {
+        None
+    }
+}
+
+/// Pure in-memory version of plan progress parsing using pre-resolved `landed_commits`.
+pub(super) fn parse_plan_progress_with_landed(
     content: &str,
+    landed_commits: &std::collections::HashSet<String>,
 ) -> (usize, usize, usize, Vec<(String, StepStatus)>) {
     let mut total = 0usize;
     let mut landed = 0usize;
@@ -76,27 +119,7 @@ pub(super) fn parse_plan_progress_with_status(
             continue;
         }
         let trimmed = line.trim_start();
-        let status = if trimmed.starts_with("- [ ]") {
-            StepStatus::Pending
-        } else if trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
-            StepStatus::BranchCompleted
-        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
-            let body = &trimmed[5..];
-            if let Some(pos) = body.find("(commit ") {
-                if let Some(end) = body[pos..].find(')') {
-                    let hash = body[pos + 8..pos + end].trim();
-                    if crate::vcs::is_commit_merged(repo, hash, "main") {
-                        StepStatus::MainLanded
-                    } else {
-                        StepStatus::BranchCompleted
-                    }
-                } else {
-                    StepStatus::MainLanded
-                }
-            } else {
-                StepStatus::MainLanded
-            }
-        } else {
+        let Some(status) = step_status_from_line(trimmed, landed_commits) else {
             continue;
         };
 
@@ -124,6 +147,19 @@ pub(super) fn parse_plan_progress_with_status(
     }
 
     (total, landed, branch, items)
+}
+
+/// Parse a plan's markdown checklist into `(total, landed, branch_completed, items)`.
+#[cfg(test)]
+pub(super) fn parse_plan_progress_with_status(
+    repo: &std::path::Path,
+    content: &str,
+) -> (usize, usize, usize, Vec<(String, StepStatus)>) {
+    let landed_commits: std::collections::HashSet<String> = collect_plan_commit_hashes(content)
+        .into_iter()
+        .filter(|h| crate::vcs::is_commit_merged(repo, h, "main"))
+        .collect();
+    parse_plan_progress_with_landed(content, &landed_commits)
 }
 
 /// Parse a plan's markdown checklist into `(total, completed, items)`. Any line whose
@@ -174,10 +210,10 @@ pub(super) fn parse_plan_progress(content: &str) -> (usize, usize, Vec<(String, 
     (total, completed, items)
 }
 
-/// Parse plan content into grouped tasks with tri-state status: a list of `(task_name, steps)` tuples.
-pub(super) fn parse_plan_tasks_with_status(
-    repo: &Path,
+/// Pure in-memory version of grouped plan task parsing using pre-resolved `landed_commits`.
+pub(super) fn parse_plan_tasks_with_landed(
     content: &str,
+    landed_commits: &std::collections::HashSet<String>,
 ) -> Vec<(String, Vec<(String, StepStatus)>)> {
     let mut tasks = Vec::new();
     let mut current_task = String::new();
@@ -200,27 +236,7 @@ pub(super) fn parse_plan_tasks_with_status(
             continue;
         }
         let trimmed = line.trim_start();
-        let status = if trimmed.starts_with("- [ ]") {
-            StepStatus::Pending
-        } else if trimmed.starts_with("- [/]") || trimmed.starts_with("- [~]") {
-            StepStatus::BranchCompleted
-        } else if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
-            let body = &trimmed[5..];
-            if let Some(pos) = body.find("(commit ") {
-                if let Some(end) = body[pos..].find(')') {
-                    let hash = body[pos + 8..pos + end].trim();
-                    if crate::vcs::is_commit_merged(repo, hash, "main") {
-                        StepStatus::MainLanded
-                    } else {
-                        StepStatus::BranchCompleted
-                    }
-                } else {
-                    StepStatus::MainLanded
-                }
-            } else {
-                StepStatus::MainLanded
-            }
-        } else {
+        let Some(status) = step_status_from_line(trimmed, landed_commits) else {
             continue;
         };
 

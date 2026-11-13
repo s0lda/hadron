@@ -1058,24 +1058,17 @@ impl super::Chamber {
                     )
                 });
 
-                // Resolve the referenced plan to its cached or on-disk content in one step;
-                // either the reference or the file may be absent.
+                // Resolve the referenced plan to its cached in-memory content (preloaded off the UI thread).
                 let resolved = active_plan_path.and_then(|rel_path| {
-                    match &self.cached_active_plan_content {
-                        Some((cached_rel, cached_body)) if cached_rel == &rel_path => {
-                            Some((rel_path, cached_body.clone()))
-                        }
-                        _ if !crate::wsl::is_wsl_unc_path(&repo) => {
-                            crate::sys::read_workspace_file(&repo, &rel_path)
-                                .map(|content| (rel_path, content))
-                        }
-                        _ => None,
-                    }
+                    self.cached_active_plan_content
+                        .as_ref()
+                        .filter(|(cached_rel, _)| cached_rel == &rel_path)
+                        .map(|(_, cached_body)| (rel_path, cached_body.clone()))
                 });
 
                 let plan_element = match resolved {
                     Some((rel_path, content)) => {
-                        let cached_dag = self.resolve_cached_plan_dag(&repo, &content);
+                        let cached_dag = self.resolve_cached_plan_dag(&content);
                         let (total, landed_count, branch_count, _) = cached_dag.progress.clone();
                         let completed = landed_count + branch_count;
                         let frac = if total > 0 {
@@ -1290,6 +1283,7 @@ impl super::Chamber {
                                                                 this.last_plan_path = Some(target.clone());
                                                                 this.manual_plan_override_at_message_len = Some(this.view.messages.len());
                                                                 this.update_active_plan();
+                                                                this.refresh_mission_plan(cx);
                                                                 cx.notify();
                                                             });
                                                             window.refresh();
@@ -1681,6 +1675,7 @@ impl super::Chamber {
                                                                 this.last_plan_path = Some(target.clone());
                                                                 this.manual_plan_override_at_message_len = Some(this.view.messages.len());
                                                                 this.update_active_plan();
+                                                                this.refresh_mission_plan(cx);
                                                                 cx.notify();
                                                             });
                                                             window.refresh();

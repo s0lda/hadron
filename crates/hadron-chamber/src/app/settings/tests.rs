@@ -613,6 +613,7 @@ fn acp_probe_respects_effort_selector_unless_model_encodes_effort() {
     // Ready probe advertising ThoughtLevel on base model `gemini-4-carbon`: shown.
     let ready_with_effort = AcpModelProbe {
         id: "acp-agy".into(),
+        seq: 0,
         state: AcpModelState::Ready {
             selectors: AcpSelectors {
                 effort: Some(ModelSelector {

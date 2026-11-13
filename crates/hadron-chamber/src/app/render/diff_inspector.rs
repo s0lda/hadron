@@ -21,19 +21,14 @@ pub struct ThreeWayHunk {
 }
 
 #[derive(Clone)]
-struct CachedDiffFile {
-    file_path: String,
-    changed_hunks: Vec<ThreeWayHunk>,
+pub(crate) struct CachedDiffFile {
+    pub file_path: String,
+    pub changed_hunks: Vec<ThreeWayHunk>,
 }
 
-struct CachedDiffInspector {
-    key: (std::path::PathBuf, String, String, Vec<String>),
-    files: Vec<CachedDiffFile>,
-    cached_at: std::time::Instant,
-}
-
-thread_local! {
-    static DIFF_INSPECTOR_CACHE: std::cell::RefCell<Option<CachedDiffInspector>> = const { std::cell::RefCell::new(None) };
+pub(crate) struct CachedDiffInspector {
+    pub key: (std::path::PathBuf, String, String, Vec<String>),
+    pub files: Vec<CachedDiffFile>,
 }
 
 /// A file diff containing 3-way comparison hunks.
@@ -239,32 +234,94 @@ impl Chamber {
                 .child(div().w(px(90.0)).text_right().text_color(theme::text_muted()).child("Steer")),
         );
 
-        let cache_key = (repo.to_path_buf(), base_ref.to_string(), theirs_ref.to_string(), files_to_check.clone());
-        let cached_files = DIFF_INSPECTOR_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if let Some(ref c) = *cache {
-                if c.key == cache_key && c.cached_at.elapsed() < std::time::Duration::from_millis(500) {
-                    return c.files.clone();
-                }
+        let cache_key = (
+            repo.to_path_buf(),
+            base_ref.to_string(),
+            theirs_ref.to_string(),
+            files_to_check.clone(),
+        );
+        let cached_files = self
+            .cached_three_way_diff
+            .borrow()
+            .as_ref()
+            .filter(|c| c.key == cache_key)
+            .map(|c| c.files.clone());
+
+        let Some(cached_files) = cached_files else {
+            if !self.cached_three_way_diff_loading.get() {
+                self.cached_three_way_diff_loading.set(true);
+                let repo_bg = repo.to_path_buf();
+                let base_bg = base_ref.to_string();
+                let theirs_bg = theirs_ref.to_string();
+                let files_bg = files_to_check.clone();
+                let key_bg = cache_key;
+                cx.spawn(async move |this, cx| {
+                    let files = cx
+                        .background_executor()
+                        .spawn(async move {
+                            files_bg
+                                .iter()
+                                .take(5)
+                                .map(|file_path| {
+                                    let base_content =
+                                        crate::vcs::show_file_at_ref(&repo_bg, &base_bg, file_path)
+                                            .unwrap_or_default();
+                                    let ours_content =
+                                        std::fs::read_to_string(repo_bg.join(file_path))
+                                            .unwrap_or_default();
+                                    let theirs_content =
+                                        crate::vcs::show_file_at_ref(&repo_bg, &theirs_bg, file_path)
+                                            .unwrap_or_default();
+                                    let all_hunks = compute_three_way_diff(
+                                        &base_content,
+                                        &ours_content,
+                                        &theirs_content,
+                                    );
+                                    let changed_hunks = all_hunks
+                                        .into_iter()
+                                        .filter(|h| h.status != ThreeWayStatus::Same)
+                                        .collect();
+                                    CachedDiffFile {
+                                        file_path: file_path.clone(),
+                                        changed_hunks,
+                                    }
+                                })
+                                .collect::<Vec<CachedDiffFile>>()
+                        })
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.cached_three_way_diff_loading.set(false);
+                        *this.cached_three_way_diff.borrow_mut() = Some(CachedDiffInspector {
+                            key: key_bg,
+                            files,
+                        });
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
-            let files: Vec<CachedDiffFile> = files_to_check.iter().take(5).map(|file_path| {
-                let base_content = crate::vcs::show_file_at_ref(repo, base_ref, file_path).unwrap_or_default();
-                let ours_content = std::fs::read_to_string(repo.join(file_path)).unwrap_or_default();
-                let theirs_content = crate::vcs::show_file_at_ref(repo, theirs_ref, file_path).unwrap_or_default();
-                let all_hunks = compute_three_way_diff(&base_content, &ours_content, &theirs_content);
-                let changed_hunks = all_hunks.into_iter().filter(|h| h.status != ThreeWayStatus::Same).collect();
-                CachedDiffFile {
-                    file_path: file_path.clone(),
-                    changed_hunks,
-                }
-            }).collect();
-            *cache = Some(CachedDiffInspector {
-                key: cache_key,
-                files: files.clone(),
-                cached_at: std::time::Instant::now(),
-            });
-            files
-        });
+
+            return v_flex()
+                .size_full()
+                .p_6()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(theme::text())
+                        .child("Loading 3-Way Diff…"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme::text_muted())
+                        .child(format!("Computing 3-way alignment for {theirs_ref} ⟷ {base_ref}")),
+                )
+                .into_any_element();
+        };
 
         let mut global_hunk_idx = 0usize;
         for cached_file in &cached_files {

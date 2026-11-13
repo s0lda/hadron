@@ -28,6 +28,8 @@ impl super::Chamber {
     /// Re-probe the ACP agent or CLI binary backing `id` for every config selector it offers,
     /// parking the result in `acp_model_probe` for the Settings dropdowns.
     pub(super) fn start_acp_model_probe(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.acp_probe_seq = self.acp_probe_seq.wrapping_add(1);
+        let seq = self.acp_probe_seq;
         let seat_opt = resolve_team(&self.team, &self.global)
             .get(&QuarkId::new(id))
             .cloned();
@@ -45,7 +47,7 @@ impl super::Chamber {
             };
             let work_dir = hadron_lattice::repo_root_of(&self.path).to_path_buf();
             let seat_model = (!seat.model.trim().is_empty()).then(|| seat.model.clone());
-            self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), state: AcpModelState::Probing });
+            self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), seq, state: AcpModelState::Probing });
             cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut cx = cx.clone();
                 async move {
@@ -59,7 +61,7 @@ impl super::Chamber {
                         })
                         .await;
                     this.update(&mut cx, |this, cx| {
-                        if !matches!(&this.acp_model_probe, Some(p) if p.id == id_str) {
+                        if !matches!(&this.acp_model_probe, Some(p) if p.id == id_str && p.seq == seq) {
                             return;
                         }
                         let state = match result {
@@ -69,7 +71,7 @@ impl super::Chamber {
                             Ok(sel) => AcpModelState::Ready { selectors: sel },
                             Err(e) => AcpModelState::Unavailable(format!("couldn't detect models: {e}")),
                         };
-                        this.acp_model_probe = Some(AcpModelProbe { id: id_str, state });
+                        this.acp_model_probe = Some(AcpModelProbe { id: id_str, seq, state });
                         cx.notify();
                     })
                     .ok();
@@ -86,8 +88,8 @@ impl super::Chamber {
                 })
             });
             if cli_spec.model_probe.is_some() {
-                self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), state: AcpModelState::Probing });
-                cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                self.acp_model_probe = Some(AcpModelProbe { id: id_str.clone(), seq, state: AcpModelState::Probing });
+                cx.spawn(move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                     let mut cx = cx.clone();
                     async move {
                         let result = cx
@@ -96,7 +98,7 @@ impl super::Chamber {
                             })
                             .await;
                         this.update(&mut cx, |this, cx| {
-                            if !matches!(&this.acp_model_probe, Some(p) if p.id == id_str) {
+                            if !matches!(&this.acp_model_probe, Some(p) if p.id == id_str && p.seq == seq) {
                                 return;
                             }
                             let state = match result {
@@ -108,7 +110,7 @@ impl super::Chamber {
                                 },
                                 Err(e) => AcpModelState::Unavailable(format!("couldn't detect models: {e}")),
                             };
-                            this.acp_model_probe = Some(AcpModelProbe { id: id_str, state });
+                            this.acp_model_probe = Some(AcpModelProbe { id: id_str, seq, state });
                             cx.notify();
                         })
                         .ok();
@@ -136,82 +138,75 @@ impl super::Chamber {
             self.agy_bridge_probe = None;
             return;
         }
-        // Refresh the script BEFORE the already-provisioned early return. It is a byte
-        // compare and a write only when they differ, and it is the only thing that
-        // carries a Hadron upgrade's new bridge into `~/.hadron`. Behind the return, a
-        // machine that provisioned once would run the version of the script it first
-        // installed for the rest of time, which is the opposite of what 1b is for.
-        if let Err(e) = hadron_gluon::adapter::bridge::materialize_script() {
-            self.agy_bridge_probe = Some(AgyBridgeProbe {
-                id: id.to_string(),
-                state: AgyBridgeState::Failed(e.to_string()),
-            });
-            return;
-        }
-        let health = hadron_gluon::adapter::bridge::check_bridge_health();
-        match health {
-            hadron_gluon::adapter::bridge::BridgeHealth::UpToDate { .. } => {
-                self.agy_bridge_probe = None;
-            }
-            hadron_gluon::adapter::bridge::BridgeHealth::Unprovisioned => {
-                let id = id.to_string();
-                self.agy_bridge_probe =
-                    Some(AgyBridgeProbe { id: id.clone(), state: AgyBridgeState::Provisioning });
-                cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    let mut cx = cx.clone();
-                    async move {
-                        let result = cx
-                            .background_spawn(async move {
-                                hadron_gluon::adapter::bridge::materialize_script()?;
-                                hadron_gluon::adapter::bridge::provision_venv()
-                            })
-                            .await;
-                        this.update(&mut cx, |this, cx| {
-                            if !matches!(&this.agy_bridge_probe, Some(p) if p.id == id) {
-                                return;
+        let id = id.to_string();
+        self.agy_bridge_probe = None;
+        cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                // Run disk materialisation and health check off the UI thread first.
+                let preflight = cx
+                    .background_spawn(async move {
+                        hadron_gluon::adapter::bridge::materialize_script()
+                            .map(|_| hadron_gluon::adapter::bridge::check_bridge_health())
+                    })
+                    .await;
+                let (is_upgrade, initial_state) = match preflight {
+                    Ok(hadron_gluon::adapter::bridge::BridgeHealth::UpToDate { .. }) => {
+                        let _ = this.update(&mut cx, |this, cx| {
+                            if this.agy_bridge_probe.as_ref().is_some_and(|p| p.id == id) {
+                                this.agy_bridge_probe = None;
+                                cx.notify();
                             }
-                            let state = match result {
-                                Ok(_) => AgyBridgeState::Ready,
-                                Err(e) => AgyBridgeState::Failed(e.to_string()),
-                            };
-                            this.agy_bridge_probe = Some(AgyBridgeProbe { id, state });
-                            cx.notify();
-                        })
-                        .ok();
+                        });
+                        return;
                     }
-                })
-                .detach();
-            }
-            hadron_gluon::adapter::bridge::BridgeHealth::Outdated { .. } => {
-                let id = id.to_string();
-                self.agy_bridge_probe =
-                    Some(AgyBridgeProbe { id: id.clone(), state: AgyBridgeState::Updating });
-                cx.spawn(|this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                    let mut cx = cx.clone();
-                    async move {
-                        let result = cx
-                            .background_spawn(async move {
-                                hadron_gluon::adapter::bridge::materialize_script()?;
-                                hadron_gluon::adapter::bridge::upgrade_venv()
-                            })
-                            .await;
-                        this.update(&mut cx, |this, cx| {
-                            if !matches!(&this.agy_bridge_probe, Some(p) if p.id == id) {
-                                return;
-                            }
-                            let state = match result {
-                                Ok(_) => AgyBridgeState::Ready,
-                                Err(e) => AgyBridgeState::Failed(e.to_string()),
-                            };
-                            this.agy_bridge_probe = Some(AgyBridgeProbe { id, state });
-                            cx.notify();
-                        })
-                        .ok();
+                    Ok(hadron_gluon::adapter::bridge::BridgeHealth::Unprovisioned) => {
+                        (false, AgyBridgeState::Provisioning)
                     }
+                    Ok(hadron_gluon::adapter::bridge::BridgeHealth::Outdated { .. }) => {
+                        (true, AgyBridgeState::Updating)
+                    }
+                    Err(e) => {
+                        let _ = this.update(&mut cx, |this, cx| {
+                            this.agy_bridge_probe = Some(AgyBridgeProbe {
+                                id,
+                                state: AgyBridgeState::Failed(e.to_string()),
+                            });
+                            cx.notify();
+                        });
+                        return;
+                    }
+                };
+                let _ = this.update(&mut cx, |this, cx| {
+                    this.agy_bridge_probe =
+                        Some(AgyBridgeProbe { id: id.clone(), state: initial_state });
+                    cx.notify();
+                });
+                let result = cx
+                    .background_spawn(async move {
+                        hadron_gluon::adapter::bridge::materialize_script()?;
+                        if is_upgrade {
+                            hadron_gluon::adapter::bridge::upgrade_venv().map(|_| ())
+                        } else {
+                            hadron_gluon::adapter::bridge::provision_venv().map(|_| ())
+                        }
+                    })
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    if !matches!(&this.agy_bridge_probe, Some(p) if p.id == id) {
+                        return;
+                    }
+                    let state = match result {
+                        Ok(_) => AgyBridgeState::Ready,
+                        Err(e) => AgyBridgeState::Failed(e.to_string()),
+                    };
+                    this.agy_bridge_probe = Some(AgyBridgeProbe { id, state });
+                    cx.notify();
                 })
-                .detach();
+                .ok();
             }
-        }
+        })
+        .detach();
     }
 
     /// Explicitly trigger a re-upgrade of the Antigravity Python bridge dependencies.

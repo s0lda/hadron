@@ -37,46 +37,6 @@ fn trim_unit(v: f64, suffix: char) -> String {
 /// the origin edge, fading to transparent by ~70%. Several of these, layered at different
 /// angles, build the "bubble chamber" backdrop. Static (no animation) and gradient-only
 /// (no blur), so it costs only per-repaint — see `theme` for why that is affordable now.
-///
-/// The corners are rounded to the housing radius: GPUI's `overflow_hidden` masks to the
-/// rectangular bounds, not the rounded shape, so a full-bleed child would otherwise paint
-/// square corners that poke past the window's rounded edge.
-#[allow(dead_code)] // retained styling helper, not currently wired
-pub(super) fn glow_layer(angle: f32, hue: Rgba, top_r: Pixels, bottom_r: Pixels) -> gpui::Div {
-    div()
-        .absolute()
-        .inset_0()
-        .rounded_tl(top_r)
-        .rounded_tr(top_r)
-        .rounded_bl(bottom_r)
-        .rounded_br(bottom_r)
-        .bg(linear_gradient(
-            angle,
-            linear_color_stop(hue, 0.0),
-            linear_color_stop(rgba(0x00000000), 0.55),
-        ))
-}
-
-/// The opaque base wash of the field: a full-bleed two-colour gradient from `from` at the
-/// origin edge to `to` at the far edge. Rounded to the housing radius for the same reason
-/// as [`glow_layer`] (GPUI's overflow mask is rectangular, so a square child would poke
-/// past the rounded corners).
-#[allow(dead_code)] // retained styling helper, not currently wired
-pub(super) fn wash_layer(angle: f32, from: Rgba, to: Rgba, top_r: Pixels, bottom_r: Pixels) -> gpui::Div {
-    div()
-        .absolute()
-        .inset_0()
-        .rounded_tl(top_r)
-        .rounded_tr(top_r)
-        .rounded_bl(bottom_r)
-        .rounded_br(bottom_r)
-        .bg(linear_gradient(
-            angle,
-            linear_color_stop(from, 0.0),
-            linear_color_stop(to, 1.0),
-        ))
-}
-
 pub(super) fn frame_corner_radii(window: &Window) -> (Pixels, Pixels) {
     let r = crate::window_frame::FRAME_RADIUS;
     match window.window_decorations() {

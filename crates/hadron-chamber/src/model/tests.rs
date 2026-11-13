@@ -492,7 +492,7 @@
     /// mechanism actually supports — restart only for an enabled ACP seat, and the
     /// not-adopted seat omitted entirely (nothing to list — no process exists for it).
     #[test]
-    fn build_process_rows_lists_daemon_then_adopted_seats_only() {
+    fn build_full_process_rows_lists_daemon_then_adopted_seats_only() {
         use hadron_lattice::Transport;
 
         let mut resident = roster_entry("acp-claude", Transport::Acp);
@@ -504,22 +504,53 @@
         let mut not_adopted = roster_entry("acp-agy", Transport::Acp);
         not_adopted.adopted = false;
 
-        let rows = build_process_rows(true, &[resident, disabled_cli, not_adopted]);
+        let rows = build_full_process_rows(
+            1000,
+            true,
+            Some(1001),
+            &[resident, disabled_cli, not_adopted],
+            &[],
+            &[],
+        );
 
         assert_eq!(
             rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-            vec!["gluon", "acp-claude", "cli-agy"],
+            vec!["chamber", "gluon", "acp-claude", "cli-agy"],
             "not-adopted seat holds no process, so it's omitted, not greyed"
         );
 
-        assert_eq!(rows[0].status, "Running");
-        assert!(rows[0].can_restart && !rows[0].can_toggle, "daemon can be restarted/started from Process Manager");
+        assert_eq!(rows[1].status, "Running");
+        assert!(rows[1].can_restart && !rows[1].can_toggle, "daemon can be restarted/started from Process Manager");
 
-        assert_eq!(rows[1].status, "Excited");
-        assert!(rows[1].can_restart, "enabled ACP seat can be force-restarted");
+        assert_eq!(rows[2].status, "Excited");
+        assert!(rows[2].can_restart, "enabled ACP seat can be force-restarted");
 
-        assert_eq!(rows[2].status, "Disabled");
-        assert!(!rows[2].can_restart, "a disabled seat holds nothing resident to reap");
+        assert_eq!(rows[3].status, "Disabled");
+        assert!(!rows[3].can_restart, "a disabled seat holds nothing resident to reap");
+    }
+
+    #[test]
+    fn build_full_process_rows_avoids_prefix_pid_collision() {
+        use hadron_lattice::Transport;
+        use hadron_lattice::sys::inspect::ProcessInfo;
+
+        let cli_agy = roster_entry("cli-agy", Transport::Cli);
+        let cli_agy_2 = roster_entry("cli-agy-2", Transport::Cli);
+        let procs = vec![
+            ProcessInfo {
+                pid: 4201,
+                ppid: 1,
+                name: "agy".into(),
+                cmdline: "agy --cwd /repo/.hadron/trees/cli-agy-2/crates HADRON_WSL_TAG=hadron:cli-agy-2".into(),
+                rss_bytes: Some(1024),
+            },
+        ];
+
+        let rows = build_full_process_rows(100, true, Some(101), &[cli_agy, cli_agy_2], &[], &procs);
+        let row_agy = rows.iter().find(|r| r.id == "cli-agy").unwrap();
+        let row_agy_2 = rows.iter().find(|r| r.id == "cli-agy-2").unwrap();
+        assert_eq!(row_agy.pid, None, "cli-agy must not match cli-agy-2 process");
+        assert_eq!(row_agy_2.pid, Some(4201), "cli-agy-2 must match its exact process");
     }
 
     #[test]
@@ -706,7 +737,7 @@
             ),
             reply,
         ];
-        let stats = project(&evs).session_stats();
+        let stats = project(&evs).stats_for(&[], StatsWindow::Session, chrono::Utc::now());
 
         let (id, s) = stats
             .per_quark
@@ -845,7 +876,7 @@
             context: None,
             quota: vec![],
         });
-        let stats = project(&[reply]).session_stats();
+        let stats = project(&[reply]).stats_for(&[], StatsWindow::Session, chrono::Utc::now());
         let (_, s) = &stats.per_quark[0];
         assert_eq!(s.fresh, 10);
         assert_eq!(s.cached, 0, "no cache reported — nothing added");
@@ -896,12 +927,57 @@
             quota: vec![],
         });
 
-        let stats = project(&[reply1, reply2]).session_stats();
+        let stats = project(&[reply1, reply2]).stats_for(&[], StatsWindow::Session, chrono::Utc::now());
         let (_, s) = &stats.per_quark[0];
         assert_eq!(s.fresh, 5_000_000_000u64);
         assert_eq!(s.cached, 5_000_000_000u64);
         assert_eq!(stats.total_fresh, 5_000_000_000u64);
         assert_eq!(stats.total_cached, 5_000_000_000u64);
+    }
+
+    #[test]
+    fn stats_for_and_spend_timeline_deduplicate_multi_row_turns() {
+        let turn_id = uuid_like_turn(1);
+        let usage = hadron_lattice::Usage {
+            model: Some("claude-3-opus-20240229".to_string()),
+            spend: hadron_lattice::TokenSpend {
+                input: Some(100),
+                output: Some(50),
+                cache_read: Some(1_000),
+                cache_write: Some(25),
+            },
+            context: None,
+            quota: vec![],
+        };
+
+        let status1 = ev(Actor::Quark(QuarkId::new("opus")), None, Kind::Status { state: QuarkState::Thinking }).with_turn(turn_id);
+        let reply = ev(Actor::Quark(QuarkId::new("opus")), None, Kind::Message { body: "done".into() }).with_turn(turn_id);
+        let mut energy = ev(Actor::Quark(QuarkId::new("opus")), None, Kind::EnergyReport { used_tokens: 1_175 }).with_turn(turn_id);
+        energy.usage = Some(usage);
+        let status2 = ev(Actor::Quark(QuarkId::new("opus")), None, Kind::Status { state: QuarkState::Waiting }).with_turn(turn_id);
+
+        let view = project(&[status1, reply, energy, status2]);
+        let now = chrono::Utc::now();
+        let stats = view.stats_for(&[], StatsWindow::Session, now);
+        let (_, s) = stats.per_quark.iter().find(|(id, _)| id == "opus").unwrap();
+        assert_eq!(s.turns, 1);
+        assert_eq!(s.fresh, 150, "must count 1x fresh spend even with 4 rows sharing a turn");
+        assert_eq!(s.input_tokens, 100);
+        assert_eq!(s.output_tokens, 50);
+        assert_eq!(s.cache_read, 1_000);
+        assert_eq!(s.cache_write, 25);
+        assert_eq!(s.cached, 1_025);
+        assert_eq!(stats.total_fresh, 150);
+
+        let tl = view.spend_timeline(&[], StatsWindow::Session, now);
+        assert_eq!(tl.points.len(), 1, "timeline must emit 1 spend point per turn, not per row");
+        assert_eq!(tl.points[0].team, 150.0);
+    }
+
+    fn uuid_like_turn(n: u128) -> hadron_lattice::Ulid {
+        // Parse a valid ULID from a deterministic index for test turns.
+        let s = format!("01M7ANTQQV67EPKPSC00G5FYP{}", (b'A' + (n as u8 % 20)) as char);
+        s.parse().expect("valid test Ulid")
     }
 
     #[test]

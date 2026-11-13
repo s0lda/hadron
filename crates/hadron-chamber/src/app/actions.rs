@@ -786,16 +786,37 @@ impl Chamber {
                     let hadron_dir = hadron_lattice::hadron_dir_of(&self.path);
                     let spec_id = format!("bakeoff-{}", chrono::Utc::now().timestamp_millis());
                     let task_desc = trimmed.to_string();
-                    cx.background_executor()
-                        .spawn(async move {
-                            let _ = hadron_gluon::BakeOffManager::new(&spec_id, &task_desc)
-                                .save_active(&hadron_dir);
-                        })
-                        .detach();
+                    let tracked_quarks: Vec<String> = resolve_team(&self.team, &self.global)
+                        .quarks
+                        .iter()
+                        .filter(|s| s.enabled && s.flavor == hadron_lattice::Flavor::Worker)
+                        .map(|s| s.id.as_str().to_string())
+                        .collect();
                     let msg = format!(
                         "@orchestrator /bakeoff /dispatching-parallel-agents Task: {trimmed}\n\nExecute speculative tournament: spawn 2-3 candidate quarks with isolated worktree branches exploring alternative implementations, benchmark via Merge Gate, evaluate WinnerReport, and fast-forward winning solution."
                     );
-                    self.post_chat_message(Actor::Human, msg, cx);
+                    cx.spawn(async move |this, cx| {
+                        let save_res = cx
+                            .background_executor()
+                            .spawn(async move {
+                                hadron_gluon::BakeOffManager::new(&spec_id, &task_desc)
+                                    .with_tracked_quarks(tracked_quarks)
+                                    .save_active(&hadron_dir)
+                            })
+                            .await;
+                        let _ = this.update(cx, |this, cx| {
+                            if let Err(e) = save_res {
+                                this.post_chat_message(
+                                    Actor::Gluon,
+                                    format!("Bake-off manifest write failed: {e}"),
+                                    cx,
+                                );
+                            } else {
+                                this.post_chat_message(Actor::Human, msg, cx);
+                            }
+                        });
+                    })
+                    .detach();
                 }
                 true
             }
@@ -1081,19 +1102,28 @@ impl Chamber {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
                 self.spawn_background_command_notice(
                     move || {
-                        let out = hadron_lattice::wsl::wsl_aware_command(&repo_root, "cargo")
-                            .args(["test", "--workspace", "--no-run"])
-                            .output();
+                        let mut cmd = hadron_lattice::wsl::wsl_aware_command(&repo_root, "cargo");
+                        cmd.args(["test", "--workspace", "--", "--test-threads=4"]);
+                        let target_dir = repo_root.join("target");
+                        if target_dir.is_dir() {
+                            cmd.env("CARGO_TARGET_DIR", target_dir);
+                        }
+                        let out = cmd.output();
                         let output_str = out
                             .map(|o| format!("{}\n{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
                             .unwrap_or_default();
                         let snapshot = hadron_gatekeeper::baseline::BaselineHealthSnapshotter::create_snapshot(&output_str, vec![]);
                         let known_count = snapshot.known_failing_tests.len();
                         format!(
-                            "Baseline Health Snapshot (Standard Model Rule 5):\n- Timestamp: {}\n- Known failing tests: {}\n- Known warnings: {}\nWorkspace baseline verified: 0 regressions permitted.",
+                            "Baseline Health Snapshot (Standard Model Rule 5):\n- Timestamp: {}\n- Known failing tests: {}\n- Known warnings: {}\n{}",
                             snapshot.timestamp,
                             known_count,
-                            snapshot.known_warnings.len()
+                            snapshot.known_warnings.len(),
+                            if known_count == 0 {
+                                "Workspace baseline verified: 0 failing tests."
+                            } else {
+                                "Workspace baseline contains pre-existing failures; inspect before starting."
+                            }
                         )
                     },
                     cx,
@@ -1929,79 +1959,122 @@ impl Chamber {
             }
             "nucleus" => {
                 let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
-                let trimmed = args.trim();
-                if trimmed == "sync" {
-                    let local_notes_dir = repo_root.join(".hadron").join("nucleus").join("notes");
-                    let mut local_map = std::collections::HashMap::new();
-                    if let Ok(rd) = std::fs::read_dir(&local_notes_dir) {
-                        for e in rd.flatten() {
-                            if let Ok(c) = std::fs::read_to_string(e.path()) {
-                                local_map.insert(e.file_name().to_string_lossy().to_string(), c);
-                            }
-                        }
-                    }
-                    let mut global_map = std::collections::HashMap::new();
-                    if let Some(global_notes_dir) = hadron_lattice::user_hadron_dir().map(|h| h.join("nucleus").join("notes")) {
-                        if let Ok(rd) = std::fs::read_dir(&global_notes_dir) {
-                            for e in rd.flatten() {
-                                if let Ok(c) = std::fs::read_to_string(e.path()) {
-                                    global_map.insert(e.file_name().to_string_lossy().to_string(), c);
+                let trimmed = args.trim().to_string();
+                let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
+                self.spawn_background_command_notice(
+                    move || {
+                        if trimmed == "sync" {
+                            let local_notes_dir = repo_root.join(".hadron").join("nucleus").join("notes");
+                            let mut local_map = std::collections::HashMap::new();
+                            if let Ok(rd) = std::fs::read_dir(&local_notes_dir) {
+                                for e in rd.flatten() {
+                                    if let Ok(c) = std::fs::read_to_string(e.path()) {
+                                        local_map.insert(e.file_name().to_string_lossy().to_string(), c);
+                                    }
                                 }
                             }
-                        }
-                    }
-                    let (merged, report) = hadron_lattice::GlobalNucleusSync::merge_notes(&local_map, &global_map);
-                    let body = format!(
-                        "**Nucleus Global Sync**\n\n\
-                         - **Merged Note Count**: {}\n\
-                         - **New Local Notes**: {}\n\
-                         - **New Global Notes**: {}\n",
-                        merged.len(),
-                        report.new_local,
-                        report.new_global
-                    );
-                    self.post_chat_message(Actor::Gluon, body, cx);
-                    return true;
-                }
-                if let Some(query) = trimmed.strip_prefix("search ") {
-                    let notes_dir = repo_root.join(".hadron").join("nucleus").join("notes");
-                    let mut vec_index = hadron_lattice::NucleusVectorIndex::new();
-                    if let Ok(rd) = std::fs::read_dir(&notes_dir) {
-                        for e in rd.flatten() {
-                            let slug = e.file_name().to_string_lossy().replace(".md", "");
-                            if let Ok(content) = std::fs::read_to_string(e.path()) {
-                                let desc = content.lines().find(|l| l.starts_with("description:")).unwrap_or(&slug);
-                                let hash_hex = hadron_gluon::cas::SemanticCas::hash_bytes(content.as_bytes());
-                                let emb: Vec<f32> = hash_hex.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
-                                vec_index.insert(&slug, emb, desc);
+                            let mut global_map = std::collections::HashMap::new();
+                            if let Some(global_notes_dir) = hadron_lattice::user_hadron_dir().map(|h| h.join("nucleus").join("notes")) {
+                                if let Ok(rd) = std::fs::read_dir(&global_notes_dir) {
+                                    for e in rd.flatten() {
+                                        if let Ok(c) = std::fs::read_to_string(e.path()) {
+                                            global_map.insert(e.file_name().to_string_lossy().to_string(), c);
+                                        }
+                                    }
+                                }
                             }
+                            let (merged, report) = hadron_lattice::GlobalNucleusSync::merge_notes(&local_map, &global_map);
+                            return format!(
+                                "**Nucleus Global Sync**\n\n\
+                                 - **Merged Note Count**: {}\n\
+                                 - **New Local Notes**: {}\n\
+                                 - **New Global Notes**: {}\n",
+                                merged.len(),
+                                report.new_local,
+                                report.new_global
+                            );
                         }
-                    }
-                    let query_hex = hadron_gluon::cas::SemanticCas::hash_bytes(query.as_bytes());
-                    let query_emb: Vec<f32> = query_hex.as_bytes()[..16].iter().map(|&b| (b as f32) / 255.0).collect();
-                    let matches = vec_index.search(&query_emb, 5);
-                    let mut out = format!("**Nucleus Semantic Search for `{query}`**:\n\n");
-                    for m in matches {
-                        out.push_str(&format!("- [{}] `{}` (score: {:.2})\n", m.slug, m.description, m.score));
-                    }
-                    self.post_chat_message(Actor::Gluon, out, cx);
-                    return true;
-                }
-                if let Some(slug) = trimmed.strip_prefix("note ") {
-                    let slug = slug.trim();
-                    let runtime = tokio::runtime::Runtime::new().ok();
-                    if let Some(rt) = runtime {
-                        let body = match rt.block_on(hadron_gluon::engine::nucleus::read_nucleus_lesson(&repo_root, slug)) {
-                            Ok(content) => content,
-                            Err(e) => format!("Nucleus note `{slug}` could not be read: {e}"),
-                        };
-                        self.post_chat_message(Actor::Gluon, body, cx);
-                        return true;
-                    }
-                }
-                let budget_bytes = hadron_gluon::nucleus_status::resolve_budget_bytes(&self.team);
-                let body = crate::text::nucleus_body(&repo_root, budget_bytes);
-                self.post_chat_message(Actor::Gluon, body, cx);
+                        if let Some(query) = trimmed.strip_prefix("search ") {
+                            let query = query.trim();
+                            let notes_dir = repo_root.join(".hadron").join("nucleus").join("notes");
+                            let terms: Vec<String> = query
+                                .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                                .filter(|t| t.len() >= 2)
+                                .map(|t| t.to_ascii_lowercase())
+                                .collect();
+                            let mut scored: Vec<(f32, String, String)> = Vec::new();
+                            if !terms.is_empty() {
+                                if let Ok(rd) = std::fs::read_dir(&notes_dir) {
+                                    for e in rd.flatten() {
+                                        let path = e.path();
+                                        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+                                            continue;
+                                        }
+                                        let slug = path
+                                            .file_stem()
+                                            .and_then(|s| s.to_str())
+                                            .unwrap_or_default()
+                                            .to_string();
+                                        let Ok(content) = std::fs::read_to_string(&path) else {
+                                            continue;
+                                        };
+                                        let desc = content
+                                            .lines()
+                                            .find_map(|l| l.trim().strip_prefix("description:"))
+                                            .map(|d| d.trim().trim_matches('"').trim_matches('\'').to_string())
+                                            .unwrap_or_else(|| slug.clone());
+                                        let slug_l = slug.to_ascii_lowercase();
+                                        let desc_l = desc.to_ascii_lowercase();
+                                        let body_l = content.to_ascii_lowercase();
+                                        let mut score = 0.0f32;
+                                        for term in &terms {
+                                            if slug_l.contains(term) {
+                                                score += 3.0;
+                                            }
+                                            if desc_l.contains(term) {
+                                                score += 2.0;
+                                            }
+                                            let body_hits = body_l.matches(term.as_str()).count();
+                                            if body_hits > 0 {
+                                                score += (body_hits.min(5) as f32) * 0.5;
+                                            }
+                                        }
+                                        if score > 0.0 {
+                                            scored.push((score, slug, desc));
+                                        }
+                                    }
+                                }
+                            }
+                            scored.sort_by(|a, b| {
+                                b.0.partial_cmp(&a.0)
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                                    .then_with(|| a.1.cmp(&b.1))
+                            });
+                            let mut out = format!("**Nucleus Search for `{query}`**:\n\n");
+                            if scored.is_empty() {
+                                out.push_str("_No matching nucleus notes found._\n");
+                            } else {
+                                for (score, slug, desc) in scored.into_iter().take(5) {
+                                    out.push_str(&format!("- [{}] `{}` (score: {:.1})\n", slug, desc, score));
+                                }
+                            }
+                            return out;
+                        }
+                        if let Some(slug) = trimmed.strip_prefix("note ") {
+                            let slug = slug.trim();
+                            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
+                            return match rt {
+                                Ok(runtime) => match runtime.block_on(hadron_gluon::engine::nucleus::read_nucleus_lesson(&repo_root, slug)) {
+                                    Ok(content) => content,
+                                    Err(e) => format!("Nucleus note `{slug}` could not be read: {e}"),
+                                },
+                                Err(e) => format!("Nucleus note `{slug}` could not be read: {e}"),
+                            };
+                        }
+                        crate::text::nucleus_body(&repo_root, budget_bytes)
+                    },
+                    cx,
+                );
                 true
             }
             "health" => {
