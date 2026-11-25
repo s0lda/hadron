@@ -899,6 +899,24 @@ impl super::Chamber {
             // quark id — `live::gates_dir`), so the Tasks tab needs its own change
             // detection to repaint when a gate starts, keeps running, or finishes.
             if poll.gate_activities != self.last_gate_activities {
+                for gate_act in &poll.gate_activities {
+                    let detail = if gate_act.detail.is_empty() {
+                        format!("gating {}", gate_act.quark.as_str())
+                    } else {
+                        gate_act.detail.clone()
+                    };
+                    let prev_same_detail = self.last_gate_activities.iter().any(|prev| {
+                        prev.quark == gate_act.quark
+                            && (if prev.detail.is_empty() {
+                                format!("gating {}", prev.quark.as_str())
+                            } else {
+                                prev.detail.clone()
+                            }) == detail
+                    });
+                    if !prev_same_detail {
+                        self.ingest_gate_output_line(gate_act.quark.as_str(), "stdout", &detail);
+                    }
+                }
                 self.last_gate_activities = poll.gate_activities;
                 changed = true;
             }

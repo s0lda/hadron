@@ -223,7 +223,6 @@ pub(super) fn gate_test_fix_message(quark: &str, test_name: &str) -> String {
 
 impl Chamber {
     /// Buffer one live gate output line for `quark` and auto-select active stream.
-    #[allow(dead_code)]
     pub(in crate::app) fn ingest_gate_output_line(&mut self, quark: &str, stream: &str, line: &str) {
         let entry = self
             .gate_streams
@@ -245,7 +244,6 @@ impl Chamber {
     }
 
     /// Mark `quark`'s merge-gate stream finished with `passed` verdict.
-    #[allow(dead_code)]
     pub(in crate::app) fn mark_gate_finished(&mut self, quark: &str, passed: Option<bool>) {
         if let Some(entry) = self.gate_streams.get_mut(quark) {
             entry.mark_finished(passed);

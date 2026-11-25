@@ -163,12 +163,15 @@ const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 /// Three missed daemon heartbeats (15s each): treat a silent socket as half-open and reconnect.
 const SUBSCRIBE_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
+const MAX_QUEUED_GATE_UPDATES: usize = 256;
+
 #[derive(Default)]
 struct PushState {
     dirty: AtomicBool,
     connected: AtomicBool,
     stop: AtomicBool,
     waker: Mutex<Option<Waker>>,
+    gate_updates: Mutex<Vec<(String, Option<bool>)>>,
 }
 
 /// Cloneable view of a [`RpcSubscriptionHandle`]: a dirty flag set on every
@@ -187,6 +190,12 @@ impl PushSignal {
         self.0.dirty.swap(false, Ordering::AcqRel)
     }
 
+    /// Drain any queued `(quark, passed)` gate-completion push events.
+    pub fn take_gate_updates(&self) -> Vec<(String, Option<bool>)> {
+        let mut guard = self.0.gate_updates.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *guard)
+    }
+
     /// Async-poll form of [`Self::take_dirty`]: registers `cx`'s waker before
     /// re-checking, so a push landing between the two checks is never lost.
     pub fn poll_dirty(&self, cx: &mut std::task::Context<'_>) -> Poll<()> {
@@ -199,6 +208,17 @@ impl PushSignal {
         } else {
             Poll::Pending
         }
+    }
+
+    fn push_gate_update(&self, quark: String, passed: Option<bool>) {
+        {
+            let mut guard = self.0.gate_updates.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.len() >= MAX_QUEUED_GATE_UPDATES {
+                guard.remove(0);
+            }
+            guard.push((quark, passed));
+        }
+        self.mark_dirty();
     }
 
     fn mark_dirty(&self) {
@@ -311,6 +331,9 @@ fn subscribe_until_disconnect(addr: &str, signal: &PushSignal) -> bool {
                 buf.clear();
                 match JsonRpcCodec::decode_push_event(&line) {
                     Ok(RpcPushEvent::Heartbeat { .. }) => {}
+                    Ok(RpcPushEvent::GateUpdated { quark, passed }) => {
+                        signal.push_gate_update(quark, passed);
+                    }
                     Ok(_) => signal.mark_dirty(),
                     Err(_) if !subscribed => {
                         let acked = JsonRpcCodec::decode_response(&line, Some(&req.id))
@@ -502,6 +525,11 @@ mod tests {
         push(&mut stream, &RpcPushEvent::GateUpdated { quark: "q".into(), passed: Some(false) });
         wait_until("waker fired", || count.0.load(Ordering::SeqCst) == 1);
         assert!(signal.poll_dirty(&mut cx).is_ready());
+        assert_eq!(
+            signal.take_gate_updates(),
+            vec![("q".to_string(), Some(false))]
+        );
+        assert!(signal.take_gate_updates().is_empty());
 
         // Daemon goes away: the subscriber notices, then reconnects on its own.
         drop(stream);

@@ -1585,8 +1585,22 @@ impl Chamber {
                 })
                 .await;
 
+            let gate_updates = push_signal
+                .as_ref()
+                .map(|s| s.take_gate_updates())
+                .unwrap_or_default();
             if this
-                .update(cx, |chamber, cx| chamber.reload_if_changed(poll, cx))
+                .update(cx, |chamber, cx| {
+                    let mut gate_changed = false;
+                    for (quark, passed) in gate_updates {
+                        chamber.mark_gate_finished(&quark, passed);
+                        gate_changed = true;
+                    }
+                    chamber.reload_if_changed(poll, cx);
+                    if gate_changed {
+                        cx.notify();
+                    }
+                })
                 .is_err()
             {
                 break;
