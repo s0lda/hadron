@@ -29,6 +29,7 @@ pub mod quark_home;
 pub mod canvas;
 pub mod nucleus_graph;
 pub mod selector;
+pub(super) mod gate_explorer;
 
 pub use gpui_component::scroll::ScrollableElement;
 

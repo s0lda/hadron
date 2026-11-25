@@ -1012,8 +1012,22 @@ impl super::Chamber {
                     .children(MissionSubtab::ALL.map(|t| {
                         let is_selected = t.index() == selected_subtab.index();
                         let ix = t.index();
+                        let active_gate_count = self
+                            .gate_streams
+                            .values()
+                            .filter(|s| s.active)
+                            .count();
+                        let failed_gate_count = self
+                            .gate_streams
+                            .values()
+                            .filter(|s| !s.active && s.last_verdict == Some(false))
+                            .count();
                         let label = if t == MissionSubtab::Tasks && working_task_count > 0 {
                             format!("{} ({working_task_count})", t.label())
+                        } else if t == MissionSubtab::Gate && active_gate_count > 0 {
+                            format!("{} ({active_gate_count} running)", t.label())
+                        } else if t == MissionSubtab::Gate && failed_gate_count > 0 {
+                            format!("{} ({failed_gate_count} failed)", t.label())
                         } else {
                             t.label().to_string()
                         };
@@ -2020,6 +2034,7 @@ impl super::Chamber {
                             )
                             .into_any_element()
                     }
+                    MissionSubtab::Gate => self.render_gate_explorer(cx).into_any_element(),
                     MissionSubtab::TimeTravel => self.time_travel_inspector(cx).into_any_element(),
                     MissionSubtab::Artifacts => self.render_artifacts_rail(cx).into_any_element(),
                 };

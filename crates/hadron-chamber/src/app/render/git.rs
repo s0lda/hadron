@@ -2749,6 +2749,8 @@ impl super::Chamber {
                         let mut pr_list = v_flex().gap_1p5();
                         for (ix, pr) in prs.iter().take(10).enumerate() {
                             let url_clone = pr.url.clone();
+                            let pr_number = pr.number;
+                            let pr_title = pr.title.clone();
                             let row = h_flex()
                                 .id(("gh-pr-row", ix))
                                 .w_full()
@@ -2764,6 +2766,7 @@ impl super::Chamber {
                                 }))
                                 .child(
                                     div()
+                                        .flex_shrink_0()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(gpui::rgb(ADD_COLOR))
@@ -2780,9 +2783,32 @@ impl super::Chamber {
                                 )
                                 .child(
                                     div()
+                                        .flex_shrink_0()
                                         .text_xs()
                                         .text_color(theme::text_muted())
                                         .child(pr.head_branch.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id(("gh-pr-dispatch", ix))
+                                        .flex_shrink_0()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::accent_soft())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .cursor_pointer()
+                                        .child("Dispatch Fix")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.dispatch_github_pr_review(
+                                                pr_number,
+                                                pr_title.clone(),
+                                                cx,
+                                            );
+                                        })),
                                 );
                             pr_list = pr_list.child(row);
                         }
@@ -2812,6 +2838,8 @@ impl super::Chamber {
                         let mut issue_list = v_flex().gap_1p5();
                         for (ix, issue) in issues.iter().take(10).enumerate() {
                             let url_clone = issue.url.clone();
+                            let issue_number = issue.number;
+                            let issue_title = issue.title.clone();
                             let row = h_flex()
                                 .id(("gh-issue-row", ix))
                                 .w_full()
@@ -2827,6 +2855,7 @@ impl super::Chamber {
                                 }))
                                 .child(
                                     div()
+                                        .flex_shrink_0()
                                         .text_xs()
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(theme::accent())
@@ -2843,9 +2872,32 @@ impl super::Chamber {
                                 )
                                 .child(
                                     div()
+                                        .flex_shrink_0()
                                         .text_xs()
                                         .text_color(theme::text_muted())
                                         .child(issue.author.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .id(("gh-issue-dispatch", ix))
+                                        .flex_shrink_0()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .rounded_sm()
+                                        .bg(theme::accent_soft())
+                                        .text_xs()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::accent())
+                                        .cursor_pointer()
+                                        .child("Dispatch")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.dispatch_github_issue(
+                                                issue_number,
+                                                issue_title.clone(),
+                                                cx,
+                                            );
+                                        })),
                                 );
                             issue_list = issue_list.child(row);
                         }

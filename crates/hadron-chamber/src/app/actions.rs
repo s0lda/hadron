@@ -408,6 +408,82 @@ impl Chamber {
         .detach();
     }
 
+    /// Fetch full GitHub issue details off-thread via `gh` and dispatch `@orchestrator`.
+    pub(super) fn dispatch_github_issue(
+        &mut self,
+        number: u64,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        self.github_status_msg = Some(format!("Fetching issue #{number} details..."));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let title_bg = title.clone();
+            let detail = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::vcs::fetch_github_issue_detail(&repo_root, number).unwrap_or_else(|_| {
+                        crate::vcs::GitHubIssueDetail {
+                            number,
+                            title: title_bg,
+                            body: String::new(),
+                            url: String::new(),
+                            labels: Vec::new(),
+                        }
+                    })
+                })
+                .await;
+
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.github_status_msg = None;
+                chamber.chat_tab = ChatTab::Chat;
+                let prompt = crate::vcs::format_issue_dispatch_prompt(&detail);
+                chamber.post_chat_message(Actor::Human, prompt, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Fetch GitHub PR review comments & failing checks off-thread via `gh` and dispatch `@orchestrator`.
+    pub(super) fn dispatch_github_pr_review(
+        &mut self,
+        number: u64,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        let repo_root = crate::vcs::repo_root_of(&self.path).to_path_buf();
+        self.github_status_msg = Some(format!("Fetching PR #{number} review context..."));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let title_bg = title.clone();
+            let ctx = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::vcs::fetch_github_pr_review_context(&repo_root, number).unwrap_or_else(
+                        |_| crate::vcs::GitHubPrReviewContext {
+                            number,
+                            title: title_bg,
+                            body: String::new(),
+                            url: String::new(),
+                            head_ref: String::new(),
+                            review_comments: Vec::new(),
+                            failing_checks: Vec::new(),
+                        },
+                    )
+                })
+                .await;
+
+            let _ = this.update(cx, |chamber, cx| {
+                chamber.github_status_msg = None;
+                chamber.chat_tab = ChatTab::Chat;
+                let prompt = crate::vcs::format_pr_review_dispatch_prompt(&ctx);
+                chamber.post_chat_message(Actor::Human, prompt, cx);
+            });
+        })
+        .detach();
+    }
+
     /// Post a chat message from `from` and reveal it. The shared tail of every
     /// command that *speaks*, so the chat-list bookkeeping has one home rather than
     /// one copy per command.

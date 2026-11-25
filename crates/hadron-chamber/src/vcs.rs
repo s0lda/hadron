@@ -1235,6 +1235,28 @@ pub struct GitHubPrInfo {
     pub head_branch: String,
 }
 
+/// Detailed view of a GitHub issue for one-click swarm dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitHubIssueDetail {
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub labels: Vec<String>,
+}
+
+/// Detailed view of a GitHub PR including review feedback and failing checks.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitHubPrReviewContext {
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub head_ref: String,
+    pub review_comments: Vec<String>,
+    pub failing_checks: Vec<String>,
+}
+
 /// Metadata for a GitHub Actions workflow run.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GitHubWorkflowRunInfo {
@@ -1531,6 +1553,298 @@ pub fn fetch_github_prs(repo_root: &Path) -> Result<Vec<GitHubPrInfo>, String> {
         url: p.url.unwrap_or_default(),
         head_branch: p.head_ref_name.unwrap_or_default(),
     }).collect())
+}
+
+fn truncate_utf8_bytes(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut idx = max_bytes;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
+}
+
+/// Parse `gh issue view <num> --json number,title,body,url,labels` JSON into [`GitHubIssueDetail`].
+pub fn parse_github_issue_detail_json(bytes: &[u8]) -> Result<GitHubIssueDetail, String> {
+    #[derive(serde::Deserialize)]
+    struct RawLabel {
+        name: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawIssueDetail {
+        number: u64,
+        title: String,
+        body: Option<String>,
+        url: Option<String>,
+        #[serde(default)]
+        labels: Vec<RawLabel>,
+    }
+
+    let raw: RawIssueDetail = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Failed to parse gh issue view output: {e}"))?;
+
+    Ok(GitHubIssueDetail {
+        number: raw.number,
+        title: raw.title,
+        body: raw.body.unwrap_or_default(),
+        url: raw.url.unwrap_or_default(),
+        labels: raw
+            .labels
+            .into_iter()
+            .filter_map(|l| l.name.filter(|n| !n.trim().is_empty()))
+            .collect(),
+    })
+}
+
+/// Fetch full GitHub issue details for `number` via `gh issue view`.
+pub fn fetch_github_issue_detail(
+    repo_root: &Path,
+    number: u64,
+) -> Result<GitHubIssueDetail, String> {
+    let num_arg = number.to_string();
+    let output = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
+        .args([
+            "issue",
+            "view",
+            &num_arg,
+            "--json",
+            "number,title,body,url,labels",
+        ])
+        .output()
+        .map_err(|e| format!("GitHub CLI (`gh`) execution failed: {e}"))?;
+
+    if !output.status.success() {
+        let err = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stderr))
+            .trim()
+            .to_string();
+        return Err(if err.is_empty() {
+            format!("gh issue view #{number} returned non-zero exit status")
+        } else {
+            err
+        });
+    }
+
+    let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+    parse_github_issue_detail_json(cleaned.as_bytes())
+}
+
+/// Parse `gh pr view <num> --json number,title,body,url,headRefName,reviews,comments,statusCheckRollup` JSON.
+pub fn parse_github_pr_review_context_json(
+    bytes: &[u8],
+) -> Result<GitHubPrReviewContext, String> {
+    #[derive(serde::Deserialize)]
+    struct RawAuthor {
+        login: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawReview {
+        author: Option<RawAuthor>,
+        state: Option<String>,
+        body: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawComment {
+        author: Option<RawAuthor>,
+        body: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawCheck {
+        name: Option<String>,
+        context: Option<String>,
+        state: Option<String>,
+        conclusion: Option<String>,
+        #[serde(rename = "detailsUrl")]
+        details_url: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawPrDetail {
+        number: u64,
+        title: String,
+        body: Option<String>,
+        url: Option<String>,
+        #[serde(rename = "headRefName")]
+        head_ref_name: Option<String>,
+        #[serde(default)]
+        reviews: Vec<RawReview>,
+        #[serde(default)]
+        comments: Vec<RawComment>,
+        #[serde(rename = "statusCheckRollup", default)]
+        status_check_rollup: Vec<RawCheck>,
+    }
+
+    let raw: RawPrDetail = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Failed to parse gh pr view output: {e}"))?;
+
+    let mut review_comments = Vec::new();
+    for rev in raw.reviews {
+        let author = rev
+            .author
+            .and_then(|a| a.login)
+            .unwrap_or_else(|| "reviewer".to_string());
+        let state = rev.state.unwrap_or_default();
+        let body = rev.body.unwrap_or_default();
+        let body_trimmed = body.trim();
+        if !body_trimmed.is_empty() || state.eq_ignore_ascii_case("CHANGES_REQUESTED") {
+            let excerpt = truncate_utf8_bytes(body_trimmed, 300);
+            if state.is_empty() {
+                review_comments.push(format!("@{author}: {excerpt}"));
+            } else if excerpt.is_empty() {
+                review_comments.push(format!("@{author} ({state})"));
+            } else {
+                review_comments.push(format!("@{author} ({state}): {excerpt}"));
+            }
+        }
+    }
+    for comment in raw.comments {
+        let author = comment
+            .author
+            .and_then(|a| a.login)
+            .unwrap_or_else(|| "commenter".to_string());
+        let body = comment.body.unwrap_or_default();
+        let body_trimmed = body.trim();
+        if !body_trimmed.is_empty() {
+            let excerpt = truncate_utf8_bytes(body_trimmed, 300);
+            review_comments.push(format!("@{author}: {excerpt}"));
+        }
+    }
+    if review_comments.len() > 10 {
+        let start = review_comments.len() - 10;
+        review_comments.drain(..start);
+    }
+
+    let mut failing_checks = Vec::new();
+    for chk in raw.status_check_rollup {
+        let outcome = chk
+            .conclusion
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or(chk.state.as_deref())
+            .unwrap_or_default();
+        let is_fail = matches!(
+            outcome.to_ascii_uppercase().as_str(),
+            "FAILURE" | "TIMED_OUT" | "ACTION_REQUIRED" | "ERROR" | "STARTUP_FAILURE"
+        );
+        if is_fail {
+            let name = chk
+                .name
+                .or(chk.context)
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "unnamed-check".to_string());
+            let detail = match chk.details_url.filter(|u| !u.is_empty()) {
+                Some(url) => format!("{name} ({outcome}) — {url}"),
+                None => format!("{name} ({outcome})"),
+            };
+            failing_checks.push(detail);
+        }
+    }
+
+    Ok(GitHubPrReviewContext {
+        number: raw.number,
+        title: raw.title,
+        body: raw.body.unwrap_or_default(),
+        url: raw.url.unwrap_or_default(),
+        head_ref: raw.head_ref_name.unwrap_or_default(),
+        review_comments,
+        failing_checks,
+    })
+}
+
+/// Fetch PR review feedback and failing checks for `number` via `gh pr view`.
+pub fn fetch_github_pr_review_context(
+    repo_root: &Path,
+    number: u64,
+) -> Result<GitHubPrReviewContext, String> {
+    let num_arg = number.to_string();
+    let output = hadron_lattice::wsl::wsl_aware_command(repo_root, "gh")
+        .args([
+            "pr",
+            "view",
+            &num_arg,
+            "--json",
+            "number,title,body,url,headRefName,reviews,comments,statusCheckRollup",
+        ])
+        .output()
+        .map_err(|e| format!("GitHub CLI (`gh`) execution failed: {e}"))?;
+
+    if !output.status.success() {
+        let err = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stderr))
+            .trim()
+            .to_string();
+        return Err(if err.is_empty() {
+            format!("gh pr view #{number} returned non-zero exit status")
+        } else {
+            err
+        });
+    }
+
+    let cleaned = hadron_lattice::wsl::strip_wsl_noise(&String::from_utf8_lossy(&output.stdout));
+    parse_github_pr_review_context_json(cleaned.as_bytes())
+}
+
+/// Format a structured `@orchestrator` dispatch message for a GitHub issue.
+pub fn format_issue_dispatch_prompt(detail: &GitHubIssueDetail) -> String {
+    let mut msg = format!(
+        "@orchestrator Implement GitHub issue #{}: {}",
+        detail.number,
+        detail.title.trim()
+    );
+    if !detail.url.trim().is_empty() {
+        msg.push_str(&format!(" ({})", detail.url.trim()));
+    }
+    if !detail.labels.is_empty() {
+        msg.push_str(&format!("\nLabels: {}", detail.labels.join(", ")));
+    }
+    let body = detail.body.trim();
+    if !body.is_empty() {
+        let bounded = truncate_utf8_bytes(body, 2000);
+        msg.push_str("\n\nIssue description:\n");
+        msg.push_str(bounded);
+        if bounded.len() < body.len() {
+            msg.push_str("\n…");
+        }
+    }
+    msg
+}
+
+/// Format a structured `@orchestrator` remediation message for a GitHub PR's review feedback & checks.
+pub fn format_pr_review_dispatch_prompt(ctx: &GitHubPrReviewContext) -> String {
+    let branch_note = if ctx.head_ref.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" on branch `{}`", ctx.head_ref.trim())
+    };
+    let mut msg = format!(
+        "@orchestrator Fix review feedback and failing checks for PR #{}{branch_note}: {}",
+        ctx.number,
+        ctx.title.trim()
+    );
+    if !ctx.url.trim().is_empty() {
+        msg.push_str(&format!(" ({})", ctx.url.trim()));
+    }
+    if !ctx.failing_checks.is_empty() {
+        msg.push_str("\n\nFailing checks:");
+        for chk in &ctx.failing_checks {
+            msg.push_str(&format!("\n- {chk}"));
+        }
+    }
+    if !ctx.review_comments.is_empty() {
+        msg.push_str("\n\nReview comments:");
+        for c in &ctx.review_comments {
+            msg.push_str(&format!("\n- {c}"));
+        }
+    }
+    let body = ctx.body.trim();
+    if !body.is_empty() && ctx.failing_checks.is_empty() && ctx.review_comments.is_empty() {
+        let bounded = truncate_utf8_bytes(body, 1200);
+        msg.push_str("\n\nPR summary:\n");
+        msg.push_str(bounded);
+        if bounded.len() < body.len() {
+            msg.push_str("\n…");
+        }
+    }
+    msg
 }
 
 /// Parse `gh run list --json ...` output into [`GitHubWorkflowRunInfo`] rows.
@@ -3059,6 +3373,61 @@ index a1b2c3d..e4f5g6h 100644
             paths.contains(&"new_file.rs"),
             "untracked file in worktree must appear in branch_diff: {paths:?}"
         );
+    }
+
+    #[test]
+    fn test_parse_github_issue_detail_and_prompt() {
+        let json = br#"{
+            "number": 42,
+            "title": "Stream merge gate logs live",
+            "body": "Users cannot see cargo test progress until 15m timeout.",
+            "url": "https://github.com/s0lda/hadron/issues/42",
+            "labels": [{"name": "enhancement"}, {"name": "ui"}]
+        }"#;
+        let detail = parse_github_issue_detail_json(json).expect("issue json parses");
+        assert_eq!(detail.number, 42);
+        assert_eq!(detail.labels, vec!["enhancement", "ui"]);
+
+        let prompt = format_issue_dispatch_prompt(&detail);
+        assert!(prompt.starts_with("@orchestrator Implement GitHub issue #42: Stream merge gate logs live"));
+        assert!(prompt.contains("Labels: enhancement, ui"));
+        assert!(prompt.contains("Users cannot see cargo test progress"));
+        assert!(prompt.contains("https://github.com/s0lda/hadron/issues/42"));
+    }
+
+    #[test]
+    fn test_parse_github_pr_review_context_and_prompt() {
+        let json = br#"{
+            "number": 99,
+            "title": "feat(gate): live output stream",
+            "body": "Adds RPC gate streaming.",
+            "url": "https://github.com/s0lda/hadron/pull/99",
+            "headRefName": "feat/gate-stream",
+            "reviews": [
+                {"author": {"login": "reviewer1"}, "state": "CHANGES_REQUESTED", "body": "Handle stderr throttling"},
+                {"author": {"login": "bot"}, "state": "COMMENTED", "body": ""}
+            ],
+            "comments": [
+                {"author": {"login": "alice"}, "body": "Check windows build"}
+            ],
+            "statusCheckRollup": [
+                {"name": "rust-tests", "conclusion": "FAILURE", "detailsUrl": "https://github.com/s0lda/hadron/runs/1"},
+                {"name": "fmt", "conclusion": "SUCCESS"}
+            ]
+        }"#;
+        let ctx = parse_github_pr_review_context_json(json).expect("pr json parses");
+        assert_eq!(ctx.number, 99);
+        assert_eq!(ctx.head_ref, "feat/gate-stream");
+        assert_eq!(ctx.failing_checks.len(), 1);
+        assert!(ctx.failing_checks[0].contains("rust-tests (FAILURE)"));
+        assert_eq!(ctx.review_comments.len(), 2);
+
+        let prompt = format_pr_review_dispatch_prompt(&ctx);
+        assert!(prompt.starts_with("@orchestrator Fix review feedback and failing checks for PR #99 on branch `feat/gate-stream`: feat(gate): live output stream"));
+        assert!(prompt.contains("Failing checks:"));
+        assert!(prompt.contains("Review comments:"));
+        assert!(prompt.contains("@reviewer1 (CHANGES_REQUESTED): Handle stderr throttling"));
+        assert!(prompt.contains("@alice: Check windows build"));
     }
 }
 

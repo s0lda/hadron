@@ -132,20 +132,23 @@ impl GitSubtab {
 }
 
 /// The sub-views inside [`RightRailTab::Mission`]: implementation plan & wave DAG,
-/// live swarm task feed, time-travel scrubber, and shared Artifact Bus.
+/// live swarm task feed, live merge-gate test explorer, time-travel scrubber, and
+/// shared Artifact Bus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum MissionSubtab {
     #[default]
     Plan,
     Tasks,
+    Gate,
     TimeTravel,
     Artifacts,
 }
 
 impl MissionSubtab {
-    pub(super) const ALL: [MissionSubtab; 4] = [
+    pub(super) const ALL: [MissionSubtab; 5] = [
         MissionSubtab::Plan,
         MissionSubtab::Tasks,
+        MissionSubtab::Gate,
         MissionSubtab::TimeTravel,
         MissionSubtab::Artifacts,
     ];
@@ -154,8 +157,9 @@ impl MissionSubtab {
         match self {
             MissionSubtab::Plan => 0,
             MissionSubtab::Tasks => 1,
-            MissionSubtab::TimeTravel => 2,
-            MissionSubtab::Artifacts => 3,
+            MissionSubtab::Gate => 2,
+            MissionSubtab::TimeTravel => 3,
+            MissionSubtab::Artifacts => 4,
         }
     }
 
@@ -167,6 +171,7 @@ impl MissionSubtab {
         match self {
             MissionSubtab::Plan => "Plan & Waves",
             MissionSubtab::Tasks => "Swarm Tasks",
+            MissionSubtab::Gate => "Gate",
             MissionSubtab::TimeTravel => "Time Travel",
             MissionSubtab::Artifacts => "Artifacts",
         }
@@ -359,12 +364,14 @@ mod tests {
         assert_eq!(RightRailTab::from_index(3), RightRailTab::Mission);
         assert_eq!(RightRailTab::from_index(4), RightRailTab::Visualizer);
         assert_eq!(RightRailTab::Mission.label(), "Mission");
-        assert_eq!(MissionSubtab::ALL.len(), 4);
+        assert_eq!(MissionSubtab::ALL.len(), 5);
         assert_eq!(MissionSubtab::default(), MissionSubtab::Plan);
         assert_eq!(MissionSubtab::from_index(0), MissionSubtab::Plan);
         assert_eq!(MissionSubtab::from_index(1), MissionSubtab::Tasks);
-        assert_eq!(MissionSubtab::from_index(2), MissionSubtab::TimeTravel);
-        assert_eq!(MissionSubtab::from_index(3), MissionSubtab::Artifacts);
+        assert_eq!(MissionSubtab::from_index(2), MissionSubtab::Gate);
+        assert_eq!(MissionSubtab::from_index(3), MissionSubtab::TimeTravel);
+        assert_eq!(MissionSubtab::from_index(4), MissionSubtab::Artifacts);
+        assert_eq!(MissionSubtab::Gate.label(), "Gate");
         assert_eq!(MissionSubtab::TimeTravel.label(), "Time Travel");
         assert_eq!(MissionSubtab::Artifacts.label(), "Artifacts");
         assert_eq!(GitSubtab::from_index(2), GitSubtab::Changes);
