@@ -20,6 +20,15 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.54",
+        date: Some("2026-11-25"),
+        added: &[],
+        changed: &[],
+        fixed: &[
+            "Loopback Enforcement & Bounded JSON-RPC Frame Deserialization (hadron-lattice, hadron-gluon, hadron-chamber): Enforced LoopbackRpcAddr and 4 KiB metadata / 16 MiB frame caps across .hadron/gluon.rpc, added #[serde(deny_unknown_fields)] and JSON-RPC 2.0 response-ID correlation in JsonRpcCodec::decode_response, and bounded socket reads via Read::take in rpc_client and RpcServer (remediating CodeQL #2)",
+        ],
+    },
+    Release {
         version: "0.33.53",
         date: Some("2026-11-13"),
         added: &[

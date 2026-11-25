@@ -5,6 +5,14 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.54] - 2026-11-25
+
+### Fixed
+- **Loopback Enforcement & Bounded JSON-RPC Frame Deserialization (`hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Enforced `LoopbackRpcAddr` (loopback IP + non-zero port) on `.hadron/gluon.rpc` metadata reads and client connections, and added `MAX_RPC_FRAME_BYTES` (`16 MiB`) and `MAX_RPC_METADATA_BYTES` (`4 KiB`) size caps (`crates/hadron-lattice/src/wire/protocol.rs`, `crates/hadron-chamber/src/rpc_client.rs`).
+  - Added `#[serde(deny_unknown_fields)]` across JSON-RPC 2.0 wire structs and validated JSON-RPC 2.0 envelope and request-ID correlation in `JsonRpcCodec::decode_response` (`crates/hadron-lattice/src/wire/protocol.rs`, `crates/hadron-lattice/src/wire/codec.rs`, `crates/hadron-lattice/src/wire/tests.rs`).
+  - Bounded NDJSON socket reads pre-allocation via `Read::take` in `call_rpc`, `subscribe_until_disconnect`, and `RpcServer`, and capped `poll_field_via_rpc` responses to remediate CodeQL alert #2 (`rust/unsafe-deserialization`) (`crates/hadron-chamber/src/rpc_client.rs`, `crates/hadron-gluon/src/rpc_server/server.rs`).
+
 ## [0.33.53] - 2026-11-13
 
 ### Added
