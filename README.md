@@ -31,11 +31,11 @@ Behind the interface, agents (called **Quarks**) execute concurrently over a zer
 ## 💡 Key Superpowers
 
 - 💬 **Universal Multi-Model Swarms**: Mix frontier models (`@claude`, `@agy`, `@openai`, `@grok`), OpenRouter, local `@ollama`, and custom CLI agents in one thread via Hub-and-Spoke `@mention` orchestration over a zero-CPU `field.jsonl` bus.
-- 🛡️ **Collision-Proof Worktrees & Merge Gate**: Quarks work in isolated git worktree branches. The automated **Merge Gate** rebases onto `main` and runs your real test suite before clean code lands — with **Hadron Lab** concurrent merge gates, speculative batch evaluation, and docs/asset fast-paths.
+- 🛡️ **Collision-Proof Worktrees & Smart Merge Gate**: Quarks work in isolated git worktree branches. The automated **Merge Gate** rebases onto `main`, slices tests by transitive affected workspace crates, streams live test output into `Mission > Gate`, surfaces Rule 1 liveness & evidence-claim advisories, and scales with **Hadron Lab** concurrent gates and docs/asset fast-paths.
 - 💰 **Token-Efficient Swarm Economics**: Cuts multi-agent input token spend by **80–90%** via resident prompt caching (`cache_read`), Hub-and-Spoke context isolation (preventing $O(N^2)$ sibling log broadcasts), `ContextGovernor` output elision, lazy pointer-based Nucleus memory, and live 4-way USD/quota telemetry.
 - 🔒 **Cross-Platform Process Sandboxing**: Zero-overhead native OS containment across Linux/WSL (Bubblewrap), macOS (Apple Seatbelt), and Windows (PowerShell & Job Objects) with worktree write confinement, credential scrubbing, and interactive chat badge toggles.
 - 🛠️ **AST Edit-by-Hash (`blake3`) & 50+ MCP Forge Tools**: Eliminates LLM line-drift corruption via content-addressed AST precision edits, plus isolated PTY terminals, headless browser testing, LSP code intelligence, automated `git bisect`, and flamegraph profiling ([`Power Tools Suite`](docs/forge/power-tools.md)).
-- ⚡ **120 FPS GPUI Desktop, Headless CI & `/absorb` Memory**: Native Rust workspace with interactive File Tree CRUD, multi-tab PTY terminals, Git & Wave DAG visualizers, standalone `hadron run` / `hadron ci` runners, 29 bundled engineering skills, and `/absorb` to import rules from `.claude/`, `.cursor/`, `.windsurf/`, and `.agents/`.
+- ⚡ **120 FPS GPUI Desktop, Headless CI, Swarm MCP & `/absorb` Memory**: Native Rust workspace with interactive File Tree CRUD, multi-tab PTY terminals, GitHub Issue/PR dispatch intake, Git & Wave DAG visualizers, standalone `hadron run` / `hadron ci` runners, `hadron-gluon --mcp` headless Swarm MCP bridge, 29 bundled engineering skills, and `/absorb` to import rules from `.claude/`, `.cursor/`, `.windsurf/`, and `.agents/`.
 
 ---
 
@@ -80,9 +80,10 @@ cd ~/dev/my_project && hadron
 # Or initialize Git + auto-discover local CLI agents & API keys from the terminal
 hadron init
 
-# Or execute headlessly in CI / terminal batch mode
+# Or execute headlessly in CI / terminal batch mode, or drive via stdio MCP
 hadron run "Implement user authentication with tests"
 hadron ci --plan .hadron/docs/plans/<plan_name>
+hadron-gluon --mcp
 ```
 
 ---

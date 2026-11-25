@@ -11,7 +11,7 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **Pre-Flight Merge Gate** | `hadron_forge_preflight_gate`, `hadron_forge_acceptance_gate` | In-worktree merge gate simulation, entrypoint mtime refreshing, branch rebase sync, test runner and acceptance suite execution. |
 | **Dynamic Tool Schema Pruning** | `ToolFilter` in `hadron-forge-mcp` | Category-based MCP tool router filtering by active skill to minimize prompt token consumption. |
 | **Peer Worktree Inspector**| `hadron_forge_peer_inspect`, `hadron_forge_peers_detect_conflicts` | Inspect peer worktree commits, uncommitted diffs, export symbols, and detect cross-worktree merge conflicts before gate submission. |
-| **Nucleus Memory & Distillation** | `hadron_forge_nucleus_lint`, `hadron_forge_nucleus_distill_lesson` | Configured budget checking (16–128 KB), YAML schema validation, orphan detection, and autonomous 1-line pointer distillation. |
+| **Nucleus Memory & Distillation** | `hadron_forge_nucleus_lint`, `hadron_forge_nucleus_distill_lesson` | Configured budget checking (16–128 KB), YAML schema validation, orphan detection, autonomous 1-line pointer distillation, and `.hadron/nucleus/usage.json` open tracking (`query_nucleus`/`read_file`) for `DreamDaemon` cold-note audits. |
 | **Autonomous Spec & DAG Compiler** | `hadron_forge_spec_compile` | Compile high-level natural language prompts into formal Design Specs and validated Gluon DAG plans (`.hadron/docs/plans/*.md`). |
 | **Visual & Behavioral E2E Asserter** | `hadron_forge_e2e_assert` | Multi-step headless browser flows, DOM text assertions, and jailed visual screenshot captures. |
 | **Packaging & Live Preview Launcher** | `hadron_forge_preview_launch` | Release artifact builds, isolated background server lifecycle, and loopback health endpoint probing. |
@@ -27,7 +27,7 @@ Hadron Forge (`crates/hadron-forge` and `crates/hadron-forge-mcp`) provides a co
 | **In-Process Mock Server** | `hadron_forge_mock_start`, `hadron_forge_mock_route_add`, `hadron_forge_mock_requests_list`, `hadron_forge_mock_assert`, `hadron_forge_mock_stop`, `hadron_forge_mock_list` | Loopback HTTP/WS mock endpoints (`127.0.0.1`), request journaling, assertion testing. |
 | **Local SQLite Engine** | `hadron_forge_sqlite_query`, `hadron_forge_sqlite_schema`, `hadron_forge_sqlite_migrate`, `hadron_forge_sqlite_export` | Bundled `rusqlite`, schema introspection, transactional migrations, Markdown/CSV/JSON export. |
 | **Polyglot Diagnostics** | `hadron_forge_run_command`, `hadron_forge_parse_diagnostics` | Jailed execution allowlist (`node`, `npm`, `pnpm`, `bun`, `deno`, `python3`, `pytest`, `go`, `cargo`) + compiler error parsers. |
-| **Blast Radius Analyzer** | `hadron_forge_blast_radius` | Static crate dependency graph, reverse caller traversal, and affected test suite impact calculator. |
+| **Blast Radius Analyzer** | `hadron_forge_blast_radius` | Zero-subprocess transitive workspace crate dependency graph (`resolve_affected_workspace_crates`), reverse caller traversal, and fail-closed affected test suite impact calculator. |
 | **Automated Git Bisect** | `hadron_forge_git_bisect` | Autonomous binary regression finder executing test predicates across commit ranges. |
 | **Wiretap Protocol Monitor** | `hadron_forge_wiretap` | Real-time NDJSON and HTTP IPC packet monitor, query filter, and frame assertion validator. |
 | **AST Structural Rewrite** | `hadron_forge_ast_rewrite` | Tree-sitter structural pattern search and cross-file code transformation without regex fragility. |

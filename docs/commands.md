@@ -13,7 +13,7 @@ Hadron provides an interactive suite of `/slash` commands directly inside the Ch
 | `/loop` | `/loop [count] <objective>` | Execute an iterative evaluation loop until completion criteria are met or count expires. | `/loop 5 fix compiler errors` |
 | `/schedule` | `/schedule [list\|add\|remove\|run\|skip\|enable\|disable\|settings]` | List, add, remove, run, skip, enable, disable, or open Settings for recurring scheduled tasks (`.hadron/schedules/`). | `/schedule add daily-sec @daily Run security audit` |
 | `/absorb` | `/absorb [options]` | Scan foreign assistant folders (`.agents/`, `.claude/`, `CLAUDE.md`, `.cursor/`, `.windsurf/`, `.kimi/`, `.superpowers/`) and distill memories, skills, invariants, and plans into `.hadron/`. | `/absorb` |
-| `/dream` | `/dream` | Trigger an immediate idle workspace maintenance cycle (compaction & worktree cleanup). | `/dream` |
+| `/dream` | `/dream` | Trigger an immediate idle workspace maintenance cycle (Nucleus orphan, dead-link, duplicate-slug & `usage.json` cold-note audit, plus worktree hygiene); also runs automatically hourly while idle. | `/dream` |
 | `/scout` | `/scout <prompt>` | Run zero-footprint, read-only workspace keyword and path search (skipping symlinks, binaries, `.hadron`/`.git`/`target`, and files `>512 KiB`; returns top 25 scored matches). | `/scout find all references to IntentLockTable` |
 
 ---

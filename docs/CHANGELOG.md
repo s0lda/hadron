@@ -5,6 +5,25 @@ All notable changes to Hadron will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.55] - 2026-11-25
+
+### Added
+- **Affected-Crate Smart Gate & Live Merge-Gate Streaming (`hadron-forge`, `hadron-lattice`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added zero-subprocess transitive workspace crate closure (`resolve_affected_workspace_crates` with fail-closed fallback on manifest, lockfile, `.cargo`/`.github`, or non-member changes and `crates/hadron-chamber` → `hadron` package mapping) and wired it into `detect_affected_runner` (`crates/hadron-forge/src/ast_blast_radius.rs`, `crates/hadron-forge/src/blast_radius.rs`, `crates/hadron-gluon/src/merge.rs`).
+  - Added `RpcPushEvent::GateOutput` (typed `GateStream`) and canonical `parse_cargo_test_line` in `hadron-lattice`, line-streaming `run_tests_within_streaming` / `MergeRunner::tests_streaming` with `64 KiB` line caps and `Engine::set_rpc_dispatcher` push plumbing in `hadron-gluon`, buffered `GateOutput`/`GateUpdated` draining in `rpc_client.rs`, and the `Mission > Gate` live Test Explorer UI (`MissionSubtab::Gate`, filter pills, per-test `[Dispatch Fix]`, `[Retry Gate]`) in `hadron-chamber` (`crates/hadron-lattice/src/wire/protocol.rs`, `crates/hadron-gluon/src/merge.rs`, `crates/hadron-gluon/src/engine/merge.rs`, `crates/hadron-chamber/src/rpc_client.rs`, `crates/hadron-chamber/src/app/render/gate_explorer.rs`).
+- **Headless Swarm MCP Bridge (`hadron-gluon`)**:
+  - Added `hadron-gluon --mcp` stdio MCP bridge exposing `hadron_swarm_status`, `hadron_swarm_roster`, `hadron_swarm_dispatch`, `hadron_field_poll`, and `hadron_daemon_wake` over loopback-validated `.hadron/gluon.rpc` with `16 MiB` frame caps and 5s RPC timeouts (`crates/hadron-gluon/src/mcp_bridge.rs`, `crates/hadron-gluon/src/cli.rs`).
+- **Rule 1 Liveness & Evidence-Claim Gate Advisories (`hadron-gatekeeper`, `hadron-gluon`)**:
+  - Added `audit_diff_liveness` (flagging zero-caller `pub` symbols in diffs while skipping registry-attributed items such as `#[tool]`) and `audit_evidence_claims`, wired into merge-gate reporting as non-blocking `Severity::Warning` advisories (`crates/hadron-gatekeeper/src/liveness.rs`, `crates/hadron-gatekeeper/src/claim_auditor.rs`, `crates/hadron-gluon/src/engine/merge.rs`).
+- **GitHub Issue & PR Review Dispatch Intake (`hadron-chamber`)**:
+  - Added off-thread `gh` issue and PR review detail fetchers (`GitHubIssueDetail`, `GitHubPrReviewContext`), bounded `@orchestrator` prompt formatters, background dispatch actions, and `[Dispatch]` / `[Dispatch Fix]` buttons in `Git > Remote & Issues` (`crates/hadron-chamber/src/vcs.rs`, `crates/hadron-chamber/src/app/actions.rs`, `crates/hadron-chamber/src/app/render/git.rs`).
+- **Nucleus Lesson Usage Ledger & Upgraded `DreamDaemon` (`hadron-lattice`, `hadron-forge-mcp`, `hadron-gluon`, `hadron-chamber`)**:
+  - Added schema-v1 `nucleus_usage` ledger (`.hadron/nucleus/usage.json`) with forward-version guards and atomic temp+rename writes, wired `query_nucleus` and `read_file` in `hadron-forge-mcp` to record note opens, upgraded `DreamDaemon::run_cycle` to audit orphans, dead `[[slug]]` links, duplicate slugs, and cold notes with an hourly safe-point idle hook, and enriched `/dream` output (`crates/hadron-lattice/src/nucleus_usage.rs`, `crates/hadron-forge-mcp/src/tools/nucleus.rs`, `crates/hadron-forge-mcp/src/tools/inspect.rs`, `crates/hadron-gluon/src/dream_daemon.rs`, `crates/hadron-gluon/src/cli.rs`, `crates/hadron-chamber/src/app/actions.rs`).
+
+### Changed
+- **Dead-Code Pruning (`hadron-gatekeeper`, `hadron-lattice`)**:
+  - Pruned zero-caller `record_mutation_run` from `hadron-gatekeeper` and `HeadlessReplayer` / `BisectResult` (`replay.rs`) from `hadron-lattice` (`crates/hadron-gatekeeper/src/merge.rs`, `crates/hadron-gatekeeper/src/lib.rs`, `crates/hadron-lattice/src/lib.rs`).
+
 ## [0.33.54] - 2026-11-25
 
 ### Fixed

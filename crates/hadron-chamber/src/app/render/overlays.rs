@@ -20,6 +20,21 @@ struct Release {
 /// the version this binary was built at.
 const RELEASES: &[Release] = &[
     Release {
+        version: "0.33.55",
+        date: Some("2026-11-25"),
+        added: &[
+            "Affected-Crate Smart Gate & Live Merge-Gate Streaming (hadron-forge, hadron-lattice, hadron-gluon, hadron-chamber): Added zero-subprocess transitive workspace crate closure (resolve_affected_workspace_crates) in detect_affected_runner, streamed merge-gate test lines over RpcPushEvent::GateOutput with unified parse_cargo_test_line, and added the Mission > Gate live Test Explorer UI with filter pills, per-test Dispatch Fix, and Retry Gate",
+            "Headless Swarm MCP Bridge (hadron-gluon): Added hadron-gluon --mcp stdio MCP bridge exposing hadron_swarm_status, hadron_swarm_roster, hadron_swarm_dispatch, hadron_field_poll, and hadron_daemon_wake over bounded loopback .hadron/gluon.rpc",
+            "Rule 1 Liveness & Evidence-Claim Gate Advisories (hadron-gatekeeper, hadron-gluon): Added audit_diff_liveness and audit_evidence_claims wired as non-blocking merge-gate advisories",
+            "GitHub Issue & PR Review Dispatch Intake (hadron-chamber): Added off-thread gh issue/PR review detail fetchers and [Dispatch] / [Dispatch Fix] buttons in Git > Remote & Issues",
+            "Nucleus Lesson Usage Ledger & Upgraded DreamDaemon (hadron-lattice, hadron-forge-mcp, hadron-gluon, hadron-chamber): Added schema-v1 .hadron/nucleus/usage.json ledger wired into forge-mcp query_nucleus/read_file, upgraded DreamDaemon to audit orphans, dead links, duplicate slugs, and cold notes on an hourly idle hook, and enriched /dream reporting",
+        ],
+        changed: &[
+            "Dead-Code Pruning (hadron-gatekeeper, hadron-lattice): Pruned zero-caller record_mutation_run and HeadlessReplayer/BisectResult (replay.rs)",
+        ],
+        fixed: &[],
+    },
+    Release {
         version: "0.33.54",
         date: Some("2026-11-25"),
         added: &[],
