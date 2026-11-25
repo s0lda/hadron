@@ -4,6 +4,7 @@
 //! (`127.0.0.1:<port>`) to deliver `<1ms` wake notifications on user message submission
 //! and optional incremental field polling without blocking the GPUI render thread.
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -14,8 +15,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use hadron_lattice::wire::{
-    DAEMON_SUBSCRIBE_METHOD, JsonRpcCodec, JsonRpcRequest, JsonRpcResponse, LoopbackRpcAddr,
-    MAX_RPC_FRAME_BYTES, RpcEndpointMetadata, RpcPushEvent, read_rpc_metadata,
+    DAEMON_SUBSCRIBE_METHOD, GateStream, JsonRpcCodec, JsonRpcRequest, JsonRpcResponse,
+    LoopbackRpcAddr, MAX_RPC_FRAME_BYTES, RpcEndpointMetadata, RpcPushEvent, read_rpc_metadata,
 };
 
 const MAX_POLL_EVENTS: usize = 100_000;
@@ -164,6 +165,15 @@ const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 const SUBSCRIBE_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
 const MAX_QUEUED_GATE_UPDATES: usize = 256;
+const MAX_QUEUED_GATE_OUTPUT: usize = 500;
+
+/// One buffered live merge-gate output line pushed by `hadron-gluon`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GateOutputLine {
+    pub quark: String,
+    pub stream: GateStream,
+    pub line: String,
+}
 
 #[derive(Default)]
 struct PushState {
@@ -172,6 +182,7 @@ struct PushState {
     stop: AtomicBool,
     waker: Mutex<Option<Waker>>,
     gate_updates: Mutex<Vec<(String, Option<bool>)>>,
+    gate_outputs: Mutex<VecDeque<GateOutputLine>>,
 }
 
 /// Cloneable view of a [`RpcSubscriptionHandle`]: a dirty flag set on every
@@ -196,6 +207,12 @@ impl PushSignal {
         std::mem::take(&mut *guard)
     }
 
+    /// Drain any queued live merge-gate output lines (FIFO, capped at [`MAX_QUEUED_GATE_OUTPUT`]).
+    pub fn take_gate_outputs(&self) -> Vec<GateOutputLine> {
+        let mut guard = self.0.gate_outputs.lock().unwrap_or_else(|e| e.into_inner());
+        guard.drain(..).collect()
+    }
+
     /// Async-poll form of [`Self::take_dirty`]: registers `cx`'s waker before
     /// re-checking, so a push landing between the two checks is never lost.
     pub fn poll_dirty(&self, cx: &mut std::task::Context<'_>) -> Poll<()> {
@@ -217,6 +234,21 @@ impl PushSignal {
                 guard.remove(0);
             }
             guard.push((quark, passed));
+        }
+        self.mark_dirty();
+    }
+
+    fn push_gate_output(&self, quark: String, stream: GateStream, line: String) {
+        {
+            let mut guard = self.0.gate_outputs.lock().unwrap_or_else(|e| e.into_inner());
+            while guard.len() >= MAX_QUEUED_GATE_OUTPUT {
+                guard.pop_front();
+            }
+            guard.push_back(GateOutputLine {
+                quark,
+                stream,
+                line,
+            });
         }
         self.mark_dirty();
     }
@@ -331,6 +363,14 @@ fn subscribe_until_disconnect(addr: &str, signal: &PushSignal) -> bool {
                 buf.clear();
                 match JsonRpcCodec::decode_push_event(&line) {
                     Ok(RpcPushEvent::Heartbeat { .. }) => {}
+                    Ok(RpcPushEvent::GateOutput {
+                        quark,
+                        stream,
+                        line,
+                        ..
+                    }) => {
+                        signal.push_gate_output(quark, stream, line);
+                    }
                     Ok(RpcPushEvent::GateUpdated { quark, passed }) => {
                         signal.push_gate_update(quark, passed);
                     }
@@ -522,9 +562,32 @@ mod tests {
         let waker = Waker::from(Arc::clone(&count));
         let mut cx = std::task::Context::from_waker(&waker);
         assert!(signal.poll_dirty(&mut cx).is_pending());
+        push(
+            &mut stream,
+            &RpcPushEvent::GateOutput {
+                quark: "q".into(),
+                stream: GateStream::Stdout,
+                line: "test alpha ... ok".into(),
+                passed: Some(1),
+                failed: Some(0),
+            },
+        );
         push(&mut stream, &RpcPushEvent::GateUpdated { quark: "q".into(), passed: Some(false) });
-        wait_until("waker fired", || count.0.load(Ordering::SeqCst) == 1);
+        wait_until("waker fired", || count.0.load(Ordering::SeqCst) >= 1);
         assert!(signal.poll_dirty(&mut cx).is_ready());
+        wait_until("gate output & update buffered", || {
+            !signal.0.gate_updates.lock().unwrap().is_empty()
+                && !signal.0.gate_outputs.lock().unwrap().is_empty()
+        });
+        assert_eq!(
+            signal.take_gate_outputs(),
+            vec![GateOutputLine {
+                quark: "q".to_string(),
+                stream: GateStream::Stdout,
+                line: "test alpha ... ok".to_string(),
+            }]
+        );
+        assert!(signal.take_gate_outputs().is_empty());
         assert_eq!(
             signal.take_gate_updates(),
             vec![("q".to_string(), Some(false))]

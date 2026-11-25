@@ -328,6 +328,147 @@ pub fn format_remediation_instructions(diag: &StructuredDiagnostics) -> String {
     out
 }
 
+/// Returns `true` for high-signal cargo test/compiler lines that should bypass
+/// per-line stream throttling so test outcomes and failures are never dropped.
+pub(super) fn is_priority_gate_line(line: &str) -> bool {
+    if hadron_lattice::wire::parse_cargo_test_line(line).is_some() {
+        return true;
+    }
+    let trimmed = line.trim();
+    trimmed.starts_with("error[")
+        || trimmed.starts_with("error:")
+        || trimmed.contains("panicked at")
+        || trimmed == "failures:"
+}
+
+/// Minimum spacing between non-priority verbose compiler/log lines forwarded from
+/// the merge-gate test runner, preventing broadcast channel lag (`PUSH_CHANNEL_CAPACITY = 256`).
+const GATE_STREAM_THROTTLE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Build a throttled [`crate::merge::GateLineSink`] bound to `dispatcher` for `quark`.
+///
+/// Priority test/error lines pass immediately; verbose non-priority lines are rate-limited
+/// to at most once per [`GATE_STREAM_THROTTLE`]. Parses running pass/fail totals via
+/// [`hadron_lattice::wire::parse_cargo_test_line`] (SSOT Rule 3) and broadcasts
+/// [`hadron_lattice::wire::RpcPushEvent::GateOutput`].
+pub(super) fn build_gate_line_sink(
+    quark: String,
+    dispatcher: Arc<crate::rpc_server::RpcDispatcher>,
+) -> crate::merge::GateLineSink {
+    use hadron_lattice::wire::{
+        GateStream, GateTestEvent, GateTestOutcome, RpcPushEvent, parse_cargo_test_line,
+    };
+
+    let last_verbose_emit = std::sync::Mutex::new(Option::<std::time::Instant>::None);
+    let running_counts = std::sync::Mutex::new((0usize, 0usize));
+
+    Arc::new(move |stream: &str, line: &str| {
+        let parsed = parse_cargo_test_line(line);
+        let (passed, failed) = {
+            let mut counts = running_counts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(ref ev) = parsed {
+                match ev {
+                    GateTestEvent::Case { outcome, .. } => match outcome {
+                        GateTestOutcome::Ok => counts.0 += 1,
+                        GateTestOutcome::Failed => counts.1 += 1,
+                        GateTestOutcome::Ignored => {}
+                    },
+                    GateTestEvent::Summary {
+                        passed: p,
+                        failed: f,
+                        ..
+                    } => {
+                        counts.0 = counts.0.max(*p);
+                        counts.1 = counts.1.max(*f);
+                    }
+                }
+            }
+            *counts
+        };
+
+        let priority = parsed.is_some() || is_priority_gate_line(line);
+        if !priority {
+            let mut guard = last_verbose_emit
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let now = std::time::Instant::now();
+            if let Some(prev) = *guard {
+                if now.duration_since(prev) < GATE_STREAM_THROTTLE {
+                    return;
+                }
+            }
+            *guard = Some(now);
+        }
+
+        let gate_stream = if stream.eq_ignore_ascii_case("stderr") {
+            GateStream::Stderr
+        } else {
+            GateStream::Stdout
+        };
+
+        dispatcher.publish(RpcPushEvent::GateOutput {
+            quark: quark.clone(),
+            stream: gate_stream,
+            line: line.to_string(),
+            passed: Some(passed),
+            failed: Some(failed),
+        });
+    })
+}
+
+/// Format non-blocking Rule 1 Liveness & Evidence Claim advisories for a merge-gate run.
+/// Returns `None` when neither auditor found anything actionable.
+pub(super) fn format_gate_advisory(
+    quark: &str,
+    liveness: Option<&hadron_gatekeeper::LivenessReport>,
+    claim: Option<&hadron_gatekeeper::ClaimAuditReport>,
+) -> Option<String> {
+    let mut notes = Vec::new();
+    if let Some(liv) = liveness {
+        if !liv.unwired.is_empty() {
+            const MAX_LISTED: usize = 8;
+            let items: Vec<String> = liv
+                .unwired
+                .iter()
+                .take(MAX_LISTED)
+                .map(|u| {
+                    let suffix = if u.reexport_only { " (re-exported only)" } else { "" };
+                    format!("`{}` ({} at `{}:{}`){}", u.symbol, u.kind, u.file_path, u.line_number, suffix)
+                })
+                .collect();
+            let extra = if liv.unwired.len() > MAX_LISTED {
+                format!(" (+{} more)", liv.unwired.len() - MAX_LISTED)
+            } else {
+                String::new()
+            };
+            notes.push(format!(
+                "- **Rule 1 Liveness Advisory**: {}/{} new `pub` symbol(s) have no detected production caller: {}{extra}.",
+                liv.unwired.len(),
+                liv.checked_symbols,
+                items.join(", ")
+            ));
+        }
+    }
+    if let Some(clm) = claim {
+        if clm.verdict == hadron_gatekeeper::ClaimVerdict::Contradicted {
+            notes.push(format!(
+                "- **Evidence Claim Advisory**: {} (non-blocking).",
+                clm.detail
+            ));
+        }
+    }
+    if notes.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "Merge-gate advisory for `@{quark}`:\n{}",
+            notes.join("\n")
+        ))
+    }
+}
+
 impl super::Engine {
     /// Whether `e` is a merge-gate hand-back already issued to `target` for `assignment`.
     pub(super) fn is_gate_handback(e: &Event, target: &QuarkId, assignment: ulid::Ulid) -> bool {
@@ -466,6 +607,7 @@ impl super::Engine {
         shadow_gate: &tokio::sync::Mutex<crate::engine::shadow_gate::ShadowGate>,
         gate_semaphore: &Arc<tokio::sync::Semaphore>,
         fast_path_docs_only: bool,
+        rpc_dispatcher: Option<Arc<crate::rpc_server::RpcDispatcher>>,
     ) -> anyhow::Result<PreGateOutcome> {
         use hadron_gatekeeper::BranchState;
         let initial_commits = crate::worktree::commits_ahead(&t.wt, &t.base)?;
@@ -529,7 +671,16 @@ impl super::Engine {
             )
         } else {
             heartbeat.set_stage("running test suite");
-            let (passed, tail) = runner.tests(&t.wt).await?;
+            let sink = rpc_dispatcher
+                .as_ref()
+                .map(|disp| build_gate_line_sink(t.wt.quark.as_str().to_string(), Arc::clone(disp)));
+            let (passed, tail) = runner.tests_streaming(&t.wt, sink).await?;
+            if let Some(ref disp) = rpc_dispatcher {
+                disp.publish(hadron_lattice::wire::RpcPushEvent::GateUpdated {
+                    quark: t.wt.quark.as_str().to_string(),
+                    passed: Some(passed),
+                });
+            }
             let mut gate = shadow_gate.lock().await;
             gate.record_speculative_result(&t.wt.branch, &head_sha, passed, &tail);
             (passed, tail)
@@ -575,6 +726,7 @@ impl super::Engine {
                     &self.shadow_gate,
                     &self.gate_semaphore,
                     self.fast_path_docs_only,
+                    self.rpc_dispatcher.clone(),
                 )
                 .await?
             }
@@ -698,6 +850,47 @@ impl super::Engine {
         }
 
         let events = read_events(&self.field_path)?;
+
+        // Non-blocking Rule 1 Liveness & Evidence Claim advisories.
+        let advisory_diff_range = format!("{}...{}", t.base, t.wt.branch);
+        let liveness_report = crate::snapshot::git(&t.wt.path, &["diff", &advisory_diff_range])
+            .ok()
+            .filter(|d| !d.is_empty())
+            .map(|diff_str| hadron_gatekeeper::audit_diff_liveness(&t.wt.path, &diff_str));
+        let claim_report = events
+            .iter()
+            .rev()
+            .find_map(|e| {
+                if e.from == Actor::Quark(target.clone())
+                    && (e.answers == Some(t.assignment) || e.answers.is_none())
+                {
+                    if let Kind::Message { body } = &e.kind {
+                        return Some(body.as_str());
+                    }
+                }
+                None
+            })
+            .map(|body| {
+                let (prog, args) = crate::merge::detect_affected_runner(&t.wt.path, &t.base);
+                let gate_cmd = if args.is_empty() {
+                    prog.to_string()
+                } else {
+                    format!("{prog} {}", args.join(" "))
+                };
+                hadron_gatekeeper::audit_evidence_claims(body, tests_passed, &gate_cmd)
+            });
+        if let Some(advisory) = format_gate_advisory(
+            target.as_str(),
+            liveness_report.as_ref(),
+            claim_report.as_ref(),
+        ) {
+            self.append(
+                Event::new(Actor::Gluon, None, Kind::Message { body: advisory })
+                    .with_severity(hadron_lattice::Severity::Warning),
+            )
+            .await?;
+        }
+
         let op = hadron_gatekeeper::merge_op(&t.wt.branch, &t.base);
 
         // Approval: an explicit human grant for THIS branch, or the mode ladder saying
@@ -1342,6 +1535,115 @@ error[E0502]: cannot borrow `self.view` as mutable because it is also borrowed a
                 .map(|i| i.category),
             Some(hadron_gatekeeper::InvariantCategory::MergeConflict)
         );
+    }
+
+    #[test]
+    fn priority_gate_lines_and_dispatcher_sink_publish_gate_output() {
+        use hadron_lattice::wire::{GateStream, RpcPushEvent};
+
+        assert!(is_priority_gate_line("test foo::bar ... ok"));
+        assert!(is_priority_gate_line("test foo::baz ... FAILED"));
+        assert!(is_priority_gate_line("test foo::ign ... ignored"));
+        assert!(is_priority_gate_line("test result: ok. 5 passed; 0 failed; 0 ignored;"));
+        assert!(is_priority_gate_line("error[E0425]: cannot find value"));
+        assert!(!is_priority_gate_line("   Compiling hadron-gluon v0.33.54"));
+
+        let bus = crate::actor::bus::ActorBus::new(8);
+        let dispatcher = Arc::new(crate::rpc_server::RpcDispatcher::new(bus));
+        let mut rx = dispatcher.subscribe();
+        let sink = build_gate_line_sink("cli-agy".to_string(), Arc::clone(&dispatcher));
+
+        // First verbose line passes; immediate second verbose line is throttled.
+        sink("stderr", "   Compiling hadron-gluon v0.33.54");
+        sink("stderr", "   Compiling hadron-chamber v0.33.54");
+        let first = rx.try_recv().expect("first verbose line should emit GateOutput");
+        assert_eq!(
+            first,
+            RpcPushEvent::GateOutput {
+                quark: "cli-agy".to_string(),
+                stream: GateStream::Stderr,
+                line: "   Compiling hadron-gluon v0.33.54".to_string(),
+                passed: Some(0),
+                failed: Some(0),
+            }
+        );
+        assert!(rx.try_recv().is_err(), "immediate second verbose line must be throttled");
+
+        // Priority test lines bypass throttling and update running pass/fail counters.
+        sink("stdout", "test foo::bar ... ok");
+        sink("stdout", "test foo::baz ... FAILED");
+        sink("stdout", "test result: FAILED. 10 passed; 2 failed; 0 ignored;");
+
+        let ev1 = rx.try_recv().expect("case ok should emit GateOutput");
+        assert_eq!(
+            ev1,
+            RpcPushEvent::GateOutput {
+                quark: "cli-agy".to_string(),
+                stream: GateStream::Stdout,
+                line: "test foo::bar ... ok".to_string(),
+                passed: Some(1),
+                failed: Some(0),
+            }
+        );
+        let ev2 = rx.try_recv().expect("case failed should emit GateOutput");
+        assert_eq!(
+            ev2,
+            RpcPushEvent::GateOutput {
+                quark: "cli-agy".to_string(),
+                stream: GateStream::Stdout,
+                line: "test foo::baz ... FAILED".to_string(),
+                passed: Some(1),
+                failed: Some(1),
+            }
+        );
+        let ev3 = rx.try_recv().expect("summary line should emit GateOutput");
+        assert_eq!(
+            ev3,
+            RpcPushEvent::GateOutput {
+                quark: "cli-agy".to_string(),
+                stream: GateStream::Stdout,
+                line: "test result: FAILED. 10 passed; 2 failed; 0 ignored;".to_string(),
+                passed: Some(10),
+                failed: Some(2),
+            }
+        );
+    }
+
+    #[test]
+    fn format_gate_advisory_reports_unwired_and_contradicted_claims_only() {
+        let clean_liv = hadron_gatekeeper::LivenessReport {
+            checked_symbols: 2,
+            unwired: Vec::new(),
+        };
+        let verified_claim = hadron_gatekeeper::ClaimAuditReport {
+            verdict: hadron_gatekeeper::ClaimVerdict::Verified,
+            claimed_command: Some("cargo test".into()),
+            detail: "report claims a pass; gate passed".into(),
+        };
+        assert!(format_gate_advisory("q", Some(&clean_liv), Some(&verified_claim)).is_none());
+
+        let unwired_liv = hadron_gatekeeper::LivenessReport {
+            checked_symbols: 3,
+            unwired: vec![hadron_gatekeeper::UnwiredSymbol {
+                symbol: "dead_helper".into(),
+                kind: "fn".into(),
+                file_path: "crates/x/src/lib.rs".into(),
+                line_number: 42,
+                reexport_only: true,
+            }],
+        };
+        let bad_claim = hadron_gatekeeper::ClaimAuditReport {
+            verdict: hadron_gatekeeper::ClaimVerdict::Contradicted,
+            claimed_command: Some("cargo test -p x".into()),
+            detail: "report claims a pass but the gate FAILED".into(),
+        };
+        let msg = format_gate_advisory("q", Some(&unwired_liv), Some(&bad_claim))
+            .expect("advisory expected");
+        assert!(msg.contains("Rule 1 Liveness Advisory"));
+        assert!(msg.contains("dead_helper"));
+        assert!(msg.contains("(re-exported only)"));
+        assert!(msg.contains("Evidence Claim Advisory"));
+        assert!(msg.contains("gate FAILED"));
     }
 }
 

@@ -26,7 +26,7 @@ pub use matrix::{
 };
 pub use merge::{
     distill_failure_recovery_lesson, evaluate_benchmark_verdict, lint_candidate_diff,
-    lint_candidate_invariants, merge_approved, merge_decision, merge_op, record_mutation_run,
+    lint_candidate_invariants, merge_approved, merge_decision, merge_op,
     BlockReason, BranchState, MergeVerdict,
 };
 pub use mutation::*;

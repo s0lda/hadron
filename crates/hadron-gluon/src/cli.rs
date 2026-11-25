@@ -241,6 +241,33 @@ pub(crate) fn is_statusline_invocation<I: IntoIterator<Item = String>>(args: I) 
     args.into_iter().any(|a| a == "--statusline")
 }
 
+pub(crate) fn is_mcp_invocation<I: IntoIterator<Item = String>>(args: I) -> bool {
+    args.into_iter().any(|a| a == "--mcp")
+}
+
+pub(crate) fn parse_mcp_field_path<I: IntoIterator<Item = String>>(
+    args: I,
+    cwd: &Path,
+) -> PathBuf {
+    let mut positional: Option<PathBuf> = None;
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        if arg == "--mcp" {
+            continue;
+        }
+        if arg == "--field" {
+            if let Some(p) = it.next() {
+                positional = Some(PathBuf::from(p));
+            }
+            continue;
+        }
+        if !arg.starts_with('-') && positional.is_none() {
+            positional = Some(PathBuf::from(arg));
+        }
+    }
+    positional.unwrap_or_else(|| cwd.join(".hadron").join("field.jsonl"))
+}
+
 /// The `hadron-gluon` daemon entrypoint, in the library rather than in a `[[bin]]`,
 /// so the single installable package (`hadron`) can carry a bin target that calls it.
 /// The chamber finds the daemon as a sibling of its own `current_exe`
@@ -251,10 +278,21 @@ pub async fn run() {
         return;
     }
 
+    if is_mcp_invocation(std::env::args().skip(1)) {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let field_path = parse_mcp_field_path(std::env::args().skip(1), &cwd);
+        if let Err(e) = crate::mcp_bridge::run_stdio(&field_path).await {
+            term::error(Source::Gluon, &format!("MCP bridge error: {e:#}"));
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let _shutdown_guard = crate::proc::ShutdownGuard::new();
 
     let Some(args) = parse_args() else {
         term::error(Source::Gluon, "usage: hadron-gluon <field.jsonl> [--interval-ms N] [--team team.json]");
+        term::error(Source::Gluon, "       hadron-gluon --mcp [field.jsonl]");
         term::error(Source::Gluon, "Team resolution: --team, else a team.json next to the field");
         term::error(Source::Gluon, "(e.g. .hadron/team.json), else ~/.hadron/team.json.");
         term::error(Source::Gluon, "With none, the daemon refuses to start — there are no stand-in quarks.");
@@ -588,6 +626,7 @@ pub async fn run() {
         last_seen_repo: Option<String>,
         last_seen_global: Option<String>,
         last_schedule_check: std::time::Instant,
+        last_dream_check: std::time::Instant,
         repo_root: PathBuf,
         live_dir: PathBuf,
         secret_store: crate::secrets::KeyringStore,
@@ -724,12 +763,52 @@ pub async fn run() {
                     }
                 }
 
+                if self.last_dream_check.elapsed()
+                    >= std::time::Duration::from_secs(crate::dream_daemon::DREAM_IDLE_INTERVAL_SECS)
+                {
+                    self.last_dream_check = std::time::Instant::now();
+                    let dream_root = self.repo_root.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        crate::dream_daemon::DreamDaemon::run_cycle(&dream_root)
+                    })
+                    .await
+                    {
+                        Ok(summary) => {
+                            if summary.notes_cleaned > 0
+                                || !summary.orphan_notes.is_empty()
+                                || !summary.dead_index_links.is_empty()
+                                || !summary.duplicate_index_slugs.is_empty()
+                                || !summary.cold_notes.is_empty()
+                                || summary.stale_worktrees_found > 0
+                            {
+                                term::info(
+                                    Source::Gluon,
+                                    &format!(
+                                        "dream cycle: scanned={} cleaned={} orphans={} dead_links={} duplicates={} cold={} stale_trees={}",
+                                        summary.notes_scanned,
+                                        summary.notes_cleaned,
+                                        summary.orphan_notes.len(),
+                                        summary.dead_index_links.len(),
+                                        summary.duplicate_index_slugs.len(),
+                                        summary.cold_notes.len(),
+                                        summary.stale_worktrees_found,
+                                    ),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            term::warn(Source::Gluon, &format!("dream cycle task failed: {e}"));
+                        }
+                    }
+                }
+
                 Ok(())
             })
         }
     }
 
     let last_schedule_check = std::time::Instant::now();
+    let last_dream_check = std::time::Instant::now();
     let mut maintenance = CliSafePointMaintenance {
         running_team,
         team_path,
@@ -737,6 +816,7 @@ pub async fn run() {
         last_seen_repo,
         last_seen_global,
         last_schedule_check,
+        last_dream_check,
         repo_root,
         live_dir,
         secret_store,
@@ -970,5 +1050,39 @@ mod tests {
             "--interval-ms".to_string(),
             "500".to_string(),
         ]));
+    }
+
+    #[test]
+    fn is_mcp_invocation_and_field_path_resolution() {
+        assert!(is_mcp_invocation(["--mcp".to_string()]));
+        assert!(is_mcp_invocation([
+            "--mcp".to_string(),
+            "/tmp/proj/.hadron/field.jsonl".to_string(),
+        ]));
+        assert!(!is_mcp_invocation([".hadron/field.jsonl".to_string()]));
+
+        let cwd = Path::new("/workspace/demo");
+        assert_eq!(
+            parse_mcp_field_path(["--mcp".to_string()], cwd),
+            cwd.join(".hadron").join("field.jsonl")
+        );
+        assert_eq!(
+            parse_mcp_field_path(
+                ["--mcp".to_string(), "/custom/field.jsonl".to_string()],
+                cwd
+            ),
+            PathBuf::from("/custom/field.jsonl")
+        );
+        assert_eq!(
+            parse_mcp_field_path(
+                [
+                    "--mcp".to_string(),
+                    "--field".to_string(),
+                    "/alt/field.jsonl".to_string()
+                ],
+                cwd
+            ),
+            PathBuf::from("/alt/field.jsonl")
+        );
     }
 }

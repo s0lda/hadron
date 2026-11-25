@@ -85,6 +85,11 @@ impl Landed {
     }
 }
 
+/// Live line callback invoked by [`run_tests_within_streaming`] as stdout/stderr
+/// lines arrive from the merge-gate test runner: `(stream, line)` where `stream`
+/// is `"stdout"` or `"stderr"`.
+pub type GateLineSink = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// The seam. `tests` is async (a real one takes minutes); `land` is not (git is
 /// fast, and it must be serialized against the default branch anyway).
 #[async_trait]
@@ -92,6 +97,17 @@ pub trait MergeRunner: Send + Sync {
     /// Run the workspace tests **in the quark's worktree**, on the branch as it now
     /// stands. Returns (passed, a tail of the output for the human).
     async fn tests(&self, wt: &Worktree) -> anyhow::Result<(bool, String)>;
+
+    /// Run workspace tests while streaming stdout/stderr lines to `sink` as they
+    /// arrive. Defaults to [`Self::tests`] so fake runners in unit tests need no
+    /// extra boilerplate.
+    async fn tests_streaming(
+        &self,
+        wt: &Worktree,
+        _sink: Option<GateLineSink>,
+    ) -> anyhow::Result<(bool, String)> {
+        self.tests(wt).await
+    }
 
     /// Replay the branch on top of `base`, **before** `tests` runs. Defaults to the
     /// real git rebase: a fake runner exists to stub the expensive `tests`, and a
@@ -152,8 +168,10 @@ pub fn detect_runner(worktree_path: &Path) -> (&'static str, &'static [&'static 
     }
 }
 
-/// Slices the test command down to only affected crates if a subset of workspace
-/// crates was modified, otherwise falling back to the full workspace test suite.
+/// Slices the test command down to the transitive closure of affected workspace
+/// crates (`direct ∪ downstream` via zero-subprocess manifest parsing), failing
+/// closed to `cargo test --workspace` on root/member manifest edits, lockfile,
+/// CI/cargo config, non-member files, or when every member is affected.
 pub fn detect_affected_runner(worktree_path: &Path, base: &str) -> (&'static str, Vec<String>) {
     if !worktree_path.join("Cargo.toml").is_file() {
         let (p, args) = detect_runner(worktree_path);
@@ -171,23 +189,7 @@ pub fn detect_affected_runner(worktree_path: &Path, base: &str) -> (&'static str
         _ => Vec::new(),
     };
     let file_refs: Vec<&str> = diff_files.iter().map(|s| s.as_str()).collect();
-    let tia_plan = hadron_forge::tia::compute_impacted_tests(&file_refs);
-    if !tia_plan.requires_full_workspace {
-        if let Some(target_pkg) = tia_plan.target_package {
-            let mut args = vec!["test".to_string(), "-p".to_string(), target_pkg.clone()];
-            if target_pkg == "hadron" {
-                args.push("--bin".to_string());
-                args.push("hadron".to_string());
-            }
-            // cargo test only accepts at most one positional [TESTNAME] filter argument.
-            if tia_plan.target_symbols.len() == 1 {
-                args.push(tia_plan.target_symbols[0].clone());
-            }
-            return ("cargo", args);
-        }
-    }
-
-    match hadron_forge::ast_blast_radius::AstBlastRadiusAnalyzer::find_affected_crates(&file_refs) {
+    match hadron_forge::ast_blast_radius::resolve_affected_workspace_crates(worktree_path, &file_refs) {
         hadron_forge::ast_blast_radius::AffectedCratesResult::Specific(crates) => {
             let mut args = vec!["test".to_string()];
             for c in crates {
@@ -208,12 +210,20 @@ pub struct CargoMergeRunner;
 #[async_trait]
 impl MergeRunner for CargoMergeRunner {
     async fn tests(&self, wt: &Worktree) -> anyhow::Result<(bool, String)> {
+        self.tests_streaming(wt, None).await
+    }
+
+    async fn tests_streaming(
+        &self,
+        wt: &Worktree,
+        sink: Option<GateLineSink>,
+    ) -> anyhow::Result<(bool, String)> {
         let base = crate::snapshot::main_repo_root(&wt.path)
             .map(|r| crate::worktree::default_branch(&r))
             .unwrap_or_else(|_| "main".to_string());
         let (program, args) = detect_affected_runner(&wt.path, &base);
         let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_tests_with(wt, program, &arg_refs).await
+        run_tests_within_streaming(wt, program, &arg_refs, GATE_TEST_DEADLINE, sink).await
     }
 
     fn land(&self, repo_root: &Path, wt: &Worktree, base: &str) -> anyhow::Result<Landed> {
@@ -284,12 +294,71 @@ pub async fn run_tests_with(
     run_tests_within(wt, program, args, GATE_TEST_DEADLINE).await
 }
 
+/// Per-stream rolling tail ceiling during live line streaming (4× [`TAIL_BYTES`])
+/// so noisy test runs stay O(1) in heap memory while preserving full tail fidelity.
+const STREAM_TAIL_LIMIT: usize = TAIL_BYTES * 4;
+const STREAM_TAIL_KEEP: usize = TAIL_BYTES * 2;
+/// Maximum bytes read per single line chunk before emitting (prevents OOM on
+/// newline-less binary floods).
+const MAX_STREAM_LINE_BYTES: usize = 64 * 1024;
+
+async fn drain_pipe_lines<R: tokio::io::AsyncRead + Unpin>(
+    pipe: R,
+    stream_name: &'static str,
+    sink: Option<GateLineSink>,
+) -> String {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+
+    let mut reader = BufReader::new(pipe);
+    let mut raw = Vec::new();
+    let mut tail_buf = String::new();
+    loop {
+        raw.clear();
+        let read_res = (&mut reader)
+            .take(MAX_STREAM_LINE_BYTES as u64)
+            .read_until(b'\n', &mut raw)
+            .await;
+        match read_res {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let text = String::from_utf8_lossy(&raw);
+                tail_buf.push_str(&text);
+                if tail_buf.len() > STREAM_TAIL_LIMIT {
+                    let mut cut = tail_buf.len().saturating_sub(STREAM_TAIL_KEEP);
+                    while cut < tail_buf.len() && !tail_buf.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    tail_buf.drain(..cut);
+                }
+                if let Some(ref cb) = sink {
+                    let clean = text.trim_end_matches(&['\r', '\n'][..]);
+                    cb(stream_name, clean);
+                }
+            }
+        }
+    }
+    tail_buf
+}
+
 /// [`run_tests_with`] with the deadline as a parameter. Tests use a tiny one.
 pub async fn run_tests_within(
     wt: &Worktree,
     program: &str,
     args: &[&str],
     deadline: std::time::Duration,
+) -> anyhow::Result<(bool, String)> {
+    run_tests_within_streaming(wt, program, args, deadline, None).await
+}
+
+/// Line-streaming variant of [`run_tests_within`]. Streams stdout and stderr lines
+/// incrementally to `sink` while preserving bounded tail accumulation, process-group
+/// isolation, `kill_on_drop`, `QuarkProbe` timeout dumps, and hard deadline killing.
+pub async fn run_tests_within_streaming(
+    wt: &Worktree,
+    program: &str,
+    args: &[&str],
+    deadline: std::time::Duration,
+    sink: Option<GateLineSink>,
 ) -> anyhow::Result<(bool, String)> {
     let (actual_prog, actual_args) = if let Some((distro, linux_cwd)) = hadron_lattice::wsl::parse_wsl_unc_path(&wt.path) {
         let string_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -309,7 +378,7 @@ pub async fn run_tests_within(
         .stderr(std::process::Stdio::piped())
         // The deadline arm below kills the group explicitly, but that is not the only
         // way this future dies: cancel the surrounding turn (a reboot, a shutdown) and
-        // `wait_with_output` is dropped with the child still running. Same guarantee
+        // `child` is dropped with the child still running. Same guarantee
         // `ProcessRunner` relies on (`engine/run.rs`'s watchdog comment).
         .kill_on_drop(true);
 
@@ -353,7 +422,7 @@ pub async fn run_tests_within(
     use hadron_lattice::sys::ConfigureProcessGroup;
     cmd.as_std_mut().set_process_group_with_priority(low_priority);
 
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             return Ok((
@@ -362,7 +431,6 @@ pub async fn run_tests_within(
             ));
         }
     };
-    // Read before the handle is consumed by `wait_with_output`.
     let pid = child.id();
     if let Some(pid) = pid {
         if low_priority {
@@ -371,13 +439,35 @@ pub async fn run_tests_within(
         crate::proc::register(pid);
     }
 
-    let out = match tokio::time::timeout(deadline, child.wait_with_output()).await {
-        Ok(out) => {
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_sink = sink.clone();
+    let stderr_sink = sink;
+
+    let timed = tokio::time::timeout(deadline, async {
+        let stdout_fut = async {
+            match stdout_pipe {
+                Some(pipe) => drain_pipe_lines(pipe, "stdout", stdout_sink).await,
+                None => String::new(),
+            }
+        };
+        let stderr_fut = async {
+            match stderr_pipe {
+                Some(pipe) => drain_pipe_lines(pipe, "stderr", stderr_sink).await,
+                None => String::new(),
+            }
+        };
+        tokio::join!(stdout_fut, stderr_fut, child.wait())
+    })
+    .await;
+
+    let (stdout, stderr, status) = match timed {
+        Ok((stdout, stderr, status_res)) => {
             if let Some(pid) = pid {
                 crate::proc::unregister(pid);
             }
-            match out {
-                Ok(output) => output,
+            match status_res {
+                Ok(status) => (stdout, stderr, status),
                 Err(e) => {
                     return Ok((
                         false,
@@ -400,6 +490,7 @@ pub async fn run_tests_within(
                 crate::proc::unregister(pid);
                 kill_process_group(pid);
             }
+            let _ = child.start_kill();
             return Ok((
                 false,
                 format!(
@@ -412,9 +503,8 @@ pub async fn run_tests_within(
             ));
         }
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    Ok((out.status.success(), combine_output_tails(&stdout, &stderr)))
+
+    Ok((status.success(), combine_output_tails(&stdout, &stderr)))
 }
 
 /// SIGKILL the whole process group led by `pid` — the launcher *and* everything it
@@ -1066,6 +1156,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_tests_within_streaming_delivers_live_lines_and_enforces_timeout() {
+        let repo = git_repo();
+        let wt = worktree::ensure(repo.path(), &q("opus"), "01STR").unwrap();
+
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let captured_sink = std::sync::Arc::clone(&captured);
+        let sink: GateLineSink = std::sync::Arc::new(move |stream, line| {
+            captured_sink
+                .lock()
+                .unwrap()
+                .push((stream.to_string(), line.to_string()));
+        });
+
+        let (passed, tail) = run_tests_within_streaming(
+            &wt,
+            "sh",
+            &[
+                "-c",
+                "echo 'test alpha ... ok'; echo 'warn stderr' >&2; echo 'test beta ... ok'",
+            ],
+            std::time::Duration::from_secs(5),
+            Some(sink),
+        )
+        .await
+        .unwrap();
+
+        assert!(passed);
+        assert!(tail.contains("test alpha ... ok"));
+        assert!(tail.contains("warn stderr"));
+        let lines = captured.lock().unwrap().clone();
+        let stdout_lines: Vec<String> = lines
+            .iter()
+            .filter(|(s, _)| s == "stdout")
+            .map(|(_, l)| l.clone())
+            .collect();
+        let stderr_lines: Vec<String> = lines
+            .iter()
+            .filter(|(s, _)| s == "stderr")
+            .map(|(_, l)| l.clone())
+            .collect();
+        assert_eq!(stdout_lines, vec!["test alpha ... ok", "test beta ... ok"]);
+        assert_eq!(stderr_lines, vec!["warn stderr"]);
+
+        // Streaming runner must also enforce timeout + process-group kill.
+        let marker = wt.path.join("stream-hung-alive");
+        let hung_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let hung_sink_buf = std::sync::Arc::clone(&hung_lines);
+        let hung_sink: GateLineSink = std::sync::Arc::new(move |_, line| {
+            hung_sink_buf.lock().unwrap().push(line.to_string());
+        });
+        let script = format!(
+            "echo 'starting hung test'; sh -c 'while true; do date +%s%N > {}; sleep 0.05; done' & wait",
+            marker.display()
+        );
+        let (hung_passed, hung_out) = run_tests_within_streaming(
+            &wt,
+            "sh",
+            &["-c", &script],
+            std::time::Duration::from_millis(400),
+            Some(hung_sink),
+        )
+        .await
+        .unwrap();
+        assert!(!hung_passed);
+        assert!(hung_out.contains("did not finish within"));
+        assert!(
+            hung_lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains("starting hung test")),
+            "line emitted before hang must reach sink live"
+        );
+        let first = std::fs::read_to_string(&marker).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let second = std::fs::read_to_string(&marker).unwrap();
+        assert_eq!(first, second, "grandchild must be killed on streaming timeout");
+    }
+
+    #[tokio::test]
     async fn red_tests_are_reported_as_failure_with_their_output() {
         let repo = git_repo();
         let wt = worktree::ensure(repo.path(), &q("opus"), "01AAA").unwrap();
@@ -1159,31 +1329,48 @@ mod tests {
         assert_eq!(detect_runner(dir.path()), ("cargo", &["test", "--workspace"][..]));
     }
 
+    fn init_multi_crate_workspace(repo: &Path) {
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/hadron-lattice\", \"crates/hadron-chamber\", \"crates/hadron-leaf\"]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join("crates/hadron-lattice/src")).unwrap();
+        std::fs::write(
+            repo.join("crates/hadron-lattice/Cargo.toml"),
+            "[package]\nname = \"hadron-lattice\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join("crates/hadron-chamber/src")).unwrap();
+        std::fs::write(
+            repo.join("crates/hadron-chamber/Cargo.toml"),
+            "[package]\nname = \"hadron\"\nversion = \"0.1.0\"\n[dependencies]\nhadron-lattice = { path = \"../hadron-lattice\" }\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(repo.join("crates/hadron-leaf/src")).unwrap();
+        std::fs::write(
+            repo.join("crates/hadron-leaf/Cargo.toml"),
+            "[package]\nname = \"hadron-leaf\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        git(repo, &["add", "-A"]).unwrap();
+        git(repo, &["commit", "-q", "-m", "init workspace"]).unwrap();
+    }
+
     #[test]
     fn test_detect_affected_runner_slicing() {
         let repo = git_repo();
-        std::fs::write(repo.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
-        git(repo.path(), &["add", "Cargo.toml"]).unwrap();
-        git(repo.path(), &["commit", "-q", "-m", "init workspace"]).unwrap();
+        init_multi_crate_workspace(repo.path());
 
         let wt = worktree::ensure(repo.path(), &q("opus"), "01AFF").unwrap();
-        let crate_dir = wt.path.join("crates").join("hadron-chamber");
+        let crate_dir = wt.path.join("crates").join("hadron-chamber").join("src");
         std::fs::create_dir_all(&crate_dir).unwrap();
         std::fs::write(crate_dir.join("main.rs"), "fn main() {}\n").unwrap();
         worktree::commit_turn(&wt, "opus: touched chamber").unwrap();
 
         let (program, args) = detect_affected_runner(&wt.path, "main");
         assert_eq!(program, "cargo");
-        assert_eq!(
-            args,
-            vec![
-                "test".to_string(),
-                "-p".to_string(),
-                "hadron".to_string(),
-                "--bin".to_string(),
-                "hadron".to_string()
-            ]
-        );
+        assert_eq!(args, vec!["test".to_string(), "-p".to_string(), "hadron".to_string()]);
     }
 
     #[test]
@@ -1327,12 +1514,10 @@ mod tests {
     }
 
     #[test]
-    fn detect_affected_runner_uses_tia_plan() {
+    fn detect_affected_runner_includes_transitive_downstream_dependents() {
         let repo = git_repo();
         let base = worktree::default_branch(repo.path());
-        std::fs::write(repo.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
-        git(repo.path(), &["add", "Cargo.toml"]).unwrap();
-        git(repo.path(), &["commit", "-q", "-m", "init workspace"]).unwrap();
+        init_multi_crate_workspace(repo.path());
 
         let wt = worktree::ensure(repo.path(), &q("tia-quark"), "01TIA").unwrap();
         let crate_dir = wt.path.join("crates").join("hadron-lattice").join("src");
@@ -1342,17 +1527,20 @@ mod tests {
 
         let (prog, args) = detect_affected_runner(&wt.path, &base);
         assert_eq!(prog, "cargo");
-        assert!(args.contains(&"-p".to_string()));
-        assert!(args.contains(&"hadron-lattice".to_string()));
+        assert_eq!(
+            args,
+            vec!["test", "-p", "hadron", "-p", "hadron-lattice"]
+                .into_iter()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
-    fn detect_affected_runner_multi_file_does_not_pass_multiple_symbols() {
+    fn detect_affected_runner_multi_file_leaf_and_manifest_fallback() {
         let repo = git_repo();
         let base = worktree::default_branch(repo.path());
-        std::fs::write(repo.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n").unwrap();
-        git(repo.path(), &["add", "Cargo.toml"]).unwrap();
-        git(repo.path(), &["commit", "-q", "-m", "init workspace"]).unwrap();
+        init_multi_crate_workspace(repo.path());
 
         let wt = worktree::ensure(repo.path(), &q("tia-multi"), "01TIAM").unwrap();
         let crate_dir = wt.path.join("crates").join("hadron-chamber").join("src");
@@ -1363,7 +1551,18 @@ mod tests {
 
         let (prog, args) = detect_affected_runner(&wt.path, &base);
         assert_eq!(prog, "cargo");
-        assert_eq!(args, vec!["test", "-p", "hadron", "--bin", "hadron"]);
+        assert_eq!(args, vec!["test", "-p", "hadron"]);
+
+        // Editing Cargo.toml must fail closed to full workspace.
+        std::fs::write(
+            wt.path.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/hadron-lattice\", \"crates/hadron-chamber\", \"crates/hadron-leaf\"]\n# touched\n",
+        )
+        .unwrap();
+        worktree::commit_turn(&wt, "tia-multi: root manifest").unwrap();
+        let (prog2, args2) = detect_affected_runner(&wt.path, &base);
+        assert_eq!(prog2, "cargo");
+        assert_eq!(args2, vec!["test", "--workspace"]);
     }
 }
 

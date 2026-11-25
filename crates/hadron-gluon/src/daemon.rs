@@ -72,6 +72,7 @@ impl Engine {
                 .with_field_and_wake(self.field_path().to_path_buf(), change_tx.clone())
                 .with_wake_notify(self.wake_notifier()),
         );
+        self.set_rpc_dispatcher(std::sync::Arc::clone(&dispatcher));
 
         let bridge_shutdown = shutdown.clone();
         let bridge_change_tx = change_tx.clone();

@@ -544,6 +544,9 @@ pub struct Engine {
     /// new message arrives (via `daemon/wake` RPC or `FieldWatcher`), avoiding
     /// the up-to-150ms `FIELD_POLL` sleep before an interrupt is noticed.
     wake_notify: Arc<tokio::sync::Notify>,
+    /// Optional live JSON-RPC push dispatcher attached by [`Engine::serve_with_hooks`]
+    /// so merge-gate runners can stream live output lines to subscribed clients.
+    rpc_dispatcher: Option<Arc<crate::rpc_server::RpcDispatcher>>,
 }
 
 /// Parse the DO-NOT-ACTIVATE toggle from `HADRON_NO_HUMAN_MODE`. Read ONCE, at
@@ -650,7 +653,14 @@ impl Engine {
             gate_batch_size: 1,
             fast_path_docs_only: false,
             wake_notify: Arc::new(tokio::sync::Notify::new()),
+            rpc_dispatcher: None,
         }
+    }
+
+    /// Attach the live loopback JSON-RPC dispatcher so merge-gate runners and
+    /// engine lifecycle hooks can stream push events to subscribed clients.
+    pub fn set_rpc_dispatcher(&mut self, dispatcher: Arc<crate::rpc_server::RpcDispatcher>) {
+        self.rpc_dispatcher = Some(dispatcher);
     }
 
     /// Return a shared handle to the in-flight wake notifier so the RPC server

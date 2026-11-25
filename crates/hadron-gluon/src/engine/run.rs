@@ -1329,6 +1329,7 @@ impl super::Engine {
                                 let shadow_gate = Arc::clone(&self.shadow_gate);
                                 let gate_semaphore = Arc::clone(&self.gate_semaphore);
                                 let fast_path_docs_only = self.fast_path_docs_only;
+                                let rpc_dispatcher = self.rpc_dispatcher.clone();
                                 let gate_abort = gates.spawn(async move {
                                     let pre_res = Self::run_pre_gate(
                                         runner,
@@ -1337,6 +1338,7 @@ impl super::Engine {
                                         &shadow_gate,
                                         &gate_semaphore,
                                         fast_path_docs_only,
+                                        rpc_dispatcher,
                                     )
                                     .await;
                                     (

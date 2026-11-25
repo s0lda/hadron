@@ -1049,10 +1049,40 @@ impl Chamber {
                 self.spawn_background_command_notice(
                     move || {
                         let summary = hadron_gluon::dream_daemon::DreamDaemon::run_cycle(&repo_root);
-                        format!(
-                            "Sleep & Dream Maintenance: scanned {} notes, cleaned {} empty notes, found {} stale worktrees.",
-                            summary.notes_scanned, summary.notes_cleaned, summary.stale_worktrees_found
-                        )
+                        let preview = |label: &str, items: &[String]| -> Option<String> {
+                            if items.is_empty() {
+                                return None;
+                            }
+                            let shown: Vec<&str> = items.iter().take(6).map(String::as_str).collect();
+                            let extra = if items.len() > 6 {
+                                format!(" (+{} more)", items.len() - 6)
+                            } else {
+                                String::new()
+                            };
+                            Some(format!("- {label} ({}): `{}`{extra}", items.len(), shown.join("`, `")))
+                        };
+                        let mut lines = vec![format!(
+                            "Sleep & Dream Maintenance: scanned {} notes, cleaned {} empty notes, {} orphan(s), {} dead link(s), {} duplicate slug(s), {} cold note(s), {} stale worktree(s).",
+                            summary.notes_scanned,
+                            summary.notes_cleaned,
+                            summary.orphan_notes.len(),
+                            summary.dead_index_links.len(),
+                            summary.duplicate_index_slugs.len(),
+                            summary.cold_notes.len(),
+                            summary.stale_worktrees_found,
+                        )];
+                        for detail in [
+                            preview("Orphan notes", &summary.orphan_notes),
+                            preview("Dead index links", &summary.dead_index_links),
+                            preview("Duplicate index slugs", &summary.duplicate_index_slugs),
+                            preview("Cold notes (>=30d, 0 opens)", &summary.cold_notes),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            lines.push(detail);
+                        }
+                        lines.join("\n")
                     },
                     cx,
                 );

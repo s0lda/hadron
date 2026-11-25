@@ -63,74 +63,7 @@ pub(in crate::app) struct QuarkGateStream {
     pub last_verdict: Option<bool>,
 }
 
-enum ParsedGateLine {
-    Case { name: String, status: GateTestStatus },
-    Summary {
-        passed: usize,
-        failed: usize,
-        ignored: usize,
-    },
-}
-
-/// Local cargo-test line parser; Wave 2 unifies this onto `hadron_lattice::wire::parse_cargo_test_line`.
-fn parse_gate_test_line(line: &str) -> Option<ParsedGateLine> {
-    let trimmed = line.trim();
-    if let Some(rest) = trimmed.strip_prefix("test ") {
-        if let Some((name, outcome)) = rest.rsplit_once(" ... ") {
-            let status = match outcome.trim() {
-                "ok" => GateTestStatus::Passed,
-                "FAILED" => GateTestStatus::Failed,
-                "ignored" => GateTestStatus::Ignored,
-                _ => return None,
-            };
-            let name = name.trim();
-            if !name.is_empty() {
-                return Some(ParsedGateLine::Case {
-                    name: name.to_string(),
-                    status,
-                });
-            }
-        }
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("test result:") {
-        let mut passed = 0usize;
-        let mut failed = 0usize;
-        let mut ignored = 0usize;
-        let mut matched_any = false;
-        for part in rest.split(';') {
-            let tokens: Vec<&str> = part.split_whitespace().collect();
-            if tokens.len() >= 2 {
-                if let Ok(n) = tokens[tokens.len() - 2].parse::<usize>() {
-                    match tokens[tokens.len() - 1] {
-                        "passed" => {
-                            passed = n;
-                            matched_any = true;
-                        }
-                        "failed" => {
-                            failed = n;
-                            matched_any = true;
-                        }
-                        "ignored" => {
-                            ignored = n;
-                            matched_any = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if matched_any {
-            return Some(ParsedGateLine::Summary {
-                passed,
-                failed,
-                ignored,
-            });
-        }
-    }
-
-    None
-}
+use hadron_lattice::wire::{GateTestEvent, GateTestOutcome, parse_cargo_test_line};
 
 impl QuarkGateStream {
     pub(super) fn new(quark: impl Into<String>) -> Self {
@@ -169,9 +102,14 @@ impl QuarkGateStream {
         }
         self.lines.push_back(display_line);
 
-        if let Some(parsed) = parse_gate_test_line(line) {
+        if let Some(parsed) = parse_cargo_test_line(line) {
             match parsed {
-                ParsedGateLine::Case { name, status } => {
+                GateTestEvent::Case { name, outcome } => {
+                    let status = match outcome {
+                        GateTestOutcome::Ok => GateTestStatus::Passed,
+                        GateTestOutcome::Failed => GateTestStatus::Failed,
+                        GateTestOutcome::Ignored => GateTestStatus::Ignored,
+                    };
                     if let Some(existing) = self.tests.iter_mut().find(|t| t.name == name) {
                         existing.status = status;
                     } else {
@@ -179,7 +117,7 @@ impl QuarkGateStream {
                     }
                     self.recount_from_tests();
                 }
-                ParsedGateLine::Summary {
+                GateTestEvent::Summary {
                     passed,
                     failed,
                     ignored,

@@ -1585,6 +1585,10 @@ impl Chamber {
                 })
                 .await;
 
+            let gate_outputs = push_signal
+                .as_ref()
+                .map(|s| s.take_gate_outputs())
+                .unwrap_or_default();
             let gate_updates = push_signal
                 .as_ref()
                 .map(|s| s.take_gate_updates())
@@ -1592,6 +1596,14 @@ impl Chamber {
             if this
                 .update(cx, |chamber, cx| {
                     let mut gate_changed = false;
+                    for out in gate_outputs {
+                        let stream_str = match out.stream {
+                            hadron_lattice::wire::GateStream::Stdout => "stdout",
+                            hadron_lattice::wire::GateStream::Stderr => "stderr",
+                        };
+                        chamber.ingest_gate_output_line(&out.quark, stream_str, &out.line);
+                        gate_changed = true;
+                    }
                     for (quark, passed) in gate_updates {
                         chamber.mark_gate_finished(&quark, passed);
                         gate_changed = true;

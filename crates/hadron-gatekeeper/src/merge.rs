@@ -92,15 +92,6 @@ pub fn evaluate_benchmark_verdict(
     crate::benchmark_guard::BenchmarkVerdict::evaluate(baseline, candidate_metrics, max_tolerance_pct)
 }
 
-/// Record a background mutation evaluation into the persistent mutation tracker.
-pub fn record_mutation_run(
-    tracker: &mut crate::mutation_quark::MutationQuarkTracker,
-    eval: &crate::mutation::MutationEvaluation,
-) -> f64 {
-    tracker.record_evaluation(eval);
-    tracker.overall_score_pct()
-}
-
 /// Lint candidate file contents against operational and structural invariants.
 pub fn lint_candidate_invariants(
     files: &[(&str, &str)],
