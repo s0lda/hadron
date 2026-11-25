@@ -23,12 +23,23 @@ pub struct BlastRadiusReport {
 pub fn compute_impact(
     packages: &[CargoPackageInfo],
     changed_files: &[String],
-    _root_path: &Path,
+    root_path: &Path,
 ) -> (BTreeSet<String>, BTreeSet<String>) {
     let mut direct_crates = BTreeSet::new();
+    // Member dirs read from the manifests, so `crates/hadron-chamber` maps to its
+    // declared package `hadron` rather than to a non-existent `hadron-chamber`.
+    let member_dirs = crate::ast_blast_radius::member_packages_by_dir(root_path);
 
     // Map changed files to crates based on path heuristic
     for file in changed_files {
+        let normalized = file.replace('\\', "/");
+        for (dir, package) in &member_dirs {
+            if normalized.starts_with(&format!("{dir}/"))
+                && packages.iter().any(|p| p.is_workspace_member && &p.name == package)
+            {
+                direct_crates.insert(package.clone());
+            }
+        }
         for pkg in packages {
             if !pkg.is_workspace_member {
                 continue;
@@ -218,5 +229,23 @@ mod tests {
         let down_vec: Vec<String> = downstream.into_iter().collect();
         assert!(down_vec.contains(&"service".to_string()));
         assert!(down_vec.contains(&"app".to_string()));
+    }
+
+    #[test]
+    fn compute_impact_maps_member_dir_to_declared_package_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[workspace]\nmembers = [\"crates/hadron-chamber\"]\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/hadron-chamber")).unwrap();
+        std::fs::write(dir.path().join("crates/hadron-chamber/Cargo.toml"), "[package]\nname = \"hadron\"\n").unwrap();
+        let pkgs = vec![CargoPackageInfo {
+            name: "hadron".to_string(),
+            version: "0.1.0".to_string(),
+            is_workspace_member: true,
+            dependencies: vec![],
+            features: vec![],
+        }];
+        let changed = vec!["crates/hadron-chamber/src/main.rs".to_string()];
+        let (direct, _) = compute_impact(&pkgs, &changed, dir.path());
+        assert_eq!(direct.into_iter().collect::<Vec<_>>(), vec!["hadron"]);
     }
 }

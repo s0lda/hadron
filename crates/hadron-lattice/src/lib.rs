@@ -27,6 +27,7 @@ pub use workspace::*;
 pub mod sys;
 pub mod nucleus;
 pub mod nucleus_lint;
+pub mod nucleus_usage;
 pub mod field_channel;
 pub mod semantic;
 pub mod time_travel;

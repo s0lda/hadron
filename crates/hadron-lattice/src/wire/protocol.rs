@@ -108,6 +108,72 @@ pub enum RpcPushEvent {
     Heartbeat {
         pid: u32,
     },
+    /// One line of a quark's in-flight merge-gate test output, with the running
+    /// pass/fail counts parsed so far (see [`parse_cargo_test_line`]).
+    GateOutput {
+        quark: String,
+        stream: GateStream,
+        line: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        passed: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<usize>,
+    },
+}
+
+/// Which pipe of the gate's test process a [`RpcPushEvent::GateOutput`] line came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateTestOutcome {
+    Ok,
+    Failed,
+    Ignored,
+}
+
+/// A structured event recognised in one line of libtest (`cargo test`) output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GateTestEvent {
+    Case { name: String, outcome: GateTestOutcome },
+    Summary { passed: usize, failed: usize, ignored: usize },
+}
+
+/// The single parser for libtest lines: `test <name> ... ok|FAILED|ignored` and
+/// `test result: <status>. <P> passed; <F> failed; <I> ignored; ...`. Anything else
+/// (compiler output, panics, `running N tests`) is `None`.
+pub fn parse_cargo_test_line(line: &str) -> Option<GateTestEvent> {
+    let line = line.trim();
+    if let Some(rest) = line.strip_prefix("test result: ") {
+        let (_, counts) = rest.split_once(". ")?;
+        let count = |label: &str| {
+            counts.split(';').find_map(|part| {
+                let (n, l) = part.trim().split_once(' ')?;
+                (l == label).then(|| n.parse::<usize>().ok()).flatten()
+            })
+        };
+        return Some(GateTestEvent::Summary {
+            passed: count("passed")?,
+            failed: count("failed")?,
+            ignored: count("ignored")?,
+        });
+    }
+    let rest = line.strip_prefix("test ")?;
+    let (name, verdict) = rest.rsplit_once(" ... ")?;
+    let outcome = match verdict.split_whitespace().next()? {
+        "ok" => GateTestOutcome::Ok,
+        "FAILED" => GateTestOutcome::Failed,
+        "ignored" | "ignored," => GateTestOutcome::Ignored,
+        _ => return None,
+    };
+    let name = name.trim();
+    (!name.is_empty()).then(|| GateTestEvent::Case { name: name.to_string(), outcome })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,6 +338,20 @@ mod protocol_tests {
                 passed: Some(true),
             },
             RpcPushEvent::Heartbeat { pid: 9876 },
+            RpcPushEvent::GateOutput {
+                quark: "cli-agy-2".to_string(),
+                stream: GateStream::Stdout,
+                line: "test a::b ... ok".to_string(),
+                passed: Some(1),
+                failed: Some(0),
+            },
+            RpcPushEvent::GateOutput {
+                quark: "cli-agy-2".to_string(),
+                stream: GateStream::Stderr,
+                line: "   Compiling hadron v0.33.54".to_string(),
+                passed: None,
+                failed: None,
+            },
         ];
 
         for ev in events {
@@ -283,6 +363,47 @@ mod protocol_tests {
             assert_eq!(notif.push_event().as_ref(), Some(&ev));
             let roundtrip = JsonRpcCodec::decode_push_event(&line).expect("decode push event");
             assert_eq!(roundtrip, ev);
+        }
+    }
+
+    #[test]
+    fn gate_output_wire_shape_is_snake_case_and_omits_absent_counts() {
+        let ev = RpcPushEvent::GateOutput {
+            quark: "q".into(),
+            stream: GateStream::Stderr,
+            line: "x".into(),
+            passed: None,
+            failed: None,
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        assert_eq!(v, serde_json::json!({"kind": "gate_output", "quark": "q", "stream": "stderr", "line": "x"}));
+    }
+
+    #[test]
+    fn parse_cargo_test_line_recognises_cases_and_summaries() {
+        let case = |name: &str, outcome| Some(GateTestEvent::Case { name: name.into(), outcome });
+        assert_eq!(parse_cargo_test_line("test a::b ... ok"), case("a::b", GateTestOutcome::Ok));
+        assert_eq!(
+            parse_cargo_test_line("test wire::t::x ... FAILED"),
+            case("wire::t::x", GateTestOutcome::Failed)
+        );
+        assert_eq!(parse_cargo_test_line("test slow ... ignored"), case("slow", GateTestOutcome::Ignored));
+        assert_eq!(
+            parse_cargo_test_line("test slow ... ignored, needs network"),
+            case("slow", GateTestOutcome::Ignored)
+        );
+        assert_eq!(
+            parse_cargo_test_line(
+                "test result: FAILED. 41 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.52s"
+            ),
+            Some(GateTestEvent::Summary { passed: 41, failed: 2, ignored: 3 })
+        );
+        assert_eq!(
+            parse_cargo_test_line("test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured"),
+            Some(GateTestEvent::Summary { passed: 7, failed: 0, ignored: 0 })
+        );
+        for noise in ["running 7 tests", "   Compiling hadron v1", "test result: garbage", "test  ... ok", ""] {
+            assert_eq!(parse_cargo_test_line(noise), None, "{noise:?}");
         }
     }
 }

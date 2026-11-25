@@ -52,6 +52,17 @@ fn format_grep_matches(matches: Vec<GrepMatch>) -> String {
         .join("\n")
 }
 
+impl ForgeMcpServer {
+    /// The note slug when `path` (as read under the worktree root) really is a file in
+    /// this server's nucleus `notes/` dir — not merely any `notes/*.md` in the tree.
+    fn nucleus_note_slug(&self, path: &str) -> Option<String> {
+        let slug = hadron_lattice::nucleus_usage::extract_note_slug_from_path(path)?;
+        let read = std::fs::canonicalize(self.root.path().join(path)).ok()?;
+        let notes = std::fs::canonicalize(self.nucleus_root.path().join("notes")).ok()?;
+        (read.parent() == Some(notes.as_path())).then_some(slug)
+    }
+}
+
 #[tool_router(router = inspect_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
@@ -60,7 +71,12 @@ impl ForgeMcpServer {
     )]
     pub async fn read_file(&self, Parameters(args): Parameters<ReadFileArgs>) -> Json<ToolResponse> {
         match inspect::read_file(&self.root, &args.path, args.offset, args.limit) {
-            Ok(slice) => Json(ToolResponse::success(Some(format_file_slice(slice)))),
+            Ok(slice) => {
+                if let Some(slug) = self.nucleus_note_slug(&args.path) {
+                    super::nucleus::record_note_opens(self.nucleus_root.path(), [slug.as_str()]);
+                }
+                Json(ToolResponse::success(Some(format_file_slice(slice))))
+            }
             Err(e) => Json(ToolResponse::error(e.to_string())),
         }
     }
@@ -116,6 +132,27 @@ mod tests {
             .await;
         assert!(res.0.ok);
         assert!(res.0.blocks.unwrap().contains("f.txt:3:"));
+    }
+
+    #[tokio::test]
+    async fn reading_a_nucleus_note_records_usage_but_other_notes_dirs_do_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let nucleus = dir.path().join(".hadron").join("nucleus");
+        std::fs::create_dir_all(nucleus.join("notes")).unwrap();
+        std::fs::create_dir_all(dir.path().join("docs/notes")).unwrap();
+        std::fs::write(nucleus.join("notes/real.md"), "fact\n").unwrap();
+        std::fs::write(dir.path().join("docs/notes/decoy.md"), "not a lesson\n").unwrap();
+        let server = ForgeMcpServer::with_nucleus(dir.path(), nucleus.as_path());
+
+        for path in [".hadron/nucleus/notes/real.md", "docs/notes/decoy.md"] {
+            let res = server
+                .read_file(Parameters(ReadFileArgs { path: path.into(), offset: None, limit: None }))
+                .await;
+            assert!(res.0.ok, "{path}: {:?}", res.0.reason);
+        }
+        let ledger = hadron_lattice::nucleus_usage::load_usage_ledger(&nucleus).unwrap();
+        assert_eq!(ledger.notes.get("real").map(|e| e.opens), Some(1));
+        assert!(!ledger.notes.contains_key("decoy"));
     }
 
     #[tokio::test]

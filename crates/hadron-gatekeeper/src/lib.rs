@@ -51,4 +51,8 @@ pub mod nucleus_linter;
 pub use nucleus_linter::*;
 pub mod repo_monitor;
 pub use repo_monitor::*;
+pub mod liveness;
+pub use liveness::{audit_diff_liveness, LivenessReport, UnwiredSymbol};
+pub mod claim_auditor;
+pub use claim_auditor::{audit_evidence_claims, ClaimAuditReport, ClaimVerdict};
 

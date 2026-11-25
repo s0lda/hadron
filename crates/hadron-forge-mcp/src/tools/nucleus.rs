@@ -69,6 +69,29 @@ fn default_search_limit() -> usize {
     5
 }
 
+/// Record one open per distinct note slug in the usage ledger. Usage is telemetry:
+/// a failed write must not fail the read that triggered it, so it is reported on
+/// stderr (stdout is the MCP channel) rather than returned.
+pub(super) fn record_note_opens<'a>(nucleus_root: &std::path::Path, slugs: impl IntoIterator<Item = &'a str>) {
+    let unique: std::collections::BTreeSet<&str> = slugs.into_iter().collect();
+    for slug in unique {
+        if let Err(e) = hadron_lattice::nucleus_usage::record_note_open(nucleus_root, slug, None) {
+            eprintln!("[forge] nucleus usage not recorded for {slug:?}: {e}");
+        }
+    }
+}
+
+/// Slugs of the note files that produced hits in `query_nucleus` output, whose
+/// lines are `<rel-path>:<line>: <text>`. `index.md` lines that merely *link* to a
+/// note are not opens of it.
+fn note_hits(results: &str) -> Vec<String> {
+    results
+        .lines()
+        .filter_map(|l| l.split_once(':'))
+        .filter_map(|(path, _)| hadron_lattice::nucleus_usage::extract_note_slug_from_path(path))
+        .collect()
+}
+
 #[tool_router(router = nucleus_router, vis = "pub(super)")]
 impl ForgeMcpServer {
     #[tool(
@@ -77,7 +100,15 @@ impl ForgeMcpServer {
     )]
     pub async fn query_nucleus(&self, Parameters(args): Parameters<QueryNucleusArgs>) -> Json<ToolResponse> {
         match query_nucleus(&self.nucleus_root, &args.query, args.path.as_deref()) {
-            Ok(results) => Json(ToolResponse::success(Some(results))),
+            Ok(results) => {
+                let hits = note_hits(&results);
+                let targeted = args.path.as_deref().and_then(hadron_lattice::nucleus_usage::extract_note_slug_from_path);
+                record_note_opens(
+                    self.nucleus_root.path(),
+                    hits.iter().chain(targeted.iter()).map(String::as_str),
+                );
+                Json(ToolResponse::success(Some(results)))
+            }
             Err(e) => Json(ToolResponse::error(e.to_string())),
         }
     }
@@ -207,6 +238,31 @@ mod tests {
             .await;
         assert!(!res_escape.0.ok);
         assert!(res_escape.0.reason.as_ref().unwrap().contains("escapes root"));
+    }
+
+    #[tokio::test]
+    async fn query_nucleus_records_note_hits_but_not_index_links() {
+        let worktree_dir = tempfile::tempdir().unwrap();
+        let nucleus_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(nucleus_dir.path().join("notes")).unwrap();
+        std::fs::write(nucleus_dir.path().join("index.md"), "- [cold](notes/cold.md) — gate lore\n").unwrap();
+        std::fs::write(nucleus_dir.path().join("notes/hot.md"), "gate fact\nmore gate\n").unwrap();
+        std::fs::write(nucleus_dir.path().join("notes/cold.md"), "unrelated\n").unwrap();
+        let server = ForgeMcpServer::with_nucleus(worktree_dir.path(), nucleus_dir.path());
+
+        let res = server
+            .query_nucleus(Parameters(QueryNucleusArgs { query: "gate".into(), path: None }))
+            .await;
+        assert!(res.0.ok);
+        let ledger = hadron_lattice::nucleus_usage::load_usage_ledger(nucleus_dir.path()).unwrap();
+        assert_eq!(ledger.notes["hot"].opens, 1, "two matching lines are one open");
+        assert!(!ledger.notes.contains_key("cold"), "an index link is not an open");
+
+        server
+            .query_nucleus(Parameters(QueryNucleusArgs { query: "zzz".into(), path: Some("notes/cold.md".into()) }))
+            .await;
+        let ledger = hadron_lattice::nucleus_usage::load_usage_ledger(nucleus_dir.path()).unwrap();
+        assert_eq!(ledger.notes["cold"].opens, 1, "a targeted note read is an open");
     }
 
     #[tokio::test]
