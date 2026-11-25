@@ -4,8 +4,8 @@
 //! (`127.0.0.1:<port>`) to deliver `<1ms` wake notifications on user message submission
 //! and optional incremental field polling without blocking the GPUI render thread.
 
-use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,9 +14,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use hadron_lattice::wire::{
-    DAEMON_SUBSCRIBE_METHOD, JsonRpcCodec, JsonRpcRequest, JsonRpcResponse, RpcEndpointMetadata,
-    RpcPushEvent, read_rpc_metadata,
+    DAEMON_SUBSCRIBE_METHOD, JsonRpcCodec, JsonRpcRequest, JsonRpcResponse, LoopbackRpcAddr,
+    MAX_RPC_FRAME_BYTES, RpcEndpointMetadata, RpcPushEvent, read_rpc_metadata,
 };
+
+const MAX_POLL_EVENTS: usize = 100_000;
 
 fn resolve_rpc_dir(path: &Path) -> PathBuf {
     if path.file_name().is_some_and(|n| n == "field.jsonl") || path.is_file() {
@@ -35,25 +37,47 @@ fn resolve_rpc_dir(path: &Path) -> PathBuf {
     }
 }
 
-/// Read and validate the active `gluon.rpc` endpoint metadata for `field_dir`.
+/// Read and validate the active loopback `gluon.rpc` endpoint metadata for `field_dir`.
 pub fn active_endpoint(field_dir: &Path) -> Option<RpcEndpointMetadata> {
     let dir = resolve_rpc_dir(field_dir);
     let meta = read_rpc_metadata(&dir)?;
-    if meta.addr.parse::<SocketAddr>().is_err() {
-        return None;
-    }
+    LoopbackRpcAddr::parse(&meta.addr).ok()?;
     Some(meta)
 }
 
-/// Execute a single newline-delimited JSON-RPC 2.0 request over loopback TCP with a strict timeout.
+fn read_bounded_rpc_line<R: BufRead>(
+    reader: &mut R,
+    addr: &str,
+    max_bytes: usize,
+) -> anyhow::Result<String> {
+    let mut buf = Vec::new();
+    let n = reader
+        .by_ref()
+        .take((max_bytes as u64).saturating_add(1))
+        .read_until(b'\n', &mut buf)?;
+    if n == 0 {
+        anyhow::bail!("empty JSON-RPC response from {addr}");
+    }
+    if buf.len() > max_bytes {
+        anyhow::bail!("JSON-RPC response from {addr} exceeds {max_bytes} byte limit");
+    }
+    if buf.last() != Some(&b'\n') {
+        anyhow::bail!("unterminated JSON-RPC response from {addr}");
+    }
+    let line = std::str::from_utf8(&buf)
+        .map_err(|e| anyhow::anyhow!("invalid UTF-8 in JSON-RPC response from {addr}: {e}"))?;
+    Ok(line.trim().to_owned())
+}
+
+/// Execute a single newline-delimited JSON-RPC 2.0 request over loopback TCP with strict size and timeout bounds.
 pub fn call_rpc(
     addr: &str,
     method: &str,
     params: serde_json::Value,
     timeout: Duration,
 ) -> anyhow::Result<JsonRpcResponse> {
-    let sock_addr: SocketAddr = addr.parse()?;
-    let mut stream = TcpStream::connect_timeout(&sock_addr, timeout)?;
+    let rpc_addr = LoopbackRpcAddr::parse(addr).map_err(anyhow::Error::msg)?;
+    let mut stream = TcpStream::connect_timeout(&rpc_addr.socket_addr(), timeout)?;
     stream.set_nodelay(true).ok();
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
@@ -65,12 +89,8 @@ pub fn call_rpc(
     stream.flush()?;
 
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    let n = reader.read_line(&mut line)?;
-    if n == 0 {
-        anyhow::bail!("empty JSON-RPC response from {addr}");
-    }
-    let resp: JsonRpcResponse = serde_json::from_str(line.trim())?;
+    let line = read_bounded_rpc_line(&mut reader, addr, MAX_RPC_FRAME_BYTES)?;
+    let resp = JsonRpcCodec::decode_response(&line, Some(&req.id))?;
     Ok(resp)
 }
 
@@ -121,9 +141,15 @@ pub fn poll_field_via_rpc(
     if resp.error.is_some() {
         return None;
     }
-    let result = resp.result?;
+    let serde_json::Value::Object(mut result) = resp.result? else {
+        return None;
+    };
     let next_offset = result.get("next_offset")?.as_u64()?;
-    let events_val = result.get("events")?.clone();
+    let events_val = result.remove("events")?;
+    let events_len = events_val.as_array()?.len();
+    if events_len > MAX_POLL_EVENTS {
+        return None;
+    }
     let events: Vec<hadron_lattice::Event> = serde_json::from_value(events_val).ok()?;
     Some((events, next_offset))
 }
@@ -243,10 +269,10 @@ fn run_subscriber(field_dir: &Path, signal: &PushSignal) {
 /// One subscription session. Returns whether the daemon acknowledged the subscribe,
 /// which resets the reconnect backoff.
 fn subscribe_until_disconnect(addr: &str, signal: &PushSignal) -> bool {
-    let Ok(sock_addr) = addr.parse::<SocketAddr>() else {
+    let Ok(rpc_addr) = LoopbackRpcAddr::parse(addr) else {
         return false;
     };
-    let Ok(mut stream) = TcpStream::connect_timeout(&sock_addr, SUBSCRIBE_CONNECT_TIMEOUT) else {
+    let Ok(mut stream) = TcpStream::connect_timeout(&rpc_addr.socket_addr(), SUBSCRIBE_CONNECT_TIMEOUT) else {
         return false;
     };
     stream.set_nodelay(true).ok();
@@ -270,20 +296,25 @@ fn subscribe_until_disconnect(addr: &str, signal: &PushSignal) -> bool {
     let mut last_rx = Instant::now();
     while !signal.stopped() {
         // `read_until` keeps every byte read before a timeout in `buf`, so a line
-        // split across read slices is reassembled rather than dropped.
-        match reader.read_until(b'\n', &mut buf) {
+        // split across read slices is reassembled rather than dropped while bounded
+        // strictly to `MAX_RPC_FRAME_BYTES`.
+        let remaining = (MAX_RPC_FRAME_BYTES + 1).saturating_sub(buf.len());
+        match reader.by_ref().take(remaining as u64).read_until(b'\n', &mut buf) {
             Ok(0) => break,
+            Ok(_) if buf.len() > MAX_RPC_FRAME_BYTES => break,
             Ok(_) if buf.last() != Some(&b'\n') => break,
             Ok(_) => {
                 last_rx = Instant::now();
-                let line = String::from_utf8_lossy(&buf).into_owned();
+                let Ok(line) = std::str::from_utf8(&buf).map(|s| s.trim().to_owned()) else {
+                    break;
+                };
                 buf.clear();
                 match JsonRpcCodec::decode_push_event(&line) {
                     Ok(RpcPushEvent::Heartbeat { .. }) => {}
                     Ok(_) => signal.mark_dirty(),
                     Err(_) if !subscribed => {
-                        let acked = serde_json::from_str::<JsonRpcResponse>(line.trim())
-                            .is_ok_and(|r| r.id == req.id && r.error.is_none());
+                        let acked = JsonRpcCodec::decode_response(&line, Some(&req.id))
+                            .is_ok_and(|r| r.error.is_none());
                         if !acked {
                             break;
                         }
@@ -483,5 +514,79 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2), "drop must stop the thread promptly");
         assert!(!signal.is_connected(), "a stopped subscriber reports disconnected");
         remove_rpc_metadata(tmp.path()).expect("remove gluon.rpc");
+    }
+
+    #[test]
+    fn call_rpc_rejects_non_loopback_mismatched_id_unknown_fields_and_oversized_payloads() {
+        let non_loopback = call_rpc(
+            "198.51.100.42:41234",
+            "daemon/wake",
+            serde_json::json!({}),
+            Duration::from_millis(50),
+        )
+        .expect_err("non-loopback address must be rejected before connecting");
+        assert!(
+            non_loopback.to_string().contains("loopback"),
+            "unexpected error for non-loopback endpoint: {non_loopback:#}"
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local_addr").to_string();
+
+        let server = std::thread::spawn(move || {
+            // 1. Mismatched response id
+            {
+                let (mut stream, _) = listener.accept().expect("accept 1");
+                let mut reader = BufReader::new(stream.try_clone().expect("clone 1"));
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read 1");
+                let resp = JsonRpcResponse::success("forged-id", serde_json::json!({"woken": true}));
+                let encoded = JsonRpcCodec::encode_response(&resp).expect("encode 1");
+                stream.write_all(encoded.as_bytes()).expect("write 1");
+                stream.flush().expect("flush 1");
+            }
+            // 2. Unknown extra field
+            {
+                let (mut stream, _) = listener.accept().expect("accept 2");
+                let mut reader = BufReader::new(stream.try_clone().expect("clone 2"));
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read 2");
+                let req = JsonRpcCodec::decode_request(line.trim()).expect("decode 2");
+                let raw = format!(
+                    "{{\"jsonrpc\":\"2.0\",\"id\":\"{}\",\"result\":{{\"woken\":true}},\"injected\":true}}\n",
+                    req.id
+                );
+                stream.write_all(raw.as_bytes()).expect("write 2");
+                stream.flush().expect("flush 2");
+            }
+            // 3. Oversized (> 16 MiB) valid JSON-RPC response frame
+            {
+                let (mut stream, _) = listener.accept().expect("accept 3");
+                let mut reader = BufReader::new(stream.try_clone().expect("clone 3"));
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read 3");
+                let req = JsonRpcCodec::decode_request(line.trim()).expect("decode 3");
+                let huge = "a".repeat(16 * 1024 * 1024 + 4096);
+                let resp = JsonRpcResponse::success(&req.id, serde_json::json!({ "blob": huge }));
+                let encoded = JsonRpcCodec::encode_response(&resp).expect("encode 3");
+                let _ = stream.write_all(encoded.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        assert!(
+            call_rpc(&addr, "daemon/wake", serde_json::json!({}), Duration::from_secs(2)).is_err(),
+            "mismatched response id must be rejected"
+        );
+        assert!(
+            call_rpc(&addr, "daemon/wake", serde_json::json!({}), Duration::from_secs(2)).is_err(),
+            "unknown response fields must be rejected"
+        );
+        assert!(
+            call_rpc(&addr, "daemon/wake", serde_json::json!({}), Duration::from_secs(2)).is_err(),
+            "oversized response exceeding frame cap must be rejected"
+        );
+
+        server.join().expect("server thread");
     }
 }

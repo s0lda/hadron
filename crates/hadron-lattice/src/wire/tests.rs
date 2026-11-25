@@ -72,4 +72,33 @@ mod tests {
         remove_rpc_metadata(field_dir).expect("remove metadata");
         assert!(read_rpc_metadata(field_dir).is_none());
     }
+
+    #[test]
+    fn test_read_rpc_metadata_rejects_non_loopback_and_zero_port() {
+        let tmp = tempfile::tempdir().unwrap();
+        let field_dir = tmp.path();
+
+        for bad_addr in ["198.51.100.42:45678", "0.0.0.0:45678", "127.0.0.1:0"] {
+            let meta = RpcEndpointMetadata {
+                addr: bad_addr.to_string(),
+                pid: 12345,
+                version: "0.33.53".to_string(),
+                platform: "linux".to_string(),
+            };
+            write_rpc_metadata(field_dir, &meta).expect("write metadata");
+            assert!(
+                read_rpc_metadata(field_dir).is_none(),
+                "must reject unsafe RPC endpoint addr {bad_addr}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_jsonrpc_response_rejects_unknown_fields() {
+        let with_extra = r#"{"jsonrpc":"2.0","id":"req-1","result":{"ok":true},"extra":123}"#;
+        assert!(
+            serde_json::from_str::<JsonRpcResponse>(with_extra).is_err(),
+            "JsonRpcResponse must deny unknown fields"
+        );
+    }
 }

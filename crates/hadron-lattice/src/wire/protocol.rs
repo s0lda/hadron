@@ -1,7 +1,38 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Maximum permitted byte length for a single newline-delimited JSON-RPC 2.0 frame (`16 MiB`).
+pub const MAX_RPC_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// Maximum permitted byte length for `.hadron/gluon.rpc` endpoint metadata (`4 KiB`).
+pub const MAX_RPC_METADATA_BYTES: u64 = 4096;
+
+/// Validated loopback-only TCP socket address (`127.0.0.0/8` or `::1`, non-zero port)
+/// for `hadron-gluon` IPC, making remote or port-0 RPC endpoints unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoopbackRpcAddr(std::net::SocketAddr);
+
+impl LoopbackRpcAddr {
+    pub fn parse(addr: &str) -> Result<Self, String> {
+        let sock: std::net::SocketAddr = addr
+            .parse()
+            .map_err(|e| format!("invalid RPC socket address '{addr}': {e}"))?;
+        if !sock.ip().is_loopback() {
+            return Err(format!("refusing non-loopback RPC endpoint '{addr}'"));
+        }
+        if sock.port() == 0 {
+            return Err(format!("refusing port-0 RPC endpoint '{addr}'"));
+        }
+        Ok(Self(sock))
+    }
+
+    pub fn socket_addr(self) -> std::net::SocketAddr {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub id: String,
@@ -22,12 +53,13 @@ impl JsonRpcRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
     pub id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
 }
 
@@ -79,6 +111,7 @@ pub enum RpcPushEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JsonRpcNotification {
     pub jsonrpc: String,
     pub method: String,
@@ -116,7 +149,20 @@ impl super::codec::JsonRpcCodec {
     }
 
     pub fn decode_notification(line: &str) -> Result<JsonRpcNotification, serde_json::Error> {
-        serde_json::from_str(line.trim())
+        let trimmed = line.trim();
+        if trimmed.len() > MAX_RPC_FRAME_BYTES {
+            return Err(serde::de::Error::custom(format!(
+                "JSON-RPC notification exceeds {MAX_RPC_FRAME_BYTES} byte limit"
+            )));
+        }
+        let notif: JsonRpcNotification = serde_json::from_str(trimmed)?;
+        if notif.jsonrpc != "2.0" {
+            return Err(serde::de::Error::custom(format!(
+                "unsupported jsonrpc version: {}",
+                notif.jsonrpc
+            )));
+        }
+        Ok(notif)
     }
 
     pub fn encode_push_event(event: &RpcPushEvent) -> Result<String, serde_json::Error> {
@@ -136,10 +182,11 @@ impl super::codec::JsonRpcCodec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct JsonRpcError {
     pub code: i32,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
 
@@ -152,6 +199,7 @@ pub enum JsonRpcMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RpcEndpointMetadata {
     pub addr: String,
     pub pid: u32,
@@ -178,8 +226,14 @@ pub fn write_rpc_metadata(field_dir: &std::path::Path, meta: &RpcEndpointMetadat
 
 pub fn read_rpc_metadata(field_dir: &std::path::Path) -> Option<RpcEndpointMetadata> {
     let target = rpc_metadata_path(field_dir);
+    let file_meta = std::fs::metadata(&target).ok()?;
+    if !file_meta.is_file() || file_meta.len() > MAX_RPC_METADATA_BYTES {
+        return None;
+    }
     let content = std::fs::read_to_string(&target).ok()?;
-    serde_json::from_str(&content).ok()
+    let meta: RpcEndpointMetadata = serde_json::from_str(&content).ok()?;
+    LoopbackRpcAddr::parse(&meta.addr).ok()?;
+    Some(meta)
 }
 
 pub fn remove_rpc_metadata(field_dir: &std::path::Path) -> std::io::Result<()> {

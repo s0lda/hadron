@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 
 use hadron_lattice::wire::{
     remove_rpc_metadata, write_rpc_metadata, JsonRpcCodec, JsonRpcResponse, RpcEndpointMetadata,
-    RpcPushEvent, DAEMON_SUBSCRIBE_METHOD,
+    RpcPushEvent, DAEMON_SUBSCRIBE_METHOD, MAX_RPC_FRAME_BYTES,
 };
 use super::dispatcher::RpcDispatcher;
 
@@ -52,29 +52,35 @@ impl RpcServer {
                                 tokio::spawn(async move {
                                     let (reader, mut writer) = stream.into_split();
                                     let mut buf_reader = BufReader::new(reader);
-                                    let mut line = String::new();
+                                    let mut buf = Vec::new();
                                     let mut push_rx: Option<tokio::sync::broadcast::Receiver<RpcPushEvent>> = None;
                                     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
                                     // Consume the immediate first tick so heartbeats fire every 15s after subscribe.
                                     heartbeat.tick().await;
 
                                     loop {
-                                        line.clear();
+                                        let remaining = (MAX_RPC_FRAME_BYTES + 1).saturating_sub(buf.len()) as u64;
+                                        let mut bounded = (&mut buf_reader).take(remaining);
                                         tokio::select! {
                                             res = client_shutdown.changed() => {
                                                 if res.is_err() || *client_shutdown.borrow() {
                                                     break;
                                                 }
                                             }
-                                            read_res = buf_reader.read_line(&mut line) => {
+                                            read_res = bounded.read_until(b'\n', &mut buf) => {
                                                 match read_res {
                                                     Ok(0) => break, // EOF
+                                                    Ok(_) if buf.len() > MAX_RPC_FRAME_BYTES || buf.last() != Some(&b'\n') => break,
                                                     Ok(_) => {
-                                                        let trimmed = line.trim();
+                                                        let Ok(line) = std::str::from_utf8(&buf) else {
+                                                            break;
+                                                        };
+                                                        let trimmed = line.trim().to_owned();
+                                                        buf.clear();
                                                         if trimmed.is_empty() {
                                                             continue;
                                                         }
-                                                        let resp = match JsonRpcCodec::decode_request(trimmed) {
+                                                        let resp = match JsonRpcCodec::decode_request(&trimmed) {
                                                             Ok(req) => {
                                                                 if req.method == DAEMON_SUBSCRIBE_METHOD {
                                                                     if push_rx.is_none() {
