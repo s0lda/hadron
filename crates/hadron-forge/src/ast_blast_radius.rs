@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn this_repository_maps_chamber_to_hadron() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).expect("crates/<name> sits two levels under the repo root");
         assert_eq!(
             resolve_affected_workspace_crates(&root, &["crates/hadron-chamber/src/main.rs"]),
             specific(&["hadron"])

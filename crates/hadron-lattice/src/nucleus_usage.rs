@@ -79,10 +79,13 @@ pub fn record_note_open(nucleus_root: &Path, slug: &str, quark: Option<&str>) ->
     let json = serde_json::to_string_pretty(&ledger).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(nucleus_root).map_err(|e| format!("create {}: {e}", nucleus_root.display()))?;
     std::fs::write(&tmp, json).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("rename {} -> {}: {e}", tmp.display(), path.display())
-    })?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let cleanup = match std::fs::remove_file(&tmp) {
+            Ok(()) => String::new(),
+            Err(c) => format!(" (temp file left behind: {c})"),
+        };
+        return Err(format!("rename {} -> {}: {e}{cleanup}", tmp.display(), path.display()));
+    }
     Ok(snapshot)
 }
 
